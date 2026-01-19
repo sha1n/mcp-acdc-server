@@ -1,8 +1,6 @@
 package mcp
 
 import (
-	"context"
-
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/sha1n/mcp-acdc-server-go/internal/domain"
@@ -14,7 +12,7 @@ import (
 func CreateServer(
 	metadata domain.McpMetadata,
 	resourceProvider *resources.ResourceProvider,
-	searchService *search.Service,
+	searchService search.Searcher,
 ) *server.MCPServer {
 	// Create server
 	s := server.NewMCPServer(
@@ -33,19 +31,7 @@ func CreateServer(
 			Name:        res.Name,
 			Description: res.Description,
 			MIMEType:    res.MIMEType,
-		}, func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-			content, err := resourceProvider.ReadResource(uri)
-			if err != nil {
-				return nil, err
-			}
-			return []mcp.ResourceContents{
-				mcp.TextResourceContents{
-					URI:      uri,
-					MIMEType: "text/markdown",
-					Text:     content,
-				},
-			}, nil
-		})
+		}, makeResourceHandler(resourceProvider, uri))
 	}
 
 	// Register Tools

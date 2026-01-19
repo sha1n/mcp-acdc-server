@@ -8,70 +8,127 @@ import (
 	"github.com/sha1n/mcp-acdc-server-go/internal/content"
 )
 
-func TestDiscoverResources(t *testing.T) {
-	tempDir := t.TempDir()
-	resourcesDir := filepath.Join(tempDir, "mcp-resources")
-	if err := os.MkdirAll(resourcesDir, 0755); err != nil {
-		t.Fatalf("failed to create resources dir: %v", err)
-	}
-
-	// Create a test resource
-	resourcePath := filepath.Join(resourcesDir, "test.md")
-	contentStr := "---\nname: Test Resource\ndescription: A test resource\n---\n# Test Content"
-	if err := os.WriteFile(resourcePath, []byte(contentStr), 0644); err != nil {
-		t.Fatalf("failed to write test resource: %v", err)
-	}
-
-	cp := content.NewContentProvider(tempDir)
-	defs, err := DiscoverResources(cp)
-	if err != nil {
-		t.Fatalf("DiscoverResources failed: %v", err)
-	}
-
-	if len(defs) != 1 {
-		t.Fatalf("Expected 1 resource, got %d", len(defs))
-	}
-
-	def := defs[0]
-	if def.Name != "Test Resource" {
-		t.Errorf("Expected name 'Test Resource', got '%s'", def.Name)
-	}
-	if def.URI != "acdc://test" {
-		t.Errorf("Expected URI 'acdc://test', got '%s'", def.URI)
-	}
-}
-
-func TestResourceProvider_ReadResource(t *testing.T) {
-	// Setup
-	tempDir := t.TempDir()
-	resourcesDir := filepath.Join(tempDir, "mcp-resources")
-	if err := os.MkdirAll(resourcesDir, 0755); err != nil {
-		t.Fatalf("failed to create resources dir: %v", err)
-	}
-	resourcePath := filepath.Join(resourcesDir, "test.md")
-	contentStr := "---\nname: Test\ndescription: Desc\n---\nContent"
-	if err := os.WriteFile(resourcePath, []byte(contentStr), 0644); err != nil {
-		t.Fatalf("failed to write test resource: %v", err)
+func TestResourceProvider_Methods(t *testing.T) {
+	tmp := t.TempDir()
+	f := filepath.Join(tmp, "test.md")
+	if err := os.WriteFile(f, []byte("---\nname: N\ndescription: D\n---\nBody"), 0644); err != nil {
+		t.Fatal(err)
 	}
 
 	defs := []ResourceDefinition{
 		{
 			URI:         "acdc://test",
-			Name:        "Test",
+			Name:        "Test Resource",
 			Description: "Desc",
 			MIMEType:    "text/markdown",
-			FilePath:    resourcePath,
+			FilePath:    f,
 		},
 	}
 
 	p := NewResourceProvider(defs)
 
-	// Test Read
-	content, err := p.ReadResource("acdc://test")
-	if err != nil {
-		t.Fatalf("ReadResource failed: %v", err)
+	// Test ListResources
+	t.Run("ListResources", func(t *testing.T) {
+		list := p.ListResources()
+		if len(list) != 1 {
+			t.Errorf("ListResources returned %d items, want 1", len(list))
+		}
+		if list[0].URI != defs[0].URI {
+			t.Errorf("ListResources URI = %s, want %s", list[0].URI, defs[0].URI)
+		}
+	})
+
+	// Test ReadResource
+	t.Run("ReadResource", func(t *testing.T) {
+		got, err := p.ReadResource(defs[0].URI)
+		if err != nil {
+			t.Errorf("ReadResource error = %v", err)
+		}
+		if got != "Body" {
+			t.Errorf("ReadResource content = %q, want %q", got, "Body")
+		}
+	})
+
+	// Test ReadResource Unknown
+	t.Run("ReadResource Unknown", func(t *testing.T) {
+		_, err := p.ReadResource("unknown")
+		if err == nil {
+			t.Error("ReadResource expected error for unknown URI")
+		}
+	})
+
+	// Test GetAllResourceContents
+	t.Run("GetAllResourceContents", func(t *testing.T) {
+		got := p.GetAllResourceContents()
+		if len(got) != 1 {
+			t.Errorf("GetAllResourceContents returned %d items, want 1", len(got))
+		}
+		if got[0]["content"] != "Body" {
+			t.Errorf("GetAllResourceContents content = %q, want %q", got[0]["content"], "Body")
+		}
+	})
+}
+
+func TestDiscoverResources(t *testing.T) {
+	// Setup directory structure
+	tmp := t.TempDir()
+	resDir := filepath.Join(tmp, "mcp-resources")
+	if err := os.MkdirAll(resDir, 0755); err != nil {
+		t.Fatal(err)
 	}
-	if content != "Content" {
-		t.Errorf("Expected 'Content', got '%s'", content)
+
+	// Valid resource
+	validRes := filepath.Join(resDir, "valid.md")
+	if err := os.WriteFile(validRes, []byte("---\nname: Valid\ndescription: D\n---\nContent"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Invalid resource (no name)
+	invalidRes := filepath.Join(resDir, "invalid.md")
+	if err := os.WriteFile(invalidRes, []byte("---\ndescription: D\n---\nContent"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Not markdown
+	txtRes := filepath.Join(resDir, "files.txt")
+	if err := os.WriteFile(txtRes, []byte("text"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Subdir (should be skipped by implementation if WalkDir doesn't recurse? WalkDir recurses. Implementation checks .md extension)
+	// But let's check if it handles subdirs correctly.
+	subDir := filepath.Join(resDir, "sub")
+	if err := os.Mkdir(subDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	subRes := filepath.Join(subDir, "sub.md")
+	if err := os.WriteFile(subRes, []byte("---\nname: Sub\ndescription: D\n---\nSubContent"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cp := content.NewContentProvider(tmp)
+
+	defs, err := DiscoverResources(cp)
+	if err != nil {
+		t.Fatalf("DiscoverResources error = %v", err)
+	}
+
+	// Expect 2 resources: valid.md and sub.md
+	if len(defs) != 2 {
+		t.Errorf("DiscoverResources found %d items, want 2", len(defs))
+	}
+
+	// Check URIs (should use forward slashes)
+	// "valid" and "sub/sub"
+	uris := make(map[string]bool)
+	for _, d := range defs {
+		uris[d.URI] = true
+	}
+
+	if !uris["acdc://valid"] {
+		t.Error("Missing acdc://valid")
+	}
+	if !uris["acdc://sub/sub"] {
+		t.Error("Missing acdc://sub/sub")
 	}
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
+	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/sha1n/mcp-acdc-server-go/internal/config"
 )
 
@@ -18,9 +19,16 @@ type SearchResult struct {
 
 // Document represents a document to index
 type Document struct {
-	URI     string
-	Name    string
-	Content string
+	URI     string `json:"uri"`
+	Name    string `json:"name"`
+	Content string `json:"content"`
+}
+
+// Searcher interface in search package
+type Searcher interface {
+	Search(queryStr string, limit *int) ([]SearchResult, error)
+	IndexDocuments(documents []Document) error
+	Close()
 }
 
 // Service search service using Bleve
@@ -29,6 +37,9 @@ type Service struct {
 	index    bleve.Index
 	indexDir string
 }
+
+// Ensure Service implements Searcher
+var _ Searcher = (*Service)(nil)
 
 // NewService creates a new search service
 func NewService(settings config.SearchSettings) *Service {
@@ -48,18 +59,30 @@ func (s *Service) IndexDocuments(documents []Document) error {
 		_ = os.RemoveAll(s.indexDir)
 	}
 
-	// Create temp dir
-	tempDir, err := os.MkdirTemp("", "acdc_search_")
-	if err != nil {
-		return fmt.Errorf("failed to create temp dir: %w", err)
-	}
-	s.indexDir = tempDir
-
 	// Define mapping
 	indexMapping := buildMapping()
 
-	// Create index
-	index, err := bleve.New(s.indexDir, indexMapping)
+	var index bleve.Index
+	var err error
+
+	if s.settings.InMemory {
+		index, err = bleve.NewMemOnly(indexMapping)
+	} else {
+		// Create temp dir
+		var mkErr error
+		tempDir, mkErr := os.MkdirTemp("", "acdc_search_")
+		if mkErr != nil {
+			return fmt.Errorf("failed to create temp dir: %w", mkErr)
+		}
+		// bleve.New requires the directory to not exist
+		if rmErr := os.RemoveAll(tempDir); rmErr != nil {
+			return fmt.Errorf("failed to remove temp dir: %w", rmErr)
+		}
+		s.indexDir = tempDir
+
+		index, err = bleve.New(s.indexDir, indexMapping)
+	}
+
 	if err != nil {
 		return fmt.Errorf("failed to create index: %w", err)
 	}
@@ -68,16 +91,7 @@ func (s *Service) IndexDocuments(documents []Document) error {
 	// Batch index
 	batch := index.NewBatch()
 	for _, doc := range documents {
-		// We map the document struct to the fields
-		// We can't pass the struct directly if we want specific field control unless we tag it
-		// But building a map or strict struct with tags is better.
-		// Let's use a map for clarity with the manual mapping we built
-		docMap := map[string]interface{}{
-			"uri":     doc.URI,
-			"name":    doc.Name,
-			"content": doc.Content,
-		}
-		if err := batch.Index(doc.URI, docMap); err != nil {
+		if err := batch.Index(doc.URI, doc); err != nil {
 			return fmt.Errorf("failed to add document to batch: %w", err)
 		}
 	}
@@ -103,7 +117,7 @@ func buildMapping() mapping.IndexMapping {
 
 	// Content field: Indexed, Not Stored, Included in All
 	contentMapping := bleve.NewTextFieldMapping()
-	contentMapping.Store = false
+	contentMapping.Store = true // DEBUG: Store content to ensure we can see it
 	contentMapping.IncludeInAll = true
 	contentMapping.Analyzer = "standard"
 
@@ -131,11 +145,16 @@ func (s *Service) Search(queryStr string, limit *int) ([]SearchResult, error) {
 	// Match query (searches across all fields included in 'all')
 	// Python uses parse_query with default fields ["name", "content"]
 	// Bleve's QueryStringQuery is similar
-	query := bleve.NewQueryStringQuery(queryStr)
+	var query query.Query
+	if queryStr == "*" {
+		query = bleve.NewMatchAllQuery()
+	} else {
+		query = bleve.NewQueryStringQuery(queryStr)
+	}
 
 	searchRequest := bleve.NewSearchRequest(query)
 	searchRequest.Size = maxResults
-	searchRequest.Fields = []string{"uri", "name"} // Fields to retrieve
+	searchRequest.Fields = []string{"uri", "name", "content"} // Retrieve content too
 
 	searchResult, err := s.index.Search(searchRequest)
 	if err != nil {
@@ -144,12 +163,8 @@ func (s *Service) Search(queryStr string, limit *int) ([]SearchResult, error) {
 
 	results := make([]SearchResult, 0, len(searchResult.Hits))
 	for _, hit := range searchResult.Hits {
-		uri, ok1 := hit.Fields["uri"].(string)
-		name, ok2 := hit.Fields["name"].(string)
-
-		if !ok1 || !ok2 {
-			continue
-		}
+		uri, _ := hit.Fields["uri"].(string) // Relaxed check
+		name, _ := hit.Fields["name"].(string)
 
 		// Replicate Python snippet behavior
 		snippet := fmt.Sprintf("%s (relevance: %.2f)", name, hit.Score)
@@ -172,4 +187,12 @@ func (s *Service) Close() {
 	if s.indexDir != "" {
 		_ = os.RemoveAll(s.indexDir)
 	}
+}
+
+// DocCount returns number of docs in index
+func (s *Service) DocCount() (uint64, error) {
+	if s.index == nil {
+		return 0, nil
+	}
+	return s.index.DocCount()
 }

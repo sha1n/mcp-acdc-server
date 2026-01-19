@@ -10,8 +10,9 @@ import (
 
 // SearchSettings configuration for search service
 type SearchSettings struct {
-	MaxResults int `mapstructure:"max_results"`
-	HeapSizeMB int `mapstructure:"heap_size_mb"`
+	MaxResults int  `mapstructure:"max_results"`
+	HeapSizeMB int  `mapstructure:"heap_size_mb"`
+	InMemory   bool `mapstructure:"in_memory"`
 }
 
 // Settings application settings

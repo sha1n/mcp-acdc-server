@@ -58,7 +58,7 @@ func (p *ResourceProvider) ReadResource(uri string) (string, error) {
 }
 
 // GetAllResourceContents retrieves contents for all resources
-func (p *ResourceProvider) GetAllResourceContents() ([]map[string]string, error) {
+func (p *ResourceProvider) GetAllResourceContents() []map[string]string {
 	var results []map[string]string
 	for _, defn := range p.definitions {
 		content, err := p.ReadResource(defn.URI)
@@ -72,7 +72,7 @@ func (p *ResourceProvider) GetAllResourceContents() ([]map[string]string, error)
 			"content": content,
 		})
 	}
-	return results, nil
+	return results
 }
 
 // DiscoverResources discovers resources from markdown files

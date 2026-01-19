@@ -17,14 +17,19 @@ type SearchToolArgument struct {
 }
 
 // RegisterSearchTool registers the search tool with the server
-func RegisterSearchTool(s *server.MCPServer, searchService *search.Service, metadata domain.ToolMetadata) {
+func RegisterSearchTool(s *server.MCPServer, searchService search.Searcher, metadata domain.ToolMetadata) {
 	tool := mcp.NewTool(
 		metadata.Name,
 		mcp.WithDescription(metadata.Description),
 		mcp.WithString("query", mcp.Description("The search query. Use natural language or keywords.")),
 	)
 
-	s.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	s.AddTool(tool, NewSearchToolHandler(searchService))
+}
+
+// NewSearchToolHandler creates the handler for the search tool
+func NewSearchToolHandler(searchService search.Searcher) func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args, ok := req.Params.Arguments.(map[string]interface{})
 		if !ok {
 			return nil, fmt.Errorf("invalid arguments format")
@@ -51,5 +56,5 @@ func RegisterSearchTool(s *server.MCPServer, searchService *search.Service, meta
 		}
 
 		return mcp.NewToolResultText(sb.String()), nil
-	})
+	}
 }

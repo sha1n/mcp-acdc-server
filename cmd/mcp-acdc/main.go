@@ -7,13 +7,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/sha1n/mcp-acdc-server-go/internal/config"
-	"github.com/sha1n/mcp-acdc-server-go/internal/content"
-	"github.com/sha1n/mcp-acdc-server-go/internal/domain"
-	"github.com/sha1n/mcp-acdc-server-go/internal/mcp"
-	"github.com/sha1n/mcp-acdc-server-go/internal/resources"
-	"github.com/sha1n/mcp-acdc-server-go/internal/search"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -24,6 +18,28 @@ var (
 	// ProgramName is injected at build time
 	ProgramName = "mcp-acdc"
 )
+
+// RunParams contains dependencies for the run function
+type RunParams struct {
+	LoadSettings   func() (*config.Settings, error)
+	ServeStdio     func(*server.MCPServer) error
+	StartSSEServer func(*server.MCPServer, string) error
+	CreateServer   func(*config.Settings) (*server.MCPServer, func(), error)
+}
+
+// DefaultRunParams returns production dependencies
+func DefaultRunParams() RunParams {
+	return RunParams{
+		LoadSettings: config.LoadSettings,
+		ServeStdio: func(s *server.MCPServer) error {
+			return server.ServeStdio(s)
+		},
+		StartSSEServer: func(s *server.MCPServer, addr string) error {
+			return server.NewSSEServer(s).Start(addr)
+		},
+		CreateServer: CreateMCPServer,
+	}
+}
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -40,8 +56,13 @@ func main() {
 }
 
 func run() error {
+	return RunWithDeps(DefaultRunParams())
+}
+
+// RunWithDeps executes the server with the provided dependencies
+func RunWithDeps(params RunParams) error {
 	// Load settings
-	settings, err := config.LoadSettings()
+	settings, err := params.LoadSettings()
 	if err != nil {
 		return fmt.Errorf("failed to load settings: %w", err)
 	}
@@ -58,69 +79,19 @@ func run() error {
 
 	slog.Info("Starting MCP Acdc server", "version", Version, "transport", settings.Transport)
 
-	// Initialize content provider
-	cp := content.NewContentProvider(settings.ContentDir)
-
-	// Load metadata
-	metadataPath := cp.GetPath("mcp-metadata.yaml")
-
-	mdBytes, err := os.ReadFile(metadataPath)
+	mcpServer, cleanup, err := params.CreateServer(settings)
 	if err != nil {
-		return fmt.Errorf("failed to read metadata file: %w", err)
+		return err
 	}
-
-	var metadata domain.McpMetadata
-	if err := yaml.Unmarshal(mdBytes, &metadata); err != nil {
-		return fmt.Errorf("failed to parse metadata: %w", err)
+	if cleanup != nil {
+		defer cleanup()
 	}
-
-	if err := metadata.Validate(); err != nil {
-		return fmt.Errorf("metadata validation failed: %w", err)
-	}
-
-	// Discover resources
-	resourceDefinitions, err := resources.DiscoverResources(cp)
-	if err != nil {
-		return fmt.Errorf("failed to discover resources: %w", err)
-	}
-
-	resourceProvider := resources.NewResourceProvider(resourceDefinitions)
-
-	// Initialize search service
-	searchService := search.NewService(settings.Search)
-	defer searchService.Close()
-
-	// Index resources
-	docsToIndex, err := resourceProvider.GetAllResourceContents()
-	if err != nil {
-		slog.Error("Failed to get resource contents for indexing", "error", err)
-	} else {
-		var docs []search.Document
-		for _, d := range docsToIndex {
-			docs = append(docs, search.Document{
-				URI:     d["uri"],
-				Name:    d["name"],
-				Content: d["content"],
-			})
-		}
-
-		if err := searchService.IndexDocuments(docs); err != nil {
-			slog.Error("Failed to index documents", "error", err)
-		} else {
-			slog.Info("Indexed documents", "count", len(docs))
-		}
-	}
-
-	// Create MCP server
-	mcpServer := mcp.CreateServer(metadata, resourceProvider, searchService)
 
 	// Start server
 	if settings.Transport == "stdio" {
-		return server.ServeStdio(mcpServer)
+		return params.ServeStdio(mcpServer)
 	} else {
 		slog.Info("Starting SSE server", "host", settings.Host, "port", settings.Port)
-		// Mark3labs SSE server implementation
-		sseServer := server.NewSSEServer(mcpServer)
-		return sseServer.Start(fmt.Sprintf("%s:%d", settings.Host, settings.Port))
+		return params.StartSSEServer(mcpServer, fmt.Sprintf("%s:%d", settings.Host, settings.Port))
 	}
 }

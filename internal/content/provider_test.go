@@ -64,3 +64,64 @@ func TestContentProvider_LoadMarkdownWithFrontmatter(t *testing.T) {
 		t.Errorf("Expected content 'Markdown content', got '%s'", md.Content)
 	}
 }
+
+func TestContentProvider_LoadText_Error(t *testing.T) {
+	p := NewContentProvider(t.TempDir())
+	_, err := p.LoadText("non-existent.txt")
+	if err == nil {
+		t.Error("Expected error for non-existent file, got nil")
+	}
+}
+
+func TestContentProvider_LoadYAML_Error(t *testing.T) {
+	tempDir := t.TempDir()
+	p := NewContentProvider(tempDir)
+
+	// Case 1: File not found
+	_, err := p.LoadYAML("non-existent.yaml")
+	if err == nil {
+		t.Error("Expected error for non-existent file")
+	}
+
+	// Case 2: Invalid YAML
+	filePath := filepath.Join(tempDir, "invalid.yaml")
+	_ = os.WriteFile(filePath, []byte("invalid: : yaml"), 0644)
+	_, err = p.LoadYAML(filePath)
+	if err == nil {
+		t.Error("Expected error for invalid yaml")
+	}
+}
+
+func TestContentProvider_LoadMarkdownWithFrontmatter_Errors(t *testing.T) {
+	tempDir := t.TempDir()
+	p := NewContentProvider(tempDir)
+
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"No frontmatter", "Title: Test"},
+		{"Missing closing", "---\nTitle: Test"},
+		{"Invalid YAML", "---\nkey: : val\n---\nContent"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filePath := filepath.Join(tempDir, tt.name+".md")
+			_ = os.WriteFile(filePath, []byte(tt.content), 0644)
+			_, err := p.LoadMarkdownWithFrontmatter(filePath)
+			if err == nil {
+				t.Errorf("Expected error for %s", tt.name)
+			}
+		})
+	}
+}
+
+func TestContentProvider_GetPath(t *testing.T) {
+	p := NewContentProvider("/root")
+	path := p.GetPath("subdir", "file.txt")
+	expected := "/root/subdir/file.txt"
+	if path != expected {
+		t.Errorf("Expected '%s', got '%s'", expected, path)
+	}
+}
