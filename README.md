@@ -1,7 +1,10 @@
+[![CI](https://github.com/sha1n/mcp-acdc-server-go/actions/workflows/ci.yml/badge.svg)](https://github.com/sha1n/mcp-acdc-server-go/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/sha1n/mcp-acdc-server-go/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/sha1n/mcp-acdc-server-go/actions/workflows/codeql-analysis.yml)
-[![Go Report Card](https://goreportcard.com/badge/sha1n/mcp-acdc-server-go)](https://goreportcard.com/report/sha1n/mcp-acdc-server-go)
-[![Release Drafter](https://github.com/sha1n/mcp-acdc-server-go/actions/workflows/release-drafter.yml/badge.svg)](https://github.com/sha1n/mcp-acdc-server-go/actions/workflows/release-drafter.yml)
 [![codecov](https://codecov.io/gh/sha1n/mcp-acdc-server-go/graph/badge.svg?token=T67S1K956N)](https://codecov.io/gh/sha1n/mcp-acdc-server-go)
+[![Go Report Card](https://goreportcard.com/badge/github.com/sha1n/mcp-acdc-server-go)](https://goreportcard.com/report/github.com/sha1n/mcp-acdc-server-go)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/sha1n/mcp-acdc-server-go)](https://go.dev/)
+[![License](https://img.shields.io/github/license/sha1n/mcp-acdc-server-go)](LICENSE)
+[![Docker Image](https://img.shields.io/docker/v/sha1n/mcp-acdc-server-go?label=docker)](https://hub.docker.com/r/sha1n/mcp-acdc-server-go)
 
 # mcp-acdc-server
 
