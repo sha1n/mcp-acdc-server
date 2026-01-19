@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -40,8 +41,11 @@ func NewSearchToolHandler(searchService search.Searcher) func(ctx context.Contex
 			return nil, fmt.Errorf("missing 'query' argument")
 		}
 
+		slog.Info("Search request", "query", query)
+
 		results, err := searchService.Search(query, nil)
 		if err != nil {
+			slog.Error("Search failed", "query", query, "error", err)
 			return nil, err
 		}
 

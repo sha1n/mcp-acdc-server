@@ -67,14 +67,10 @@ func RunWithDeps(params RunParams) error {
 		return fmt.Errorf("failed to load settings: %w", err)
 	}
 
-	// Configure logging
-	var handler slog.Handler
-	if settings.Transport == "stdio" {
-		// Log to stderr for stdio transport
-		handler = slog.NewTextHandler(os.Stderr, nil)
-	} else {
-		handler = slog.NewTextHandler(os.Stdout, nil)
-	}
+	// Configure logging - always use stderr to avoid buffering issues
+	// stdout may be fully-buffered when not connected to a terminal,
+	// which can cause logs to not appear immediately
+	handler := slog.NewTextHandler(os.Stderr, nil)
 	slog.SetDefault(slog.New(handler))
 
 	slog.Info("Starting MCP Acdc server", "version", Version, "transport", settings.Transport)
