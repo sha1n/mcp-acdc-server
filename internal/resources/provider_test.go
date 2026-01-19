@@ -11,12 +11,16 @@ import (
 func TestDiscoverResources(t *testing.T) {
 	tempDir := t.TempDir()
 	resourcesDir := filepath.Join(tempDir, "mcp-resources")
-	os.MkdirAll(resourcesDir, 0755)
+	if err := os.MkdirAll(resourcesDir, 0755); err != nil {
+		t.Fatalf("failed to create resources dir: %v", err)
+	}
 
 	// Create a test resource
 	resourcePath := filepath.Join(resourcesDir, "test.md")
 	contentStr := "---\nname: Test Resource\ndescription: A test resource\n---\n# Test Content"
-	os.WriteFile(resourcePath, []byte(contentStr), 0644)
+	if err := os.WriteFile(resourcePath, []byte(contentStr), 0644); err != nil {
+		t.Fatalf("failed to write test resource: %v", err)
+	}
 
 	cp := content.NewContentProvider(tempDir)
 	defs, err := DiscoverResources(cp)
@@ -41,10 +45,14 @@ func TestResourceProvider_ReadResource(t *testing.T) {
 	// Setup
 	tempDir := t.TempDir()
 	resourcesDir := filepath.Join(tempDir, "mcp-resources")
-	os.MkdirAll(resourcesDir, 0755)
+	if err := os.MkdirAll(resourcesDir, 0755); err != nil {
+		t.Fatalf("failed to create resources dir: %v", err)
+	}
 	resourcePath := filepath.Join(resourcesDir, "test.md")
 	contentStr := "---\nname: Test\ndescription: Desc\n---\nContent"
-	os.WriteFile(resourcePath, []byte(contentStr), 0644)
+	if err := os.WriteFile(resourcePath, []byte(contentStr), 0644); err != nil {
+		t.Fatalf("failed to write test resource: %v", err)
+	}
 
 	defs := []ResourceDefinition{
 		{
