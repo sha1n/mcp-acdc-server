@@ -68,6 +68,18 @@ build:
 .PHONY: test
 test: install go-test
 
+## coverage: Runs all Go tests and generates a coverage report
+.PHONY: coverage
+coverage: install
+	@echo "  >  Running tests with coverage..."
+	go test $(MODFLAGS) -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out
+
+## coverage-html: Runs tests and opens the coverage report in a browser
+.PHONY: coverage-html
+coverage-html: coverage
+	go tool cover -html=coverage.out
+
 ## clean: Removes build artifacts
 .PHONY: clean
 clean:

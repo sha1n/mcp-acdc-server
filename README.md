@@ -1,6 +1,7 @@
 [![CodeQL](https://github.com/sha1n/mcp-acdc-server-go/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/sha1n/mcp-acdc-server-go/actions/workflows/codeql-analysis.yml)
 [![Go Report Card](https://goreportcard.com/badge/sha1n/mcp-acdc-server-go)](https://goreportcard.com/report/sha1n/mcp-acdc-server-go)
 [![Release Drafter](https://github.com/sha1n/mcp-acdc-server-go/actions/workflows/release-drafter.yml/badge.svg)](https://github.com/sha1n/mcp-acdc-server-go/actions/workflows/release-drafter.yml)
+[![codecov](https://codecov.io/gh/sha1n/mcp-acdc-server-go/graph/badge.svg?token=T67S1K956N)](https://codecov.io/gh/sha1n/mcp-acdc-server-go)
 
 # mcp-acdc-server
 
