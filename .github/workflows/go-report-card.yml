@@ -9,6 +9,8 @@ on:
 jobs:
   refresh_go_report_card:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
     - name: Go report card
       uses: creekorful/goreportcard-action@v1.0
