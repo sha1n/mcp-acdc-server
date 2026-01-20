@@ -8,6 +8,11 @@ import (
 	"github.com/sha1n/mcp-acdc-server-go/internal/search"
 )
 
+const (
+	// ToolNameSearch is the name of the search tool
+	ToolNameSearch = "search"
+)
+
 // CreateServer creates and configures the MCP server
 func CreateServer(
 	metadata domain.McpMetadata,
@@ -36,7 +41,7 @@ func CreateServer(
 
 	// Register Tools
 	toolsMap, _ := metadata.ToolsMap()
-	if toolMeta, ok := toolsMap["search"]; ok {
+	if toolMeta, ok := toolsMap[ToolNameSearch]; ok {
 		RegisterSearchTool(s, searchService, toolMeta)
 	}
 

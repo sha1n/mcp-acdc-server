@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -48,29 +49,35 @@ func RegisterGetResourceTool(s *server.MCPServer, resourceProvider *resources.Re
 // NewSearchToolHandler creates the handler for the search tool
 func NewSearchToolHandler(searchService search.Searcher) func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		args, ok := req.Params.Arguments.(map[string]interface{})
-		if !ok {
-			return nil, fmt.Errorf("invalid arguments format")
+		// Marshal arguments back to JSON then unmarshal into struct for validation
+		// This is a common pattern when arguments are map[string]interface{}
+		argsJSON, err := json.Marshal(req.Params.Arguments)
+		if err != nil {
+			return nil, fmt.Errorf("failed to process arguments: %w", err)
 		}
 
-		query, ok := args["query"].(string)
-		if !ok {
+		var args SearchToolArgument
+		if err := json.Unmarshal(argsJSON, &args); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+
+		if args.Query == "" {
 			return nil, fmt.Errorf("missing 'query' argument")
 		}
 
-		slog.Info("Search request", "query", query)
+		slog.Info("Search request", "query", args.Query)
 
-		results, err := searchService.Search(query, nil)
+		results, err := searchService.Search(args.Query, nil)
 		if err != nil {
-			slog.Error("Search failed", "query", query, "error", err)
+			slog.Error("Search failed", "query", args.Query, "error", err)
 			return nil, err
 		}
 
 		var sb strings.Builder
 		if len(results) == 0 {
-			sb.WriteString(fmt.Sprintf("No results found for '%s'", query))
+			sb.WriteString(fmt.Sprintf("No results found for '%s'", args.Query))
 		} else {
-			sb.WriteString(fmt.Sprintf("Search results for '%s':\n\n", query))
+			sb.WriteString(fmt.Sprintf("Search results for '%s':\n\n", args.Query))
 			for _, r := range results {
 				sb.WriteString(fmt.Sprintf("- [%s](%s): %s\n\n", r.Name, r.URI, r.Snippet))
 			}
