@@ -162,3 +162,54 @@ func TestNewMiddleware(t *testing.T) {
 		t.Error("Expected error for unknown auth type")
 	}
 }
+
+func TestPathExclusions(t *testing.T) {
+	// Create a basic auth middleware that requires auth
+	mw, err := NewMiddleware(config.AuthSettings{
+		Type: "basic",
+		Basic: config.BasicAuthSettings{
+			Username: "user",
+			Password: "pass",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Test that /health is accessible without auth
+	req := httptest.NewRequest("GET", "/health", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("/health should be accessible without auth, got %d", w.Code)
+	}
+
+	// Test that /ready is accessible without auth
+	req = httptest.NewRequest("GET", "/ready", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("/ready should be accessible without auth, got %d", w.Code)
+	}
+
+	// Test that other paths still require auth
+	req = httptest.NewRequest("GET", "/api/data", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("/api/data should require auth, got %d", w.Code)
+	}
+
+	// Test that auth still works for non-excluded paths
+	req = httptest.NewRequest("GET", "/api/data", nil)
+	req.SetBasicAuth("user", "pass")
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("/api/data with valid auth should succeed, got %d", w.Code)
+	}
+}
