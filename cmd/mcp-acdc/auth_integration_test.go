@@ -22,7 +22,9 @@ func getFreePort() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer l.Close()
+	defer func() {
+		_ = l.Close()
+	}()
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
@@ -63,7 +65,7 @@ func TestAuthIntegration(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("Expected 401 for no key, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Case 2: Wrong Key -> 401
 	client := &http.Client{}
@@ -76,7 +78,7 @@ func TestAuthIntegration(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("Expected 401 for wrong key, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Case 3: Key A -> 200
 	req, _ = http.NewRequest("GET", url, nil)
@@ -88,7 +90,7 @@ func TestAuthIntegration(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected 200 for key-A, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Case 4: Key B -> 200
 	req, _ = http.NewRequest("GET", url, nil)
@@ -100,7 +102,7 @@ func TestAuthIntegration(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected 200 for key-B, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
 
 func TestBasicAuthIntegration(t *testing.T) {
@@ -140,7 +142,7 @@ func TestBasicAuthIntegration(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("Expected 401 for missing creds, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Case 2: Wrong Creds -> 401
 	req, _ := http.NewRequest("GET", url, nil)
@@ -153,7 +155,7 @@ func TestBasicAuthIntegration(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("Expected 401 for wrong pass, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Case 3: Correct Creds -> 200
 	req, _ = http.NewRequest("GET", url, nil)
@@ -165,5 +167,5 @@ func TestBasicAuthIntegration(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("Expected 200 for correct creds, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
