@@ -65,6 +65,52 @@ func TestContentProvider_LoadMarkdownWithFrontmatter(t *testing.T) {
 	}
 }
 
+func TestContentProvider_LoadMarkdownWithFrontmatter_CRLF(t *testing.T) {
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "test_crlf.md")
+	content := "---\r\nname: Test\r\n---\r\nMarkdown content"
+	err := os.WriteFile(filePath, []byte(content), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p := NewContentProvider(tempDir)
+	md, err := p.LoadMarkdownWithFrontmatter(filePath)
+	if err != nil {
+		t.Fatalf("LoadMarkdownWithFrontmatter failed with CRLF: %v", err)
+	}
+
+	if md.Metadata["name"] != "Test" {
+		t.Errorf("Expected metadata name 'Test', got '%v'", md.Metadata["name"])
+	}
+	if md.Content != "Markdown content" {
+		t.Errorf("Expected content 'Markdown content', got '%s'", md.Content)
+	}
+}
+
+func TestContentProvider_LoadMarkdownWithFrontmatter_EmptyFrontmatter(t *testing.T) {
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "test_empty.md")
+	content := "---\n---\nMarkdown content"
+	err := os.WriteFile(filePath, []byte(content), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p := NewContentProvider(tempDir)
+	md, err := p.LoadMarkdownWithFrontmatter(filePath)
+	if err != nil {
+		t.Fatalf("LoadMarkdownWithFrontmatter failed with empty frontmatter: %v", err)
+	}
+
+	if len(md.Metadata) != 0 {
+		t.Errorf("Expected empty metadata, got %v", md.Metadata)
+	}
+	if md.Content != "Markdown content" {
+		t.Errorf("Expected content 'Markdown content', got '%s'", md.Content)
+	}
+}
+
 func TestContentProvider_LoadText_Error(t *testing.T) {
 	p := NewContentProvider(t.TempDir())
 	_, err := p.LoadText("non-existent.txt")
@@ -103,6 +149,8 @@ func TestContentProvider_LoadMarkdownWithFrontmatter_Errors(t *testing.T) {
 		{"No frontmatter", "Title: Test"},
 		{"Missing closing", "---\nTitle: Test"},
 		{"Invalid YAML", "---\nkey: : val\n---\nContent"},
+		{"Closing --- not on own line", "---\nkey: val\n---foo\nContent"},
+		{"Closing --- followed by text", "---\nkey: val\n--- text"},
 	}
 
 	for _, tt := range tests {

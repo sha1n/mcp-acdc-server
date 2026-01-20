@@ -69,6 +69,43 @@ func TestResourceProvider_Methods(t *testing.T) {
 	})
 }
 
+func TestResourceProvider_GetAllResourceContents_ErrorHandling(t *testing.T) {
+	defs := []ResourceDefinition{
+		{
+			URI:      "acdc://valid",
+			Name:     "Valid",
+			FilePath: "non-existent-but-wont-be-called-if-we-mock-it", // wait, ReadResource calls LoadMarkdownWithFrontmatter which reads from disk
+		},
+		{
+			URI:      "acdc://invalid",
+			Name:     "Invalid",
+			FilePath: "non-existent.md",
+		},
+	}
+
+	// We can't easily mock content.NewContentProvider("").LoadMarkdownWithFrontmatter(defn.FilePath)
+	// Because it's called inside ReadResource.
+	// But we can create a real file for the first one and let the second one fail.
+
+	tmp := t.TempDir()
+	validFile := filepath.Join(tmp, "valid.md")
+	_ = os.WriteFile(validFile, []byte("---\nname: Valid\ndescription: D\n---\nValidBody"), 0644)
+
+	defs[0].FilePath = validFile
+
+	p := NewResourceProvider(defs)
+	got := p.GetAllResourceContents()
+
+	if len(got) != 1 {
+		t.Errorf("GetAllResourceContents returned %d items, want 1 (successful one)", len(got))
+		return
+	}
+
+	if got[0]["uri"] != "acdc://valid" {
+		t.Errorf("Expected uri 'acdc://valid', got '%s'", got[0]["uri"])
+	}
+}
+
 func TestDiscoverResources(t *testing.T) {
 	// Setup directory structure
 	tmp := t.TempDir()

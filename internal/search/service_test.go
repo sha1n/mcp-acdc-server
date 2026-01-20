@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/blevesearch/bleve/v2"
 	"github.com/sha1n/mcp-acdc-server-go/internal/config"
 )
 
@@ -195,5 +196,83 @@ func TestSearchService_Extended(t *testing.T) {
 	expectedSnippetPrefix := "Alpha (relevance:"
 	if len(r.Snippet) < len(expectedSnippetPrefix) || r.Snippet[:len(expectedSnippetPrefix)] != expectedSnippetPrefix {
 		t.Errorf("Snippet '%s' does not start with expected prefix '%s'", r.Snippet, expectedSnippetPrefix)
+	}
+}
+
+func TestSearch_MissingName(t *testing.T) {
+	service := NewService(config.SearchSettings{InMemory: true, MaxResults: 10})
+	if err := service.IndexDocuments([]Document{
+		{
+			URI:     "acdc://test",
+			Name:    "", // empty name to trigger fallback
+			Content: "The quick brown fox jumps over the lazy dog",
+		},
+	}); err != nil {
+		t.Fatalf("IndexDocuments failed: %v", err)
+	}
+	defer service.Close()
+
+	results, err := service.Search("fox", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 result for 'fox', got %d", len(results))
+	}
+	if results[0].Name != "Unknown" {
+		t.Errorf("Expected name 'Unknown', got '%s'", results[0].Name)
+	}
+}
+
+func TestSearch_MissingURI(t *testing.T) {
+	service := NewService(config.SearchSettings{InMemory: true, MaxResults: 10})
+
+	// Since we can't easily produce a hit without a URI using IndexDocuments,
+	// we use a real index and custom indexing logic just for this test.
+	index, _ := bleve.NewMemOnly(buildMapping())
+	_ = index.Index("1", struct {
+		Name    string `json:"name"`
+		Content string `json:"content"`
+	}{
+		Name:    "TestDoc",
+		Content: "Some test content",
+	})
+	service.index = index
+	defer service.Close()
+
+	results, err := service.Search("test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Documents missing URI should be skipped
+	if len(results) != 0 {
+		t.Errorf("Expected 0 results because URI is missing, got %d", len(results))
+	}
+}
+
+func TestSearch_WrongTypeName(t *testing.T) {
+	service := NewService(config.SearchSettings{InMemory: true, MaxResults: 10})
+	index, _ := bleve.NewMemOnly(buildMapping())
+	_ = index.Index("acdc://test", struct {
+		URI     string `json:"uri"`
+		Name    int    `json:"name"` // wrong type
+		Content string `json:"content"`
+	}{
+		URI:     "acdc://test",
+		Name:    123,
+		Content: "Some test content",
+	})
+	service.index = index
+	defer service.Close()
+
+	results, err := service.Search("test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 result, got %d", len(results))
+	}
+	if results[0].Name != "Unknown" {
+		t.Errorf("Expected name 'Unknown', got '%s'", results[0].Name)
 	}
 }

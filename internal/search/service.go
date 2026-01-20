@@ -2,6 +2,7 @@ package search
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/blevesearch/bleve/v2"
@@ -163,8 +164,16 @@ func (s *Service) Search(queryStr string, limit *int) ([]SearchResult, error) {
 
 	results := make([]SearchResult, 0, len(searchResult.Hits))
 	for _, hit := range searchResult.Hits {
-		uri, _ := hit.Fields["uri"].(string) // Relaxed check
-		name, _ := hit.Fields["name"].(string)
+		uri, ok := hit.Fields["uri"].(string)
+		if !ok {
+			slog.Warn("Search hit missing URI field", "id", hit.ID)
+			continue
+		}
+
+		name, ok := hit.Fields["name"].(string)
+		if !ok || name == "" {
+			name = "Unknown" // Fallback
+		}
 
 		// Replicate Python snippet behavior
 		snippet := fmt.Sprintf("%s (relevance: %.2f)", name, hit.Score)
