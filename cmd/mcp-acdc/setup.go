@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 
 	"github.com/mark3labs/mcp-go/server"
@@ -14,7 +15,6 @@ import (
 	"github.com/sha1n/mcp-acdc-server-go/internal/resources"
 	"github.com/sha1n/mcp-acdc-server-go/internal/search"
 	"gopkg.in/yaml.v3"
-	"net/http"
 )
 
 // StartSSEServer starts the SSE server with authentication
