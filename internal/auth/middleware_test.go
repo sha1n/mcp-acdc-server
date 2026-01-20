@@ -46,27 +46,27 @@ func TestBasicAuth(t *testing.T) {
 }
 
 func TestAPIKeyAuth(t *testing.T) {
-	apiKey := "secret-key"
-	middleware := apiKeyMiddleware(apiKey)
+	apiKeys := []string{"key-1", "key-2"}
+	middleware := apiKeyMiddleware(apiKeys)
 	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	// Test valid header
+	// Test valid header (Key 1)
 	req := httptest.NewRequest("GET", "/", nil)
-	req.Header.Set("X-API-Key", "secret-key")
+	req.Header.Set("X-API-Key", "key-1")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", w.Code)
+		t.Errorf("Expected status 200 for key-1, got %d", w.Code)
 	}
 
-	// Test valid query param
-	req = httptest.NewRequest("GET", "/?api_key=secret-key", nil)
+	// Test valid query param (Key 2)
+	req = httptest.NewRequest("GET", "/?api_key=key-2", nil)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", w.Code)
+		t.Errorf("Expected status 200 for key-2, got %d", w.Code)
 	}
 
 	// Test invalid key
@@ -75,7 +75,15 @@ func TestAPIKeyAuth(t *testing.T) {
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusUnauthorized {
-		t.Errorf("Expected status 401, got %d", w.Code)
+		t.Errorf("Expected status 401 for wrong key, got %d", w.Code)
+	}
+
+	// Test empty key
+	req = httptest.NewRequest("GET", "/", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401 for missing key, got %d", w.Code)
 	}
 }
 

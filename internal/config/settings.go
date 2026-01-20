@@ -17,22 +17,15 @@ type SearchSettings struct {
 
 // AuthSettings configuration for authentication
 type AuthSettings struct {
-	Type   string            `mapstructure:"type"` // "none", "basic", "oidc", "apikey"
-	Basic  BasicAuthSettings `mapstructure:"basic"`
-	OIDC   OIDCSettings      `mapstructure:"oidc"`
-	APIKey string            `mapstructure:"api_key"`
+	Type    string            `mapstructure:"type"` // "none", "basic", "apikey"
+	Basic   BasicAuthSettings `mapstructure:"basic"`
+	APIKeys []string          `mapstructure:"api_keys"`
 }
 
 // BasicAuthSettings configuration for basic auth
 type BasicAuthSettings struct {
 	Username string `mapstructure:"username"`
 	Password string `mapstructure:"password"`
-}
-
-// OIDCSettings configuration for OIDC
-type OIDCSettings struct {
-	IssuerURL string `mapstructure:"issuer_url"`
-	ClientID  string `mapstructure:"client_id"`
 }
 
 // Settings application settings
@@ -73,9 +66,7 @@ func LoadSettings() (*Settings, error) {
 	_ = v.BindEnv("auth.type", "ACDC_MCP_AUTH_TYPE")
 	_ = v.BindEnv("auth.basic.username", "ACDC_MCP_AUTH_BASIC_USERNAME")
 	_ = v.BindEnv("auth.basic.password", "ACDC_MCP_AUTH_BASIC_PASSWORD")
-	_ = v.BindEnv("auth.oidc.issuer_url", "ACDC_MCP_AUTH_OIDC_ISSUER_URL")
-	_ = v.BindEnv("auth.oidc.client_id", "ACDC_MCP_AUTH_OIDC_CLIENT_ID")
-	_ = v.BindEnv("auth.api_key", "ACDC_MCP_AUTH_API_KEY")
+	_ = v.BindEnv("auth.api_keys", "ACDC_MCP_AUTH_API_KEYS")
 
 	// Helper to look for .env file
 	v.SetConfigName(".env")
@@ -86,6 +77,20 @@ func LoadSettings() (*Settings, error) {
 	var settings Settings
 	if err := v.Unmarshal(&settings); err != nil {
 		return nil, err
+	}
+
+	// Handle explicit parsing of API keys if provided via env var as comma-separated string
+	// Viper might return a single element slice containing the commas if it fails to split.
+	// We explicitly fix this up.
+	apiKeysEnv := os.Getenv("ACDC_MCP_AUTH_API_KEYS")
+	if apiKeysEnv != "" {
+		// If the struct is empty OR looks like a failed split (1 element with commas)
+		if len(settings.Auth.APIKeys) == 0 || (len(settings.Auth.APIKeys) == 1 && strings.Contains(settings.Auth.APIKeys[0], ",")) {
+			settings.Auth.APIKeys = strings.Split(apiKeysEnv, ",")
+			for i := range settings.Auth.APIKeys {
+				settings.Auth.APIKeys[i] = strings.TrimSpace(settings.Auth.APIKeys[i])
+			}
+		}
 	}
 
 	return &settings, nil
