@@ -6,12 +6,12 @@ import (
 	"os"
 
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/sha1n/mcp-acdc-server-go/internal/auth"
 	"github.com/sha1n/mcp-acdc-server-go/internal/config"
 	"github.com/sha1n/mcp-acdc-server-go/internal/content"
 	"github.com/sha1n/mcp-acdc-server-go/internal/domain"
 	"github.com/sha1n/mcp-acdc-server-go/internal/mcp"
 	"github.com/sha1n/mcp-acdc-server-go/internal/resources"
-	"github.com/sha1n/mcp-acdc-server-go/internal/auth"
 	"github.com/sha1n/mcp-acdc-server-go/internal/search"
 	"gopkg.in/yaml.v3"
 	"net/http"
