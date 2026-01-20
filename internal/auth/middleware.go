@@ -43,10 +43,6 @@ func apiKeyMiddleware(apiKeys []string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key := r.Header.Get("X-API-Key")
 			if key == "" {
-				key = r.URL.Query().Get("api_key")
-			}
-
-			if key == "" {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}

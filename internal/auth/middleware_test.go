@@ -61,8 +61,9 @@ func TestAPIKeyAuth(t *testing.T) {
 		t.Errorf("Expected status 200 for key-1, got %d", w.Code)
 	}
 
-	// Test valid query param (Key 2)
-	req = httptest.NewRequest("GET", "/?api_key=key-2", nil)
+	// Test valid header (Key 2)
+	req = httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("X-API-Key", "key-2")
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
