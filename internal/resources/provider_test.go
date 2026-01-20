@@ -125,10 +125,10 @@ func TestDiscoverResources(t *testing.T) {
 		uris[d.URI] = true
 	}
 
-	if !uris["acdc:///valid"] {
-		t.Error("Missing acdc:///valid")
+	if !uris["acdc://valid"] {
+		t.Error("Missing acdc://valid")
 	}
-	if !uris["acdc:///sub/sub"] {
-		t.Error("Missing acdc:///sub/sub")
+	if !uris["acdc://sub/sub"] {
+		t.Error("Missing acdc://sub/sub")
 	}
 }

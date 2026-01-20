@@ -40,5 +40,7 @@ func CreateServer(
 		RegisterSearchTool(s, searchService, toolMeta)
 	}
 
+	RegisterGetResourceTool(s, resourceProvider)
+
 	return s
 }

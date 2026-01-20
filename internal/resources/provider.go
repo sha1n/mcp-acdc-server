@@ -116,7 +116,7 @@ func DiscoverResources(cp *content.ContentProvider) ([]ResourceDefinition, error
 		relPathNoExt := strings.TrimSuffix(relPath, filepath.Ext(relPath))
 		// normalized for URI (slashes)
 		uriPath := filepath.ToSlash(relPathNoExt)
-		uri := fmt.Sprintf("acdc:///%s", uriPath)
+		uri := fmt.Sprintf("acdc://%s", uriPath)
 
 		definitions = append(definitions, ResourceDefinition{
 			URI:         uri,
