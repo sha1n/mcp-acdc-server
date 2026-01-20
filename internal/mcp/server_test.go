@@ -8,6 +8,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/sha1n/mcp-acdc-server-go/internal/domain"
 	"github.com/sha1n/mcp-acdc-server-go/internal/resources"
+	"github.com/sha1n/mcp-acdc-server-go/internal/search"
 )
 
 func TestCreateServer(t *testing.T) {
@@ -114,4 +115,17 @@ func TestResourceHandler(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error when file is missing, got nil")
 	}
+}
+
+type MockSearcher struct{}
+
+func (m *MockSearcher) Search(query string, options *int) ([]search.SearchResult, error) {
+	return nil, nil
+}
+
+func (m *MockSearcher) Close() {
+}
+
+func (m *MockSearcher) IndexDocuments(docs []search.Document) error {
+	return nil
 }

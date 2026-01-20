@@ -248,7 +248,7 @@ This is SSE test content.
 
 	// 7. Send resources/read request
 	readResp, err := sendRequest(3, "resources/read", map[string]interface{}{
-		"uri": "acdc:///test-resource",
+		"uri": "acdc://test-resource",
 	})
 	if err != nil {
 		t.Fatalf("resources/read failed: %v", err)
