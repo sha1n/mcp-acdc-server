@@ -23,7 +23,7 @@ var (
 type RunParams struct {
 	LoadSettings   func() (*config.Settings, error)
 	ServeStdio     func(*server.MCPServer) error
-	StartSSEServer func(*server.MCPServer, string) error
+	StartSSEServer func(*server.MCPServer, *config.Settings) error
 	CreateServer   func(*config.Settings) (*server.MCPServer, func(), error)
 }
 
@@ -34,10 +34,8 @@ func DefaultRunParams() RunParams {
 		ServeStdio: func(s *server.MCPServer) error {
 			return server.ServeStdio(s)
 		},
-		StartSSEServer: func(s *server.MCPServer, addr string) error {
-			return server.NewSSEServer(s).Start(addr)
-		},
-		CreateServer: CreateMCPServer,
+		StartSSEServer: StartSSEServer,
+		CreateServer:   CreateMCPServer,
 	}
 }
 
@@ -88,6 +86,6 @@ func RunWithDeps(params RunParams) error {
 		return params.ServeStdio(mcpServer)
 	} else {
 		slog.Info("Starting SSE server", "host", settings.Host, "port", settings.Port)
-		return params.StartSSEServer(mcpServer, fmt.Sprintf("%s:%d", settings.Host, settings.Port))
+		return params.StartSSEServer(mcpServer, settings)
 	}
 }

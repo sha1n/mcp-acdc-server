@@ -77,14 +77,49 @@ docker run -p 8000:8000 \
 
 The server can be configured using environment variables or a `.env` file in the working directory.
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ACDC_MCP_CONTENT_DIR` | Path to the directory containing content/resources | `./content` |
-| `ACDC_MCP_TRANSPORT` | Server transport type (`stdio` or `sse`) | `sse` |
-| `ACDC_MCP_HOST` | Host for SSE server | `0.0.0.0` |
-| `ACDC_MCP_PORT` | Port for SSE server | `8000` |
-| `ACDC_MCP_SEARCH_MAX_RESULTS` | Maximum number of search results to return | `10` |
-| `ACDC_MCP_SEARCH_HEAP_SIZE_MB` | Heap size limit for the search indexer | `50` |
+| Variable                       | Description                                        | Default     |
+| ------------------------------ | -------------------------------------------------- | ----------- |
+| `ACDC_MCP_CONTENT_DIR`         | Path to the directory containing content/resources | `./content` |
+| `ACDC_MCP_TRANSPORT`           | Server transport type (`stdio` or `sse`)           | `sse`       |
+| `ACDC_MCP_HOST`                | Host for SSE server                                | `0.0.0.0`   |
+| `ACDC_MCP_PORT`                | Port for SSE server                                | `8000`      |
+| `ACDC_MCP_SEARCH_MAX_RESULTS`  | Maximum number of search results to return         | `10`        |
+| `ACDC_MCP_SEARCH_HEAP_SIZE_MB` | Heap size limit for the search indexer             | `50`        |
+
+### Authentication
+
+The server supports optional authentication to secure access. Configure using the following environment variables:
+
+| Variable                       | Description                                       | Default                        |
+| ------------------------------ | ------------------------------------------------- | ------------------------------ |
+| `ACDC_MCP_AUTH_TYPE`           | Authentication type: `none`, `basic`, or `apikey` | `none`                         |
+| `ACDC_MCP_AUTH_BASIC_USERNAME` | Username for Basic auth                           | (required if type is `basic`)  |
+| `ACDC_MCP_AUTH_BASIC_PASSWORD` | Password for Basic auth                           | (required if type is `basic`)  |
+| `ACDC_MCP_AUTH_API_KEYS`       | Comma-separated list of valid API keys            | (required if type is `apikey`) |
+
+**Example - Basic Auth:**
+```bash
+ACDC_MCP_AUTH_TYPE=basic \
+ACDC_MCP_AUTH_BASIC_USERNAME=admin \
+ACDC_MCP_AUTH_BASIC_PASSWORD=secret \
+./bin/mcp-acdc
+```
+
+**Example - API Key Auth:**
+```bash
+ACDC_MCP_AUTH_TYPE=apikey \
+ACDC_MCP_AUTH_API_KEYS="key1,key2,key3" \
+./bin/mcp-acdc
+```
+
+API keys must be provided via the `X-API-Key` header in HTTP requests.
+
+> [!CAUTION]
+> **Security Best Practices:**
+> - Never commit credentials to version control. Ensure `.env` files are in `.gitignore`.
+> - Use a secrets manager (e.g., HashiCorp Vault, AWS Secrets Manager) in production.
+> - For containerized deployments, use Kubernetes Secrets or Docker secrets.
+> - Rotate credentials regularly and use strong, unique passwords/keys.
 
 ### Content Metadata
 The server expects an `mcp-metadata.yaml` file in the root of your content directory to define server identity.

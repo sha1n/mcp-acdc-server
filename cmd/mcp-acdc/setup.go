@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/sha1n/mcp-acdc-server-go/internal/auth"
 	"github.com/sha1n/mcp-acdc-server-go/internal/config"
 	"github.com/sha1n/mcp-acdc-server-go/internal/content"
 	"github.com/sha1n/mcp-acdc-server-go/internal/domain"
@@ -14,6 +16,23 @@ import (
 	"github.com/sha1n/mcp-acdc-server-go/internal/search"
 	"gopkg.in/yaml.v3"
 )
+
+// StartSSEServer starts the SSE server with authentication
+func StartSSEServer(s *server.MCPServer, settings *config.Settings) error {
+	sseServer := server.NewSSEServer(s)
+
+	authMiddleware, err := auth.NewMiddleware(settings.Auth)
+	if err != nil {
+		return fmt.Errorf("failed to create auth middleware: %w", err)
+	}
+
+	handler := authMiddleware(sseServer)
+
+	addr := fmt.Sprintf("%s:%d", settings.Host, settings.Port)
+
+	slog.Info("Server listening (HTTP)", "addr", addr, "auth_type", settings.Auth.Type)
+	return http.ListenAndServe(addr, handler)
+}
 
 // CreateMCPServer initializes the core MCP server components
 func CreateMCPServer(settings *config.Settings) (*server.MCPServer, func(), error) {
