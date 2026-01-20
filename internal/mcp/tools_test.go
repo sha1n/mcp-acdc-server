@@ -27,14 +27,14 @@ func (m *TestMockSearcher) IndexDocuments(docs []search.Document) error {
 	return nil
 }
 
-func TestGetResourceToolHandler_Errors(t *testing.T) {
+func TestReadToolHandler_Errors(t *testing.T) {
 	provider := resources.NewResourceProvider(nil)
-	handler := NewGetResourceToolHandler(provider)
+	handler := NewReadToolHandler(provider)
 
 	t.Run("MissingArguments", func(t *testing.T) {
 		req := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
-				Name:      "get_resource",
+				Name:      "read",
 				Arguments: map[string]interface{}{},
 			},
 		}
@@ -47,7 +47,7 @@ func TestGetResourceToolHandler_Errors(t *testing.T) {
 	t.Run("UnknownResource", func(t *testing.T) {
 		req := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
-				Name: "get_resource",
+				Name: "read",
 				Arguments: map[string]interface{}{
 					"uri": "acdc://unknown",
 				},
