@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/server"
@@ -59,7 +60,7 @@ func TestRunWithDeps_StdioTransport(t *testing.T) {
 			stdioWasCalled = true
 			return nil
 		},
-		StartSSEServer: func(*server.MCPServer, string) error {
+		StartSSEServer: func(*server.MCPServer, *config.Settings) error {
 			sseWasCalled = true
 			return nil
 		},
@@ -102,9 +103,9 @@ func TestRunWithDeps_SSETransport(t *testing.T) {
 			stdioWasCalled = true
 			return nil
 		},
-		StartSSEServer: func(s *server.MCPServer, addr string) error {
+		StartSSEServer: func(s *server.MCPServer, settings *config.Settings) error {
 			sseWasCalled = true
-			capturedAddr = addr
+			capturedAddr = fmt.Sprintf("%s:%d", settings.Host, settings.Port)
 			return nil
 		},
 	}
@@ -158,7 +159,7 @@ func TestRunWithDeps_SSEServerError(t *testing.T) {
 		CreateServer: func(*config.Settings) (*server.MCPServer, func(), error) {
 			return &server.MCPServer{}, nil, nil
 		},
-		StartSSEServer: func(*server.MCPServer, string) error {
+		StartSSEServer: func(*server.MCPServer, *config.Settings) error {
 			return errors.New("sse start error")
 		},
 	}
@@ -181,7 +182,7 @@ func TestRunWithDeps_NilCleanup(t *testing.T) {
 		CreateServer: func(*config.Settings) (*server.MCPServer, func(), error) {
 			return &server.MCPServer{}, nil, nil // nil cleanup
 		},
-		StartSSEServer: func(*server.MCPServer, string) error {
+		StartSSEServer: func(*server.MCPServer, *config.Settings) error {
 			return nil
 		},
 	}
