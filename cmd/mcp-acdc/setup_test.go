@@ -210,3 +210,110 @@ func containsHelper(s, substr string) bool {
 	}
 	return false
 }
+
+func TestCreateMCPServer_InvalidToolMetadata_MissingName(t *testing.T) {
+	tempDir := t.TempDir()
+	contentDir := filepath.Join(tempDir, "content")
+	resourcesDir := filepath.Join(contentDir, "mcp-resources")
+	_ = os.MkdirAll(resourcesDir, 0755)
+
+	// Tool missing name should fail validation
+	metadataContent := `
+server:
+  name: test
+  version: 1.0
+  instructions: inst
+tools:
+  - name: ""
+    description: "A tool without name"
+`
+	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
+
+	settings := &config.Settings{
+		ContentDir: contentDir,
+		Search: config.SearchSettings{
+			InMemory:   true,
+			MaxResults: 10,
+		},
+	}
+
+	_, _, err := CreateMCPServer(settings)
+	if err == nil {
+		t.Fatal("Expected error when tool name is missing")
+	}
+	if !contains(err.Error(), "metadata validation failed") {
+		t.Errorf("Unexpected error message: %v", err)
+	}
+}
+
+func TestCreateMCPServer_InvalidToolMetadata_MissingDescription(t *testing.T) {
+	tempDir := t.TempDir()
+	contentDir := filepath.Join(tempDir, "content")
+	resourcesDir := filepath.Join(contentDir, "mcp-resources")
+	_ = os.MkdirAll(resourcesDir, 0755)
+
+	// Tool missing description should fail validation
+	metadataContent := `
+server:
+  name: test
+  version: 1.0
+  instructions: inst
+tools:
+  - name: "search"
+    description: ""
+`
+	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
+
+	settings := &config.Settings{
+		ContentDir: contentDir,
+		Search: config.SearchSettings{
+			InMemory:   true,
+			MaxResults: 10,
+		},
+	}
+
+	_, _, err := CreateMCPServer(settings)
+	if err == nil {
+		t.Fatal("Expected error when tool description is missing")
+	}
+	if !contains(err.Error(), "metadata validation failed") {
+		t.Errorf("Unexpected error message: %v", err)
+	}
+}
+
+func TestCreateMCPServer_InvalidToolMetadata_DuplicateNames(t *testing.T) {
+	tempDir := t.TempDir()
+	contentDir := filepath.Join(tempDir, "content")
+	resourcesDir := filepath.Join(contentDir, "mcp-resources")
+	_ = os.MkdirAll(resourcesDir, 0755)
+
+	// Duplicate tool names should fail validation
+	metadataContent := `
+server:
+  name: test
+  version: 1.0
+  instructions: inst
+tools:
+  - name: "search"
+    description: "First search tool"
+  - name: "search"
+    description: "Duplicate search tool"
+`
+	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
+
+	settings := &config.Settings{
+		ContentDir: contentDir,
+		Search: config.SearchSettings{
+			InMemory:   true,
+			MaxResults: 10,
+		},
+	}
+
+	_, _, err := CreateMCPServer(settings)
+	if err == nil {
+		t.Fatal("Expected error when tool names are duplicated")
+	}
+	if !contains(err.Error(), "duplicate tool name") {
+		t.Errorf("Unexpected error message: %v", err)
+	}
+}

@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"log/slog"
+
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/sha1n/mcp-acdc-server-go/internal/domain"
@@ -11,6 +13,8 @@ import (
 const (
 	// ToolNameSearch is the name of the search tool
 	ToolNameSearch = "search"
+	// ToolNameRead is the name of the read tool
+	ToolNameRead = "read"
 )
 
 // CreateServer creates and configures the MCP server
@@ -43,9 +47,16 @@ func CreateServer(
 	toolsMap, _ := metadata.ToolsMap()
 	if toolMeta, ok := toolsMap[ToolNameSearch]; ok {
 		RegisterSearchTool(s, searchService, toolMeta)
+		slog.Info("Registered tool", "name", ToolNameSearch)
+	} else {
+		slog.Warn("Tool not registered (missing metadata)", "name", ToolNameSearch)
 	}
-
-	RegisterGetResourceTool(s, resourceProvider)
+	if toolMeta, ok := toolsMap[ToolNameRead]; ok {
+		RegisterReadTool(s, resourceProvider, toolMeta)
+		slog.Info("Registered tool", "name", ToolNameRead)
+	} else {
+		slog.Warn("Tool not registered (missing metadata)", "name", ToolNameRead)
+	}
 
 	return s
 }

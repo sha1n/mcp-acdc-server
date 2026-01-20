@@ -129,3 +129,90 @@ func (m *MockSearcher) Close() {
 func (m *MockSearcher) IndexDocuments(docs []search.Document) error {
 	return nil
 }
+
+func TestCreateServer_ToolsNotRegisteredWhenMetadataMissing(t *testing.T) {
+	tests := []struct {
+		name         string
+		tools        []domain.ToolMetadata
+		expectSearch bool
+		expectRead   bool
+	}{
+		{
+			name:         "No tools defined",
+			tools:        []domain.ToolMetadata{},
+			expectSearch: false,
+			expectRead:   false,
+		},
+		{
+			name: "Only search tool defined",
+			tools: []domain.ToolMetadata{
+				{Name: "search", Description: "Search tool"},
+			},
+			expectSearch: true,
+			expectRead:   false,
+		},
+		{
+			name: "Only read tool defined",
+			tools: []domain.ToolMetadata{
+				{Name: "read", Description: "Read tool"},
+			},
+			expectSearch: false,
+			expectRead:   true,
+		},
+		{
+			name: "Both tools defined",
+			tools: []domain.ToolMetadata{
+				{Name: "search", Description: "Search tool"},
+				{Name: "read", Description: "Read tool"},
+			},
+			expectSearch: true,
+			expectRead:   true,
+		},
+		{
+			name: "Unknown tool only",
+			tools: []domain.ToolMetadata{
+				{Name: "unknown", Description: "Unknown tool"},
+			},
+			expectSearch: false,
+			expectRead:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metadata := domain.McpMetadata{
+				Server: domain.ServerMetadata{
+					Name:         "test-server",
+					Version:      "1.0.0",
+					Instructions: "Test",
+				},
+				Tools: tt.tools,
+			}
+
+			resProvider := resources.NewResourceProvider(nil)
+			searchService := &MockSearcher{}
+
+			// CreateServer should not panic regardless of tool metadata
+			s := CreateServer(metadata, resProvider, searchService)
+			if s == nil {
+				t.Fatal("CreateServer returned nil")
+			}
+
+			// Verify tools map behavior
+			toolsMap, err := metadata.ToolsMap()
+			if err != nil {
+				t.Fatalf("ToolsMap returned error: %v", err)
+			}
+
+			_, searchExists := toolsMap[ToolNameSearch]
+			_, readExists := toolsMap[ToolNameRead]
+
+			if searchExists != tt.expectSearch {
+				t.Errorf("Search tool in metadata: got %v, want %v", searchExists, tt.expectSearch)
+			}
+			if readExists != tt.expectRead {
+				t.Errorf("Read tool in metadata: got %v, want %v", readExists, tt.expectRead)
+			}
+		})
+	}
+}

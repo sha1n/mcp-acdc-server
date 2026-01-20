@@ -19,8 +19,8 @@ type SearchToolArgument struct {
 	Query string `json:"query"`
 }
 
-// GetResourceToolArgument represents arguments for get_resource tool
-type GetResourceToolArgument struct {
+// ReadToolArgument represents arguments for read tool
+type ReadToolArgument struct {
 	URI string `json:"uri"`
 }
 
@@ -35,15 +35,15 @@ func RegisterSearchTool(s *server.MCPServer, searchService search.Searcher, meta
 	s.AddTool(tool, NewSearchToolHandler(searchService))
 }
 
-// RegisterGetResourceTool registers the get_resource tool with the server
-func RegisterGetResourceTool(s *server.MCPServer, resourceProvider *resources.ResourceProvider) {
+// RegisterReadTool registers the read tool with the server
+func RegisterReadTool(s *server.MCPServer, resourceProvider *resources.ResourceProvider, metadata domain.ToolMetadata) {
 	tool := mcp.NewTool(
-		"get_resource",
-		mcp.WithDescription("Get the full content of a resource by its URI"),
+		metadata.Name,
+		mcp.WithDescription(metadata.Description),
 		mcp.WithString("uri", mcp.Description("The acdc:// URI of the resource to fetch")),
 	)
 
-	s.AddTool(tool, NewGetResourceToolHandler(resourceProvider))
+	s.AddTool(tool, NewReadToolHandler(resourceProvider))
 }
 
 // NewSearchToolHandler creates the handler for the search tool
@@ -87,8 +87,8 @@ func NewSearchToolHandler(searchService search.Searcher) func(ctx context.Contex
 	}
 }
 
-// NewGetResourceToolHandler creates the handler for the get_resource tool
-func NewGetResourceToolHandler(resourceProvider *resources.ResourceProvider) func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+// NewReadToolHandler creates the handler for the read tool
+func NewReadToolHandler(resourceProvider *resources.ResourceProvider) func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args, ok := req.Params.Arguments.(map[string]interface{})
 		if !ok {
