@@ -59,7 +59,9 @@ func LoadSettings() (*Settings, error) {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
-	// Bind specific env vars for nested config
+	// Bind specific env vars for nested config.
+	// BindEnv only returns an error if the key is empty, which cannot happen
+	// with hardcoded keys. Errors are intentionally discarded here.
 	_ = v.BindEnv("search.max_results", "ACDC_MCP_SEARCH_MAX_RESULTS")
 	_ = v.BindEnv("search.heap_size_mb", "ACDC_MCP_SEARCH_HEAP_SIZE_MB")
 
