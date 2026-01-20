@@ -136,7 +136,7 @@ func TestResourceReadIntegration(t *testing.T) {
 	})
 
 	// 6. List Resources to verify exact URI string
-	targetURI := "acdc:///tools/bert-benchmarking"
+	targetURI := "acdc://tools/bert-benchmarking"
 	sendRequest(map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      10,
