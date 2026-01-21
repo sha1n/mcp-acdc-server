@@ -1,8 +1,9 @@
-package main
+package app
 
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/server"
@@ -15,59 +16,91 @@ func noopValidate(*config.Settings) error {
 	return nil
 }
 
-func TestRunWithDeps_LoadSettingsError(t *testing.T) {
-	params := RunParams{
-		LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
-			return nil, errors.New("settings error")
+func TestRunWithDeps_ErrorCases(t *testing.T) {
+	tests := []struct {
+		name           string
+		params         RunParams
+		wantErrContain string
+	}{
+		{
+			name: "LoadSettings error",
+			params: RunParams{
+				LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
+					return nil, errors.New("settings error")
+				},
+				ValidSettings: noopValidate,
+			},
+			wantErrContain: "failed to load settings",
 		},
-		ValidSettings: noopValidate,
+		{
+			name: "ValidSettings error",
+			params: RunParams{
+				LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
+					return &config.Settings{Transport: "sse"}, nil
+				},
+				ValidSettings: func(*config.Settings) error {
+					return errors.New("validation error")
+				},
+			},
+			wantErrContain: "invalid configuration",
+		},
+		{
+			name: "CreateServer error",
+			params: RunParams{
+				LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
+					return &config.Settings{Transport: "sse"}, nil
+				},
+				ValidSettings: noopValidate,
+				CreateServer: func(*config.Settings) (*server.MCPServer, func(), error) {
+					return nil, nil, errors.New("create server error")
+				},
+			},
+			wantErrContain: "create server error",
+		},
+		{
+			name: "ServeStdio error",
+			params: RunParams{
+				LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
+					return &config.Settings{Transport: "stdio"}, nil
+				},
+				ValidSettings: noopValidate,
+				CreateServer: func(*config.Settings) (*server.MCPServer, func(), error) {
+					return &server.MCPServer{}, nil, nil
+				},
+				ServeStdio: func(*server.MCPServer, ...server.StdioOption) error {
+					return errors.New("stdio serve error")
+				},
+			},
+			wantErrContain: "stdio serve error",
+		},
+		{
+			name: "StartSSEServer error",
+			params: RunParams{
+				LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
+					return &config.Settings{Transport: "sse"}, nil
+				},
+				ValidSettings: noopValidate,
+				CreateServer: func(*config.Settings) (*server.MCPServer, func(), error) {
+					return &server.MCPServer{}, nil, nil
+				},
+				StartSSEServer: func(*server.MCPServer, *config.Settings) error {
+					return errors.New("sse start error")
+				},
+			},
+			wantErrContain: "sse start error",
+		},
 	}
 
-	err := RunWithDeps(params, nil)
-	if err == nil {
-		t.Fatal("Expected error when LoadSettings fails")
-	}
-	if err.Error() != "failed to load settings: settings error" {
-		t.Errorf("Unexpected error message: %v", err)
-	}
-}
-
-func TestRunWithDeps_ValidateSettingsError(t *testing.T) {
-	params := RunParams{
-		LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
-			return &config.Settings{Transport: "sse"}, nil
-		},
-		ValidSettings: func(*config.Settings) error {
-			return errors.New("validation error")
-		},
-	}
-
-	err := RunWithDeps(params, nil)
-	if err == nil {
-		t.Fatal("Expected error when ValidSettings fails")
-	}
-	if err.Error() != "invalid configuration: validation error" {
-		t.Errorf("Unexpected error message: %v", err)
-	}
-}
-
-func TestRunWithDeps_CreateServerError(t *testing.T) {
-	params := RunParams{
-		LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
-			return &config.Settings{Transport: "sse"}, nil
-		},
-		ValidSettings: noopValidate,
-		CreateServer: func(*config.Settings) (*server.MCPServer, func(), error) {
-			return nil, nil, errors.New("create server error")
-		},
-	}
-
-	err := RunWithDeps(params, nil)
-	if err == nil {
-		t.Fatal("Expected error when CreateServer fails")
-	}
-	if err.Error() != "create server error" {
-		t.Errorf("Unexpected error message: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := RunWithDeps(tt.params, nil, "test")
+			if err == nil {
+				t.Fatalf("Expected error containing %q, got nil", tt.wantErrContain)
+			}
+			if !strings.Contains(err.Error(), tt.wantErrContain) {
+				t.Errorf("Expected error containing %q, got %q", tt.wantErrContain, err.Error())
+			}
+		})
 	}
 }
 
@@ -84,7 +117,7 @@ func TestRunWithDeps_StdioTransport(t *testing.T) {
 		CreateServer: func(*config.Settings) (*server.MCPServer, func(), error) {
 			return &server.MCPServer{}, func() { cleanupCalled = true }, nil
 		},
-		ServeStdio: func(*server.MCPServer) error {
+		ServeStdio: func(*server.MCPServer, ...server.StdioOption) error {
 			stdioWasCalled = true
 			return nil
 		},
@@ -94,7 +127,7 @@ func TestRunWithDeps_StdioTransport(t *testing.T) {
 		},
 	}
 
-	err := RunWithDeps(params, nil)
+	err := RunWithDeps(params, nil, "test")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -128,7 +161,7 @@ func TestRunWithDeps_SSETransport(t *testing.T) {
 		CreateServer: func(*config.Settings) (*server.MCPServer, func(), error) {
 			return &server.MCPServer{}, func() { cleanupCalled = true }, nil
 		},
-		ServeStdio: func(*server.MCPServer) error {
+		ServeStdio: func(*server.MCPServer, ...server.StdioOption) error {
 			stdioWasCalled = true
 			return nil
 		},
@@ -139,7 +172,7 @@ func TestRunWithDeps_SSETransport(t *testing.T) {
 		},
 	}
 
-	err := RunWithDeps(params, nil)
+	err := RunWithDeps(params, nil, "test")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -158,52 +191,6 @@ func TestRunWithDeps_SSETransport(t *testing.T) {
 	}
 }
 
-func TestRunWithDeps_StdioServeError(t *testing.T) {
-	params := RunParams{
-		LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
-			return &config.Settings{Transport: "stdio"}, nil
-		},
-		ValidSettings: noopValidate,
-		CreateServer: func(*config.Settings) (*server.MCPServer, func(), error) {
-			return &server.MCPServer{}, nil, nil
-		},
-		ServeStdio: func(*server.MCPServer) error {
-			return errors.New("stdio serve error")
-		},
-	}
-
-	err := RunWithDeps(params, nil)
-	if err == nil {
-		t.Fatal("Expected error when ServeStdio fails")
-	}
-	if err.Error() != "stdio serve error" {
-		t.Errorf("Unexpected error message: %v", err)
-	}
-}
-
-func TestRunWithDeps_SSEServerError(t *testing.T) {
-	params := RunParams{
-		LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
-			return &config.Settings{Transport: "sse"}, nil
-		},
-		ValidSettings: noopValidate,
-		CreateServer: func(*config.Settings) (*server.MCPServer, func(), error) {
-			return &server.MCPServer{}, nil, nil
-		},
-		StartSSEServer: func(*server.MCPServer, *config.Settings) error {
-			return errors.New("sse start error")
-		},
-	}
-
-	err := RunWithDeps(params, nil)
-	if err == nil {
-		t.Fatal("Expected error when StartSSEServer fails")
-	}
-	if err.Error() != "sse start error" {
-		t.Errorf("Unexpected error message: %v", err)
-	}
-}
-
 func TestRunWithDeps_NilCleanup(t *testing.T) {
 	// Test that nil cleanup doesn't cause a panic
 	params := RunParams{
@@ -219,7 +206,7 @@ func TestRunWithDeps_NilCleanup(t *testing.T) {
 		},
 	}
 
-	err := RunWithDeps(params, nil)
+	err := RunWithDeps(params, nil, "test")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}

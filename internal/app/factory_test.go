@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sha1n/mcp-acdc-server-go/internal/config"
@@ -62,7 +63,7 @@ func TestCreateMCPServer_MissingMetadata(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error when metadata is missing")
 	}
-	if !contains(err.Error(), "failed to read metadata file") {
+	if !strings.Contains(err.Error(), "failed to read metadata file") {
 		t.Errorf("Unexpected error message: %v", err)
 	}
 }
@@ -87,7 +88,7 @@ func TestCreateMCPServer_InvalidMetadataYAML(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error for invalid YAML")
 	}
-	if !contains(err.Error(), "failed to parse metadata") {
+	if !strings.Contains(err.Error(), "failed to parse metadata") {
 		t.Errorf("Unexpected error message: %v", err)
 	}
 }
@@ -118,7 +119,7 @@ server:
 	if err == nil {
 		t.Fatal("Expected error for invalid metadata")
 	}
-	if !contains(err.Error(), "metadata validation failed") {
+	if !strings.Contains(err.Error(), "metadata validation failed") {
 		t.Errorf("Unexpected error message: %v", err)
 	}
 }
@@ -162,6 +163,35 @@ tools: []
 	}
 }
 
+func TestCreateMCPServer_ResourceWithKeywords(t *testing.T) {
+	tempDir := t.TempDir()
+	contentDir := filepath.Join(tempDir, "content")
+	resourcesDir := filepath.Join(contentDir, "mcp-resources")
+	_ = os.MkdirAll(resourcesDir, 0755)
+
+	metadataContent := `server: { name: test, version: 1.0, instructions: inst }`
+	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
+
+	// Resource with keywords
+	resFile := filepath.Join(resourcesDir, "res.md")
+	_ = os.WriteFile(resFile, []byte("---\nname: res\ndescription: desc\nkeywords: k1,k2\n---\ncontent"), 0644)
+
+	settings := &config.Settings{
+		ContentDir: contentDir,
+		Search:     config.SearchSettings{InMemory: true, MaxResults: 10},
+	}
+
+	server, cleanup, err := CreateMCPServer(settings)
+	if err != nil {
+		t.Fatalf("Failed: %v", err)
+	}
+	defer cleanup()
+
+	if server == nil {
+		t.Fatal("Server is nil")
+	}
+}
+
 func TestCreateMCPServer_NoResources(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
@@ -198,15 +228,62 @@ tools: []
 	}
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
+func TestCreateMCPServer_InvalidToolMetadata_MissingName(t *testing.T) {
+	tempDir := t.TempDir()
+	contentDir := filepath.Join(tempDir, "content")
+	_ = os.MkdirAll(contentDir, 0755)
+
+	metadataContent := `
+server: { name: test, version: 1.0, instructions: inst }
+tools:
+  - name: ""
+    description: "desc"
+`
+	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
+
+	settings := &config.Settings{ContentDir: contentDir}
+	_, _, err := CreateMCPServer(settings)
+	if err == nil || !strings.Contains(err.Error(), "metadata validation failed") {
+		t.Errorf("Expected metadata validation error, got: %v", err)
+	}
 }
 
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
+func TestCreateMCPServer_InvalidToolMetadata_MissingDescription(t *testing.T) {
+	tempDir := t.TempDir()
+	contentDir := filepath.Join(tempDir, "content")
+	_ = os.MkdirAll(contentDir, 0755)
+
+	metadataContent := `
+server: { name: test, version: 1.0, instructions: inst }
+tools:
+  - name: "search"
+    description: ""
+`
+	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
+
+	settings := &config.Settings{ContentDir: contentDir}
+	_, _, err := CreateMCPServer(settings)
+	if err == nil || !strings.Contains(err.Error(), "metadata validation failed") {
+		t.Errorf("Expected metadata validation error, got: %v", err)
 	}
-	return false
+}
+
+func TestCreateMCPServer_InvalidToolMetadata_DuplicateNames(t *testing.T) {
+	tempDir := t.TempDir()
+	contentDir := filepath.Join(tempDir, "content")
+	_ = os.MkdirAll(contentDir, 0755)
+
+	metadataContent := `
+server: { name: test, version: 1.0, instructions: inst }
+tools:
+  - { name: search, description: d1 }
+  - { name: search, description: d2 }
+`
+	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
+
+	settings := &config.Settings{ContentDir: contentDir}
+	_, _, err := CreateMCPServer(settings)
+	if err == nil || !strings.Contains(err.Error(), "duplicate tool name") {
+		t.Errorf("Expected duplicate tool name error, got: %v", err)
+	}
 }

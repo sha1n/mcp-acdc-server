@@ -6,41 +6,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/mark3labs/mcp-go/server"
-	"github.com/sha1n/mcp-acdc-server-go/internal/app"
-	"github.com/sha1n/mcp-acdc-server-go/internal/config"
+	"github.com/sha1n/mcp-acdc-server-go/tests/integration/testkit"
 )
 
 // TestSSEResourceListAndRead tests that resources can be listed and read via SSE transport
-// This reproduces an issue where Gemini CLI cannot fetch resources via SSE
 func TestSSEResourceListAndRead(t *testing.T) {
-	// 1. Prepare content directory with a test resource
-	tempDir := t.TempDir()
-	contentDir := filepath.Join(tempDir, "content")
-	resourcesDir := filepath.Join(contentDir, "mcp-resources")
-	if err := os.MkdirAll(resourcesDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	metadata := `server:
-  name: test-sse
-  version: 1.0.0
-  instructions: Test SSE server
-tools:
-  - name: search
-    description: Search content
-`
-	if err := os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadata), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Create a test resource
+	// 1. Prepare content directory with a test resource using testkit helper
 	resourceContent := `---
 name: Test SSE Resource
 description: A test resource for SSE debugging
@@ -49,48 +23,33 @@ description: A test resource for SSE debugging
 
 This is SSE test content.
 `
-	if err := os.WriteFile(filepath.Join(resourcesDir, "test-resource.md"), []byte(resourceContent), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// 2. Configure and Create Server (In-Process)
-	settings := &config.Settings{
-		ContentDir: contentDir,
-		Transport:  "sse",
-		Host:       "localhost",
-		Port:       0, // will fail to start if 0, need a free port
-		Search: config.SearchSettings{
-			InMemory:   true,
-			MaxResults: 10,
+	metadata := `server:
+  name: test-sse
+  version: 1.0.0
+  instructions: Test SSE server
+tools:
+  - name: search
+    description: Search content
+`
+	contentDir := testkit.CreateTestContentDir(t, &testkit.ContentDirOptions{
+		Metadata: metadata,
+		Resources: map[string]string{
+			"test-resource.md": resourceContent,
 		},
-	}
-	// We'll override port later
+	})
 
-	mcpServer, cleanup, err := app.CreateMCPServer(settings)
+	// 2. Start ACDC Service via TestEnv using testkit flags helper
+	flags := testkit.NewTestFlags(t, contentDir, nil)
+	service := testkit.NewACDCService("acdc", flags)
+	env := testkit.NewTestEnv(service)
+
+	props, err := env.Start()
 	if err != nil {
-		t.Fatalf("Failed to create server: %v", err)
+		t.Fatalf("Failed to start env: %v", err)
 	}
-	defer cleanup()
+	defer func() { _ = env.Stop() }()
 
-	// 3. Start SSE Server
-	sse := server.NewSSEServer(mcpServer)
-
-	port, err := getFreePort()
-	if err != nil {
-		t.Fatalf("Failed to get free port: %v", err)
-	}
-
-	// Start in goroutine
-	go func() {
-		if err := sse.Start(fmt.Sprintf(":%d", port)); err != nil && err != http.ErrServerClosed {
-			t.Logf("Server error: %v", err)
-		}
-	}()
-
-	// Wait for server to start
-	time.Sleep(200 * time.Millisecond)
-
-	baseURL := fmt.Sprintf("http://localhost:%d", port)
+	baseURL := props["acdc.baseURL"].(string)
 
 	// 4. Connect to SSE endpoint and get session
 	t.Logf("Connecting to SSE endpoint at %s...", baseURL)
@@ -117,7 +76,6 @@ This is SSE test content.
 	t.Logf("SSE response: %s", sseData)
 
 	// Parse the endpoint from SSE data
-	// Format: event: endpoint\ndata: /message?sessionId=xxx\n\n
 	var messageEndpoint string
 	for _, line := range strings.Split(sseData, "\n") {
 		if strings.HasPrefix(line, "data: ") {
@@ -144,7 +102,6 @@ This is SSE test content.
 			"params":  params,
 		}
 		reqBytes, _ := json.Marshal(req)
-		// t.Logf("Sending request to %s: %s", messageURL, reqBytes)
 
 		resp, err := http.Post(messageURL, "application/json", bytes.NewReader(reqBytes))
 		if err != nil {
@@ -159,7 +116,6 @@ This is SSE test content.
 			return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, body)
 		}
 
-		// For SSE, response comes via the SSE stream, not the POST response
 		// Read from SSE stream
 		buf := make([]byte, 8192)
 		n, err := sseResp.Body.Read(buf)
@@ -168,9 +124,6 @@ This is SSE test content.
 		}
 
 		sseData := string(buf[:n])
-		// t.Logf("SSE response data: %s", sseData)
-
-		// Parse SSE message format: event: message\ndata: {...}\n\n
 		var jsonData string
 		for _, line := range strings.Split(sseData, "\n") {
 			if strings.HasPrefix(line, "data: ") {
@@ -276,11 +229,4 @@ This is SSE test content.
 
 	t.Logf("SSE: Read resource content: %s", text[:min(50, len(text))])
 	t.Log("SSE resource operations succeeded!")
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
