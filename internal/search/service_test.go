@@ -11,7 +11,6 @@ import (
 func TestSearchService(t *testing.T) {
 	settings := config.SearchSettings{
 		MaxResults: 10,
-		HeapSizeMB: 10,
 	}
 	service := NewService(settings)
 	defer service.Close()

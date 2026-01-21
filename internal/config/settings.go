@@ -1,17 +1,18 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
 
 // SearchSettings configuration for search service
 type SearchSettings struct {
 	MaxResults int  `mapstructure:"max_results"`
-	HeapSizeMB int  `mapstructure:"heap_size_mb"`
 	InMemory   bool `mapstructure:"in_memory"`
 }
 
@@ -47,6 +48,13 @@ type Settings struct {
 
 // LoadSettings loads settings from environment variables and optional .env file
 func LoadSettings() (*Settings, error) {
+	return LoadSettingsWithFlags(nil)
+}
+
+// LoadSettingsWithFlags loads settings with optional CLI flag overrides.
+// Priority: CLI flags > environment variables > .env file > defaults.
+// If flags is nil, only env vars and defaults are used.
+func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	v := viper.New()
 
 	// Default values
@@ -56,9 +64,8 @@ func LoadSettings() (*Settings, error) {
 	v.SetDefault("content_dir", defaultContentDir)
 	v.SetDefault("transport", "sse")
 	v.SetDefault("host", "0.0.0.0")
-	v.SetDefault("port", 8000)
+	v.SetDefault("port", 8080)
 	v.SetDefault("search.max_results", 10)
-	v.SetDefault("search.heap_size_mb", 50)
 	v.SetDefault("auth.type", AuthTypeNone)
 
 	// Environment variables
@@ -70,12 +77,24 @@ func LoadSettings() (*Settings, error) {
 	// BindEnv only returns an error if the key is empty, which cannot happen
 	// with hardcoded keys. Errors are intentionally discarded here.
 	_ = v.BindEnv("search.max_results", "ACDC_MCP_SEARCH_MAX_RESULTS")
-	_ = v.BindEnv("search.heap_size_mb", "ACDC_MCP_SEARCH_HEAP_SIZE_MB")
 
 	_ = v.BindEnv("auth.type", "ACDC_MCP_AUTH_TYPE")
 	_ = v.BindEnv("auth.basic.username", "ACDC_MCP_AUTH_BASIC_USERNAME")
 	_ = v.BindEnv("auth.basic.password", "ACDC_MCP_AUTH_BASIC_PASSWORD")
 	_ = v.BindEnv("auth.api_keys", "ACDC_MCP_AUTH_API_KEYS")
+
+	// Bind CLI flags if provided (highest priority)
+	if flags != nil {
+		_ = v.BindPFlag("content_dir", flags.Lookup("content-dir"))
+		_ = v.BindPFlag("transport", flags.Lookup("transport"))
+		_ = v.BindPFlag("host", flags.Lookup("host"))
+		_ = v.BindPFlag("port", flags.Lookup("port"))
+		_ = v.BindPFlag("search.max_results", flags.Lookup("search-max-results"))
+		_ = v.BindPFlag("auth.type", flags.Lookup("auth-type"))
+		_ = v.BindPFlag("auth.basic.username", flags.Lookup("auth-basic-username"))
+		_ = v.BindPFlag("auth.basic.password", flags.Lookup("auth-basic-password"))
+		_ = v.BindPFlag("auth.api_keys", flags.Lookup("auth-api-keys"))
+	}
 
 	// Helper to look for .env file
 	v.SetConfigName(".env")
@@ -105,4 +124,36 @@ func LoadSettings() (*Settings, error) {
 	}
 
 	return &settings, nil
+}
+
+// ValidateSettings checks for conflicting configurations.
+// Returns an error if the settings contain mutually exclusive or incomplete auth config.
+func ValidateSettings(s *Settings) error {
+	hasBasicCreds := s.Auth.Basic.Username != "" || s.Auth.Basic.Password != ""
+	hasAPIKeys := len(s.Auth.APIKeys) > 0
+
+	switch s.Auth.Type {
+	case AuthTypeNone, "":
+		if hasBasicCreds || hasAPIKeys {
+			return errors.New("auth-type 'none' is incompatible with auth credentials")
+		}
+	case AuthTypeBasic:
+		if hasAPIKeys {
+			return errors.New("auth-type 'basic' is mutually exclusive with auth-api-keys")
+		}
+		if s.Auth.Basic.Username == "" || s.Auth.Basic.Password == "" {
+			return errors.New("auth-type 'basic' requires both username and password")
+		}
+	case AuthTypeAPIKey:
+		if hasBasicCreds {
+			return errors.New("auth-type 'apikey' is mutually exclusive with basic auth credentials")
+		}
+		if !hasAPIKeys {
+			return errors.New("auth-type 'apikey' requires at least one API key")
+		}
+	default:
+		return errors.New("unknown auth-type: " + s.Auth.Type)
+	}
+
+	return nil
 }

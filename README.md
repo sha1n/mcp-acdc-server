@@ -53,7 +53,7 @@ make build-docker
 
 ### Local Execution
 
-By default, the server starts with SSE transport on port 8000:
+By default, the server starts with SSE transport on port 8080:
 
 ```bash
 ./bin/mcp-acdc
@@ -68,49 +68,76 @@ ACDC_MCP_TRANSPORT=stdio ./bin/mcp-acdc
 ### Docker Execution
 
 ```bash
-docker run -p 8000:8000 \
+docker run -p 8080:8080 \
   -v $(pwd)/content:/app/content \
   sha1n/mcp-acdc:latest
 ```
 
 ## ⚙️ Configuration
 
-The server can be configured using environment variables or a `.env` file in the working directory.
+The server can be configured using **CLI flags**, **environment variables**, or a **`.env` file**. 
 
-| Variable                       | Description                                        | Default     |
-| ------------------------------ | -------------------------------------------------- | ----------- |
-| `ACDC_MCP_CONTENT_DIR`         | Path to the directory containing content/resources | `./content` |
-| `ACDC_MCP_TRANSPORT`           | Server transport type (`stdio` or `sse`)           | `sse`       |
-| `ACDC_MCP_HOST`                | Host for SSE server                                | `0.0.0.0`   |
-| `ACDC_MCP_PORT`                | Port for SSE server                                | `8000`      |
-| `ACDC_MCP_SEARCH_MAX_RESULTS`  | Maximum number of search results to return         | `10`        |
-| `ACDC_MCP_SEARCH_HEAP_SIZE_MB` | Heap size limit for the search indexer             | `50`        |
+### Configuration Priority
 
-### Authentication
+When the same setting is specified in multiple places, the following priority applies (highest to lowest):
 
-The server supports optional authentication to secure access. Configure using the following environment variables:
+1. **CLI flags** — Explicit command-line arguments
+2. **Environment variables** — Shell environment or exported vars
+3. **`.env` file** — Key-value pairs in a `.env` file in the working directory
+4. **Defaults** — Built-in fallback values
 
-| Variable                       | Description                                       | Default                        |
-| ------------------------------ | ------------------------------------------------- | ------------------------------ |
-| `ACDC_MCP_AUTH_TYPE`           | Authentication type: `none`, `basic`, or `apikey` | `none`                         |
-| `ACDC_MCP_AUTH_BASIC_USERNAME` | Username for Basic auth                           | (required if type is `basic`)  |
-| `ACDC_MCP_AUTH_BASIC_PASSWORD` | Password for Basic auth                           | (required if type is `basic`)  |
-| `ACDC_MCP_AUTH_API_KEYS`       | Comma-separated list of valid API keys            | (required if type is `apikey`) |
+### General Settings
 
-**Example - Basic Auth:**
+| CLI Flag | Short | Environment Variable | Description | Default |
+|----------|-------|---------------------|-------------|---------|
+| `--content-dir` | `-c` | `ACDC_MCP_CONTENT_DIR` | Path to content directory | `./content` |
+| `--transport` | `-t` | `ACDC_MCP_TRANSPORT` | Transport type: `stdio` or `sse` | `sse` |
+| `--host` | `-H` | `ACDC_MCP_HOST` | Host for SSE server | `0.0.0.0` |
+| `--port` | `-p` | `ACDC_MCP_PORT` | Port for SSE server | `8080` |
+| `--search-max-results` | `-m` | `ACDC_MCP_SEARCH_MAX_RESULTS` | Maximum search results | `10` |
+
+### Authentication Settings
+
+| CLI Flag | Short | Environment Variable | Description | Default |
+|----------|-------|---------------------|-------------|---------|
+| `--auth-type` | `-a` | `ACDC_MCP_AUTH_TYPE` | Auth type: `none`, `basic`, or `apikey` | `none` |
+| `--auth-basic-username` | `-u` | `ACDC_MCP_AUTH_BASIC_USERNAME` | Basic auth username | — |
+| `--auth-basic-password` | `-P` | `ACDC_MCP_AUTH_BASIC_PASSWORD` | Basic auth password | — |
+| `--auth-api-keys` | `-k` | `ACDC_MCP_AUTH_API_KEYS` | Comma-separated API keys | — |
+
+### Examples
+
+**Using CLI flags (stdio mode):**
 ```bash
-ACDC_MCP_AUTH_TYPE=basic \
-ACDC_MCP_AUTH_BASIC_USERNAME=admin \
-ACDC_MCP_AUTH_BASIC_PASSWORD=secret \
-./bin/mcp-acdc
+./bin/mcp-acdc -t stdio -c /path/to/content
 ```
 
-**Example - API Key Auth:**
+**Using CLI flags (SSE with basic auth):**
 ```bash
-ACDC_MCP_AUTH_TYPE=apikey \
-ACDC_MCP_AUTH_API_KEYS="key1,key2,key3" \
-./bin/mcp-acdc
+./bin/mcp-acdc --port 9000 --auth-type basic -u admin -P secret
 ```
+
+**Using environment variables:**
+```bash
+ACDC_MCP_TRANSPORT=stdio ACDC_MCP_CONTENT_DIR=/data ./bin/mcp-acdc
+```
+
+**Using a `.env` file:**
+```env
+transport=sse
+port=9000
+auth.type=basic
+auth.basic.username=admin
+auth.basic.password=secret
+```
+
+### Configuration Validation
+
+The server validates configuration at startup and will fail with a clear error if:
+- `--auth-type=basic` is set without username/password
+- `--auth-type=apikey` is set without API keys
+- `--auth-type=none` is set with auth credentials (conflicting intent)
+- `--auth-type=basic` is combined with `--auth-api-keys` (mutually exclusive)
 
 API keys must be provided via the `X-API-Key` header in HTTP requests.
 
