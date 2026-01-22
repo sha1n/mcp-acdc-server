@@ -3,7 +3,7 @@ ifndef VERSION
 VERSION := $(shell git describe --always --abbrev=0 --tags --match "v*" 2>/dev/null || echo "v0.0.0")
 BUILD := $(shell git rev-parse --short HEAD 2>/dev/null || echo "HEAD")
 endif
-PROJECTNAME := "mcp-acdc"
+PROJECTNAME := "acdc-mcp"
 # We pass that to the main module to generate the correct help text
 PROGRAMNAME := $(PROJECTNAME)
 
@@ -60,9 +60,9 @@ build:
 	@-rm $(STDERR)
 	@-$(MAKE) go-build
 	# generate completions
-	$(GOBIN)/mcp-acdc-$(GOHOSTOS)-$(GOHOSTARCH) completion zsh > $(GOBUILD)/completions/_mcp-acdc || true
-	$(GOBIN)/mcp-acdc-$(GOHOSTOS)-$(GOHOSTARCH) completion bash > $(GOBUILD)/completions/mcp-acdc.bash || true
-	$(GOBIN)/mcp-acdc-$(GOHOSTOS)-$(GOHOSTARCH) completion fish > $(GOBUILD)/completions/mcp-acdc.fish || true
+	$(GOBIN)/acdc-mcp-$(GOHOSTOS)-$(GOHOSTARCH) completion zsh > $(GOBUILD)/completions/_acdc-mcp || true
+	$(GOBIN)/acdc-mcp-$(GOHOSTOS)-$(GOHOSTARCH) completion bash > $(GOBUILD)/completions/acdc-mcp.bash || true
+	$(GOBIN)/acdc-mcp-$(GOHOSTOS)-$(GOHOSTARCH) completion fish > $(GOBUILD)/completions/acdc-mcp.fish || true
 
 ## test: Runs all Go tests
 .PHONY: test
@@ -114,7 +114,7 @@ go-format-check:
 .PHONY: go-build-current
 go-build-current:
 	@echo "  >  Building $(GOHOSTOS)/$(GOHOSTARCH) binaries..."
-	@GOOS=$(GOHOSTOS) GOARCH=$(GOHOSTARCH) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME) $(GOBASE)/cmd/mcp-acdc
+	@GOOS=$(GOHOSTOS) GOARCH=$(GOHOSTARCH) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME) $(GOBASE)/cmd/acdc-mcp
 
 .PHONY: go-build
 go-build: go-get go-build-linux-amd64 go-build-linux-arm64 go-build-linux-arm go-build-darwin-amd64 go-build-darwin-arm64 go-build-windows-amd64 go-build-windows-arm
@@ -122,37 +122,37 @@ go-build: go-get go-build-linux-amd64 go-build-linux-arm64 go-build-linux-arm go
 .PHONY: go-build-linux-amd64
 go-build-linux-amd64:
 	@echo "  >  Building linux amd64 binaries..."
-	@GOOS=$(GOOS_LINUX) GOARCH=$(GOARCH_AMD64) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-$(GOOS_LINUX)-$(GOARCH_AMD64) $(GOBASE)/cmd/mcp-acdc
+	@GOOS=$(GOOS_LINUX) GOARCH=$(GOARCH_AMD64) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-$(GOOS_LINUX)-$(GOARCH_AMD64) $(GOBASE)/cmd/acdc-mcp
 
 .PHONY: go-build-linux-arm64
 go-build-linux-arm64:
 	@echo "  >  Building linux arm64 binaries..."
-	@GOOS=$(GOOS_LINUX) GOARCH=$(GOARCH_ARM64) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-$(GOOS_LINUX)-$(GOARCH_ARM64) $(GOBASE)/cmd/mcp-acdc
+	@GOOS=$(GOOS_LINUX) GOARCH=$(GOARCH_ARM64) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-$(GOOS_LINUX)-$(GOARCH_ARM64) $(GOBASE)/cmd/acdc-mcp
 
 .PHONY: go-build-linux-arm
 go-build-linux-arm:
 	@echo "  >  Building linux arm binaries..."
-	@GOOS=$(GOOS_LINUX) GOARCH=$(GOARCH_ARM) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-$(GOOS_LINUX)-$(GOARCH_ARM) $(GOBASE)/cmd/mcp-acdc
+	@GOOS=$(GOOS_LINUX) GOARCH=$(GOARCH_ARM) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-$(GOOS_LINUX)-$(GOARCH_ARM) $(GOBASE)/cmd/acdc-mcp
 
 .PHONY: go-build-darwin-amd64
 go-build-darwin-amd64:
 	@echo "  >  Building darwin amd64 binaries..."
-	@GOOS=$(GOOS_DARWIN) GOARCH=$(GOARCH_AMD64) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-$(GOOS_DARWIN)-$(GOARCH_AMD64) $(GOBASE)/cmd/mcp-acdc
+	@GOOS=$(GOOS_DARWIN) GOARCH=$(GOARCH_AMD64) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-$(GOOS_DARWIN)-$(GOARCH_AMD64) $(GOBASE)/cmd/acdc-mcp
 
 .PHONY: go-build-darwin-arm64
 go-build-darwin-arm64:
 	@echo "  >  Building darwin arm64 binaries..."
-	@GOOS=$(GOOS_DARWIN) GOARCH=$(GOARCH_ARM64) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-$(GOOS_DARWIN)-$(GOARCH_ARM64) $(GOBASE)/cmd/mcp-acdc
+	@GOOS=$(GOOS_DARWIN) GOARCH=$(GOARCH_ARM64) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-$(GOOS_DARWIN)-$(GOARCH_ARM64) $(GOBASE)/cmd/acdc-mcp
 
 .PHONY: go-build-windows-amd64
 go-build-windows-amd64:
 	@echo "  >  Building windows amd64 binaries..."
-	@GOOS=$(GOOS_WINDOWS) GOARCH=$(GOARCH_AMD64) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-$(GOOS_WINDOWS)-$(GOARCH_AMD64).exe $(GOBASE)/cmd/mcp-acdc
+	@GOOS=$(GOOS_WINDOWS) GOARCH=$(GOARCH_AMD64) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-$(GOOS_WINDOWS)-$(GOARCH_AMD64).exe $(GOBASE)/cmd/acdc-mcp
 
 .PHONY: go-build-windows-arm
 go-build-windows-arm:
 	@echo "  >  Building windows arm binaries..."
-	@GOOS=$(GOOS_WINDOWS) GOARCH=$(GOARCH_ARM) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-$(GOOS_WINDOWS)-$(GOARCH_ARM).exe $(GOBASE)/cmd/mcp-acdc
+	@GOOS=$(GOOS_WINDOWS) GOARCH=$(GOARCH_ARM) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-$(GOOS_WINDOWS)-$(GOARCH_ARM).exe $(GOBASE)/cmd/acdc-mcp
 
 .PHONY: go-generate
 go-generate:
@@ -176,14 +176,14 @@ go-test:
 .PHONY: go-clean
 go-clean:
 	@echo "  >  Cleaning build cache"
-	@GOBIN=$(GOBIN) go clean $(MODFLAGS) $(GOBASE)/cmd/mcp-acdc
+	@GOBIN=$(GOBIN) go clean $(MODFLAGS) $(GOBASE)/cmd/acdc-mcp
 	@GOBIN=$(GOBIN) go clean -modcache
 
 .PHONY: build-docker
 build-docker:
 	@echo "  >  Building docker image..."
-	docker build -t sha1n/$(PROJECTNAME):latest .
-	docker tag sha1n/$(PROJECTNAME):latest sha1n/$(PROJECTNAME):$(VERSION:v%=%)
+	docker build -t sha1n/mcp-acdc-server-go:latest .
+	docker tag sha1n/mcp-acdc-server-go:latest sha1n/mcp-acdc-server-go:$(VERSION:v%=%)
 
 .PHONY: release
 release:

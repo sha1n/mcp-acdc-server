@@ -8,7 +8,7 @@
 
 # mcp-acdc-server
 
-**Agent Content Discovery Companion (ACDC) MCP Server** 🌈
+**Agent Content Discovery Companion (ACDC) MCP Server**
 
 ACDC is a high-performance Model Context Protocol (MCP) server designed to help AI agents discover and search through local content and resources dynamically. It provides a robust search interface and automatic resource discovery, making it easy for agents to find the context they need.
 
@@ -56,13 +56,13 @@ make build-docker
 By default, the server starts with SSE transport on port 8080:
 
 ```bash
-./bin/mcp-acdc
+./bin/acdc-mcp
 ```
 
 ### Using Stdio (Common for Local Agent Integration)
 
 ```bash
-ACDC_MCP_TRANSPORT=stdio ./bin/mcp-acdc
+ACDC_MCP_TRANSPORT=stdio ./bin/acdc-mcp
 ```
 
 ### Docker Execution
@@ -70,7 +70,7 @@ ACDC_MCP_TRANSPORT=stdio ./bin/mcp-acdc
 ```bash
 docker run -p 8080:8080 \
   -v $(pwd)/content:/app/content \
-  sha1n/mcp-acdc:latest
+  sha1n/mcp-acdc-server-go:latest
 ```
 
 ## ⚙️ Configuration
@@ -109,17 +109,17 @@ When the same setting is specified in multiple places, the following priority ap
 
 **Using CLI flags (stdio mode):**
 ```bash
-./bin/mcp-acdc -t stdio -c /path/to/content
+./bin/acdc-mcp -t stdio -c /path/to/content
 ```
 
 **Using CLI flags (SSE with basic auth):**
 ```bash
-./bin/mcp-acdc --port 9000 --auth-type basic -u admin -P secret
+./bin/acdc-mcp --port 9000 --auth-type basic -u admin -P secret
 ```
 
 **Using environment variables:**
 ```bash
-ACDC_MCP_TRANSPORT=stdio ACDC_MCP_CONTENT_DIR=/data ./bin/mcp-acdc
+ACDC_MCP_TRANSPORT=stdio ACDC_MCP_CONTENT_DIR=/data ./bin/acdc-mcp
 ```
 
 **Using a `.env` file:**

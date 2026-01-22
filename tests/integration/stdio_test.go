@@ -22,7 +22,7 @@ func TestStdioServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get root dir: %v", err)
 	}
-	cmdPath := filepath.Join(rootDir, "cmd", "mcp-acdc")
+	cmdPath := filepath.Join(rootDir, "cmd", "acdc-mcp")
 
 	buildCmd := exec.Command("go", "build", "-o", binPath, cmdPath)
 	buildCmd.Dir = rootDir
