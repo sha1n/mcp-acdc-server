@@ -55,14 +55,14 @@ See [Development Guide](docs/development.md) for build instructions.
 
 ## 🏃 Running
 
-### SSE Transport (default)
+### Stdio Transport (default)
 ```bash
 acdc-mcp --content-dir ./content
 ```
 
-### Stdio Transport
+### SSE Transport
 ```bash
-acdc-mcp --transport stdio --content-dir ./content
+acdc-mcp --transport sse --content-dir ./content
 ```
 
 ### Docker
@@ -77,7 +77,7 @@ docker run -p 8080:8080 \
 | Flag | Short | Environment Variable | Default |
 |------|-------|---------------------|---------|
 | `--content-dir` | `-c` | `ACDC_MCP_CONTENT_DIR` | `./content` |
-| `--transport` | `-t` | `ACDC_MCP_TRANSPORT` | `sse` |
+| `--transport` | `-t` | `ACDC_MCP_TRANSPORT` | `stdio` |
 | `--port` | `-p` | `ACDC_MCP_PORT` | `8080` |
 | `--auth-type` | `-a` | `ACDC_MCP_AUTH_TYPE` | `none` |
 
