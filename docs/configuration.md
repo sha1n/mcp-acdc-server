@@ -20,6 +20,9 @@ When the same setting is specified in multiple places, the following priority ap
 | `--host` | `-H` | `ACDC_MCP_HOST` | Host for SSE server (SSE mode only) | `0.0.0.0` |
 | `--port` | `-p` | `ACDC_MCP_PORT` | Port for SSE server (SSE mode only) | `8080` |
 | `--search-max-results` | `-m` | `ACDC_MCP_SEARCH_MAX_RESULTS` | Maximum search results | `10` |
+| `--search-keywords-boost` | — | `ACDC_MCP_SEARCH_KEYWORDS_BOOST` | Boost for keywords matches | `3.0` |
+| `--search-name-boost` | — | `ACDC_MCP_SEARCH_NAME_BOOST` | Boost for name matches | `2.0` |
+| `--search-content-boost` | — | `ACDC_MCP_SEARCH_CONTENT_BOOST` | Boost for content matches | `1.0` |
 
 ## Authentication Settings
 

@@ -125,7 +125,7 @@ The actual content of your resource goes here...
 
 ## Keywords and Search Boosting
 
-Keywords provide a way to improve search relevance. When a search query matches a keyword, that document receives a **2x score boost** compared to matches in regular content.
+Keywords provide a way to improve search relevance. When a search query matches a keyword, that document receives a **3x score boost** (configurable) compared to matches in regular content.
 
 ### How It Works
 
@@ -133,9 +133,17 @@ The search service uses a disjunction query across three fields:
 
 | Field      | Boost | Description                              |
 | ---------- | ----- | ---------------------------------------- |
-| `name`     | 1.0x  | Resource title                           |
-| `content`  | 1.0x  | Markdown body content                    |
-| `keywords` | 2.0x  | Frontmatter keywords get boosted scores  |
+| `name`     | 2.0x  | Resource title (configurable)            |
+| `content`  | 1.0x  | Markdown body content (configurable)     |
+| `keywords` | 3.0x  | Frontmatter keywords (configurable)      |
+
+### Advanced Search Features
+
+ACDC implements several features to improve search accuracy for both humans and AI agents:
+
+- **Stemming**: Powered by the English analyzer, it matches different word forms (e.g., "searching" matches "search").
+- **Fuzzy Matching**: Tolerates minor typos (e.g., "resouce" matches "resource").
+- **Dynamic Highlights**: For agents, we provide contextual snippets around the match to help them reason about relevance without reading the whole resource.
 
 ### Example
 

@@ -41,7 +41,7 @@ acdc-mcp --content-dir ./content
 
 ## ✨ Features
 
-- **Full-Text Search** — Fast indexing and search with keyword boosting
+- **Full-Text Search** — Fast indexing with stemming, fuzzy matching, and configurable boosting
 - **Dynamic Resource Discovery** — Automatic scanning of content directories
 - **MCP Compliant** — Seamless integration with AI agents
 - **Dual Transport** — `stdio` for local agents, `sse` for remote/Docker
@@ -104,6 +104,8 @@ readinessProbe:
 | `--content-dir` | `-c` | `ACDC_MCP_CONTENT_DIR` | `./content` |
 | `--transport` | `-t` | `ACDC_MCP_TRANSPORT` | `stdio` |
 | `--port` | `-p` | `ACDC_MCP_PORT` | `8080` |
+| `--search-max-results` | `-m` | `ACDC_MCP_SEARCH_MAX_RESULTS` | `10` |
+| `--search-keywords-boost` | — | `ACDC_MCP_SEARCH_KEYWORDS_BOOST` | `3.0` |
 | `--auth-type` | `-a` | `ACDC_MCP_AUTH_TYPE` | `none` |
 
 For full configuration options including authentication, see [Configuration Reference](docs/configuration.md).

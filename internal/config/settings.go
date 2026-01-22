@@ -12,8 +12,11 @@ import (
 
 // SearchSettings configuration for search service
 type SearchSettings struct {
-	MaxResults int  `mapstructure:"max_results"`
-	InMemory   bool `mapstructure:"in_memory"`
+	MaxResults    int     `mapstructure:"max_results"`
+	InMemory      bool    `mapstructure:"in_memory"`
+	KeywordsBoost float64 `mapstructure:"keywords_boost"`
+	NameBoost     float64 `mapstructure:"name_boost"`
+	ContentBoost  float64 `mapstructure:"content_boost"`
 }
 
 // Auth type constants
@@ -66,6 +69,9 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	v.SetDefault("host", "0.0.0.0")
 	v.SetDefault("port", 8080)
 	v.SetDefault("search.max_results", 10)
+	v.SetDefault("search.keywords_boost", 3.0)
+	v.SetDefault("search.name_boost", 2.0)
+	v.SetDefault("search.content_boost", 1.0)
 	v.SetDefault("auth.type", AuthTypeNone)
 
 	// Environment variables
@@ -77,6 +83,9 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	// BindEnv only returns an error if the key is empty, which cannot happen
 	// with hardcoded keys. Errors are intentionally discarded here.
 	_ = v.BindEnv("search.max_results", "ACDC_MCP_SEARCH_MAX_RESULTS")
+	_ = v.BindEnv("search.keywords_boost", "ACDC_MCP_SEARCH_KEYWORDS_BOOST")
+	_ = v.BindEnv("search.name_boost", "ACDC_MCP_SEARCH_NAME_BOOST")
+	_ = v.BindEnv("search.content_boost", "ACDC_MCP_SEARCH_CONTENT_BOOST")
 
 	_ = v.BindEnv("auth.type", "ACDC_MCP_AUTH_TYPE")
 	_ = v.BindEnv("auth.basic.username", "ACDC_MCP_AUTH_BASIC_USERNAME")
@@ -90,6 +99,9 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 		_ = v.BindPFlag("host", flags.Lookup("host"))
 		_ = v.BindPFlag("port", flags.Lookup("port"))
 		_ = v.BindPFlag("search.max_results", flags.Lookup("search-max-results"))
+		_ = v.BindPFlag("search.keywords_boost", flags.Lookup("search-keywords-boost"))
+		_ = v.BindPFlag("search.name_boost", flags.Lookup("search-name-boost"))
+		_ = v.BindPFlag("search.content_boost", flags.Lookup("search-content-boost"))
 		_ = v.BindPFlag("auth.type", flags.Lookup("auth-type"))
 		_ = v.BindPFlag("auth.basic.username", flags.Lookup("auth-basic-username"))
 		_ = v.BindPFlag("auth.basic.password", flags.Lookup("auth-basic-password"))
