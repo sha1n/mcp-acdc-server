@@ -71,8 +71,8 @@ test: install go-test
 ## coverage: Runs all Go tests and generates a coverage report
 .PHONY: coverage
 coverage: install
-	@echo "  >  Running tests with coverage..."
-	go test $(MODFLAGS) -coverpkg=./... -coverprofile=coverage.out ./...
+	@echo "  >  Running tests with coverage (bypassing cache)..."
+	go test $(MODFLAGS) -count=1 -coverpkg=./... -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out
 
 ## coverage-html: Runs tests and opens the coverage report in a browser

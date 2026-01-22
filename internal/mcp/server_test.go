@@ -130,7 +130,7 @@ func (m *MockSearcher) IndexDocuments(docs []search.Document) error {
 	return nil
 }
 
-func TestCreateServer_ToolsNotRegisteredWhenMetadataMissing(t *testing.T) {
+func TestCreateServer_ToolsAlwaysRegistered(t *testing.T) {
 	tests := []struct {
 		name         string
 		tools        []domain.ToolMetadata
@@ -138,26 +138,20 @@ func TestCreateServer_ToolsNotRegisteredWhenMetadataMissing(t *testing.T) {
 		expectRead   bool
 	}{
 		{
-			name:         "No tools defined",
-			tools:        []domain.ToolMetadata{},
-			expectSearch: false,
-			expectRead:   false,
+			name:  "No tools defined",
+			tools: []domain.ToolMetadata{},
 		},
 		{
 			name: "Only search tool defined",
 			tools: []domain.ToolMetadata{
 				{Name: "search", Description: "Search tool"},
 			},
-			expectSearch: true,
-			expectRead:   false,
 		},
 		{
 			name: "Only read tool defined",
 			tools: []domain.ToolMetadata{
 				{Name: "read", Description: "Read tool"},
 			},
-			expectSearch: false,
-			expectRead:   true,
 		},
 		{
 			name: "Both tools defined",
@@ -165,16 +159,12 @@ func TestCreateServer_ToolsNotRegisteredWhenMetadataMissing(t *testing.T) {
 				{Name: "search", Description: "Search tool"},
 				{Name: "read", Description: "Read tool"},
 			},
-			expectSearch: true,
-			expectRead:   true,
 		},
 		{
 			name: "Unknown tool only",
 			tools: []domain.ToolMetadata{
 				{Name: "unknown", Description: "Unknown tool"},
 			},
-			expectSearch: false,
-			expectRead:   false,
 		},
 	}
 
@@ -192,26 +182,35 @@ func TestCreateServer_ToolsNotRegisteredWhenMetadataMissing(t *testing.T) {
 			resProvider := resources.NewResourceProvider(nil)
 			searchService := &MockSearcher{}
 
-			// CreateServer should not panic regardless of tool metadata
+			// CreateServer should not panic and tools should be registered
 			s := CreateServer(metadata, resProvider, searchService)
 			if s == nil {
 				t.Fatal("CreateServer returned nil")
 			}
 
-			// Verify tools map behavior
-			toolsMap, err := metadata.ToolsMap()
-			if err != nil {
-				t.Fatalf("ToolsMap returned error: %v", err)
+			// Verify GetToolMetadata returns something for both (either override or default)
+			searchMeta := metadata.GetToolMetadata(ToolNameSearch)
+			readMeta := metadata.GetToolMetadata(ToolNameRead)
+
+			if searchMeta.Description == "" {
+				t.Errorf("Search tool metadata is empty")
+			}
+			if readMeta.Description == "" {
+				t.Errorf("Read tool metadata is empty")
 			}
 
-			_, searchExists := toolsMap[ToolNameSearch]
-			_, readExists := toolsMap[ToolNameRead]
-
-			if searchExists != tt.expectSearch {
-				t.Errorf("Search tool in metadata: got %v, want %v", searchExists, tt.expectSearch)
-			}
-			if readExists != tt.expectRead {
-				t.Errorf("Read tool in metadata: got %v, want %v", readExists, tt.expectRead)
+			// Check if we got the override when provided
+			for _, over := range tt.tools {
+				if over.Name == ToolNameSearch {
+					if searchMeta.Description != over.Description {
+						t.Errorf("Expected search override %s, got %s", over.Description, searchMeta.Description)
+					}
+				}
+				if over.Name == ToolNameRead {
+					if readMeta.Description != over.Description {
+						t.Errorf("Expected read override %s, got %s", over.Description, readMeta.Description)
+					}
+				}
 			}
 		})
 	}
