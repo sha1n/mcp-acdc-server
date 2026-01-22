@@ -19,7 +19,7 @@ content/
 
 ## Server Metadata (`mcp-metadata.yaml`)
 
-The `mcp-metadata.yaml` file in the root of your content directory defines server identity and tool descriptions. This file is **required** for the server to start.
+The `mcp-metadata.yaml` file in the root of your content directory defines server identity and instructions. This file is **required** for the server to start.
 
 ### Structure
 
@@ -31,12 +31,6 @@ server:
     You are an assistant with access to documentation resources.
     Use the search tool to find relevant information before answering.
     Always cite resources by their URI when referencing them.
-
-tools:
-  - name: search
-    description: "Search for resources by query string"
-  - name: read
-    description: "Read a resource by its URI"
 ```
 
 ### Server Section
@@ -77,15 +71,14 @@ instructions: |
 
 ### Tools Section
 
-The tools section defines metadata for the server's available tools. Each tool requires:
+The tools section allows overriding metadata for the server's available tools (`search` and `read`). If this section is omitted, the server provides high-quality default descriptions for these tools.
+
+If you provide a tool in this section, it requires:
 
 | Field         | Required | Description                              |
 | ------------- | -------- | ---------------------------------------- |
 | `name`        | Yes      | Tool identifier (must be unique)         |
 | `description` | Yes      | Human-readable description of the tool   |
-
-> [!NOTE]
-> Tool names must be unique. Duplicate names will cause a validation error at startup.
 
 ### Validation
 
@@ -93,7 +86,7 @@ The server validates `mcp-metadata.yaml` at startup and will fail to start if:
 - `server.name` is missing or empty
 - `server.version` is missing or empty
 - `server.instructions` is missing or empty
-- Any tool is missing a `name` or `description`
+- Any tool defined in the `tools` section is missing a `name` or `description`
 - Duplicate tool names exist
 
 ## Resource Frontmatter Format
