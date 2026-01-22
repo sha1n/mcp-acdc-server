@@ -17,8 +17,12 @@ builds:
       - -s -w -X main.Version={{.Version}} -X main.Build={{.ShortCommit}} -X main.ProgramName=acdc-mcp
 
 archives:
-  - format: tar.gz
-    # this name template makes the OS and Arch compatible with the results of uname.
+  - id: nix
+    formats:
+      - tar.gz
+    goos:
+      - linux
+      - darwin
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
@@ -26,10 +30,19 @@ archives:
       {{- else if eq .Arch "386" }}i386
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
-    # use zip for windows archives
-    format_overrides:
-    - goos: windows
-      format: zip
+
+  - id: windows
+    formats:
+      - zip
+    goos:
+      - windows
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
 
 checksum:
   name_template: 'checksums.txt'
@@ -48,7 +61,7 @@ brews:
   - repository:
       owner: sha1n
       name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_RELEASE_TOKEN }}"
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
 
     # TAP repository directory
     directory: Formula
