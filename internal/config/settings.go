@@ -62,7 +62,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	defaultContentDir := filepath.Join(cwd, "content")
 
 	v.SetDefault("content_dir", defaultContentDir)
-	v.SetDefault("transport", "sse")
+	v.SetDefault("transport", "stdio")
 	v.SetDefault("host", "0.0.0.0")
 	v.SetDefault("port", 8080)
 	v.SetDefault("search.max_results", 10)
@@ -129,6 +129,14 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 // ValidateSettings checks for conflicting configurations.
 // Returns an error if the settings contain mutually exclusive or incomplete auth config.
 func ValidateSettings(s *Settings) error {
+	// Validate transport type
+	switch s.Transport {
+	case "stdio", "sse":
+		// valid
+	default:
+		return errors.New("transport must be 'stdio' or 'sse', got: " + s.Transport)
+	}
+
 	hasBasicCreds := s.Auth.Basic.Username != "" || s.Auth.Basic.Password != ""
 	hasAPIKeys := len(s.Auth.APIKeys) > 0
 

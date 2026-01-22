@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -146,4 +147,124 @@ func TestStdioServer(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Error("Timeout waiting for response")
 	}
+}
+
+// TestStdioServer_HTTPPortNotListening verifies that when stdio transport is selected,
+// the HTTP port is NOT listening (no SSE server is started).
+func TestStdioServer_HTTPPortNotListening(t *testing.T) {
+	// 1. Build the server binary
+	tempDir := t.TempDir()
+	binPath := filepath.Join(tempDir, "mcp-server")
+
+	rootDir, err := filepath.Abs("../../")
+	if err != nil {
+		t.Fatalf("Failed to get root dir: %v", err)
+	}
+	cmdPath := filepath.Join(rootDir, "cmd", "acdc-mcp")
+
+	buildCmd := exec.Command("go", "build", "-o", binPath, cmdPath)
+	buildCmd.Dir = rootDir
+	out, err := buildCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to build server: %v\nOutput: %s", err, out)
+	}
+
+	// 2. Prepare content for valid startup
+	contentDir := filepath.Join(tempDir, "content")
+	resourcesDir := filepath.Join(contentDir, "mcp-resources")
+	if err := os.MkdirAll(resourcesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte("server:\n  name: test\n  version: 1.0\n  instructions: inst\ntools: []\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(resourcesDir, "res1.md"), []byte("---\nname: Test\ndescription: Desc\n---\nContent"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 3. Run Server in stdio mode with a specific port configured
+	// The port should NOT be listening in stdio mode
+	testPort := 19876 // Use a unique port for this test
+	serverCmd := exec.Command(binPath)
+	serverCmd.Env = append(os.Environ(),
+		"ACDC_MCP_TRANSPORT=stdio",
+		fmt.Sprintf("ACDC_MCP_PORT=%d", testPort),
+		fmt.Sprintf("ACDC_MCP_CONTENT_DIR=%s", contentDir),
+	)
+
+	stdin, err := serverCmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("Failed to get stdin: %v", err)
+	}
+	stdout, err := serverCmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("Failed to get stdout: %v", err)
+	}
+
+	if err := serverCmd.Start(); err != nil {
+		t.Fatalf("Failed to start server: %v", err)
+	}
+	defer func() {
+		_ = serverCmd.Process.Kill()
+	}()
+
+	// 4. Wait for server to be ready by sending initialize request and getting response
+	req := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]interface{}{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]interface{}{},
+			"clientInfo": map[string]string{
+				"name":    "test-client",
+				"version": "1.0",
+			},
+		},
+	}
+	reqBytes, _ := json.Marshal(req)
+	if _, err := fmt.Fprintf(stdin, "%s\n", reqBytes); err != nil {
+		t.Fatalf("Failed to write to stdin: %v", err)
+	}
+
+	// Wait for initialize response to confirm server is running
+	scanner := bufio.NewScanner(stdout)
+	serverReady := make(chan bool)
+	go func() {
+		for scanner.Scan() {
+			line := scanner.Text()
+			var resp map[string]interface{}
+			if err := json.Unmarshal([]byte(line), &resp); err == nil {
+				if id, ok := resp["id"].(float64); ok && id == 1 {
+					if _, ok := resp["result"]; ok {
+						serverReady <- true
+						return
+					}
+				}
+			}
+		}
+		serverReady <- false
+	}()
+
+	select {
+	case ready := <-serverReady:
+		if !ready {
+			t.Fatal("Server did not respond to initialize request")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Timeout waiting for server to be ready")
+	}
+
+	// 5. Now verify that the HTTP port is NOT listening
+	// We give a short timeout since connection should fail immediately
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	resp, err := client.Get(fmt.Sprintf("http://localhost:%d/sse", testPort))
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Errorf("HTTP port %d is listening when it should NOT be in stdio mode (got status %d)", testPort, resp.StatusCode)
+	}
+	// Expected: connection refused or timeout error - this is the correct behavior
+	t.Logf("Verified: HTTP port %d is not listening (expected error: %v)", testPort, err)
 }

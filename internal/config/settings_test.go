@@ -234,14 +234,14 @@ func TestLoadSettingsWithFlags_AllFlagTypes(t *testing.T) {
 // --- ValidateSettings Tests ---
 
 func TestValidateSettings_ValidNone(t *testing.T) {
-	s := &Settings{Auth: AuthSettings{Type: AuthTypeNone}}
+	s := &Settings{Transport: "stdio", Auth: AuthSettings{Type: AuthTypeNone}}
 	if err := ValidateSettings(s); err != nil {
 		t.Errorf("Expected no error for valid none auth, got: %v", err)
 	}
 }
 
 func TestValidateSettings_ValidNone_EmptyType(t *testing.T) {
-	s := &Settings{Auth: AuthSettings{Type: ""}}
+	s := &Settings{Transport: "stdio", Auth: AuthSettings{Type: ""}}
 	if err := ValidateSettings(s); err != nil {
 		t.Errorf("Expected no error for empty auth type, got: %v", err)
 	}
@@ -249,6 +249,7 @@ func TestValidateSettings_ValidNone_EmptyType(t *testing.T) {
 
 func TestValidateSettings_ValidBasic(t *testing.T) {
 	s := &Settings{
+		Transport: "stdio",
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
 			Basic: BasicAuthSettings{
@@ -264,6 +265,7 @@ func TestValidateSettings_ValidBasic(t *testing.T) {
 
 func TestValidateSettings_ValidAPIKey(t *testing.T) {
 	s := &Settings{
+		Transport: "stdio",
 		Auth: AuthSettings{
 			Type:    AuthTypeAPIKey,
 			APIKeys: []string{"key1", "key2"},
@@ -282,6 +284,7 @@ func TestValidateSettings_NoneWithCredentials(t *testing.T) {
 		{
 			name: "none with username",
 			settings: Settings{
+				Transport: "stdio",
 				Auth: AuthSettings{
 					Type:  AuthTypeNone,
 					Basic: BasicAuthSettings{Username: "admin"},
@@ -291,6 +294,7 @@ func TestValidateSettings_NoneWithCredentials(t *testing.T) {
 		{
 			name: "none with password",
 			settings: Settings{
+				Transport: "stdio",
 				Auth: AuthSettings{
 					Type:  AuthTypeNone,
 					Basic: BasicAuthSettings{Password: "secret"},
@@ -300,6 +304,7 @@ func TestValidateSettings_NoneWithCredentials(t *testing.T) {
 		{
 			name: "none with api keys",
 			settings: Settings{
+				Transport: "stdio",
 				Auth: AuthSettings{
 					Type:    AuthTypeNone,
 					APIKeys: []string{"key1"},
@@ -323,6 +328,7 @@ func TestValidateSettings_NoneWithCredentials(t *testing.T) {
 
 func TestValidateSettings_BasicAuthMissingUsername(t *testing.T) {
 	s := &Settings{
+		Transport: "stdio",
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
 			Basic: BasicAuthSettings{
@@ -341,6 +347,7 @@ func TestValidateSettings_BasicAuthMissingUsername(t *testing.T) {
 
 func TestValidateSettings_BasicAuthMissingPassword(t *testing.T) {
 	s := &Settings{
+		Transport: "stdio",
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
 			Basic: BasicAuthSettings{
@@ -356,6 +363,7 @@ func TestValidateSettings_BasicAuthMissingPassword(t *testing.T) {
 
 func TestValidateSettings_BasicAuthWithAPIKeys(t *testing.T) {
 	s := &Settings{
+		Transport: "stdio",
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
 			Basic: BasicAuthSettings{
@@ -376,6 +384,7 @@ func TestValidateSettings_BasicAuthWithAPIKeys(t *testing.T) {
 
 func TestValidateSettings_APIKeyMissingKeys(t *testing.T) {
 	s := &Settings{
+		Transport: "stdio",
 		Auth: AuthSettings{
 			Type: AuthTypeAPIKey,
 		},
@@ -391,6 +400,7 @@ func TestValidateSettings_APIKeyMissingKeys(t *testing.T) {
 
 func TestValidateSettings_APIKeyWithBasicCreds(t *testing.T) {
 	s := &Settings{
+		Transport: "stdio",
 		Auth: AuthSettings{
 			Type:    AuthTypeAPIKey,
 			APIKeys: []string{"key1"},
@@ -410,6 +420,7 @@ func TestValidateSettings_APIKeyWithBasicCreds(t *testing.T) {
 
 func TestValidateSettings_UnknownAuthType(t *testing.T) {
 	s := &Settings{
+		Transport: "stdio",
 		Auth: AuthSettings{
 			Type: "oauth",
 		},
@@ -420,5 +431,49 @@ func TestValidateSettings_UnknownAuthType(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown auth-type") {
 		t.Errorf("Expected 'unknown auth-type' in error, got: %v", err)
+	}
+}
+
+// --- Transport Validation Tests ---
+
+func TestValidateSettings_ValidTransportStdio(t *testing.T) {
+	s := &Settings{Transport: "stdio", Auth: AuthSettings{Type: AuthTypeNone}}
+	if err := ValidateSettings(s); err != nil {
+		t.Errorf("Expected no error for valid stdio transport, got: %v", err)
+	}
+}
+
+func TestValidateSettings_ValidTransportSSE(t *testing.T) {
+	s := &Settings{Transport: "sse", Auth: AuthSettings{Type: AuthTypeNone}}
+	if err := ValidateSettings(s); err != nil {
+		t.Errorf("Expected no error for valid sse transport, got: %v", err)
+	}
+}
+
+func TestValidateSettings_InvalidTransport(t *testing.T) {
+	tests := []struct {
+		name      string
+		transport string
+	}{
+		{"empty transport", ""},
+		{"http transport", "http"},
+		{"websocket transport", "websocket"},
+		{"unknown transport", "foobar"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &Settings{
+				Transport: tt.transport,
+				Auth:      AuthSettings{Type: AuthTypeNone},
+			}
+			err := ValidateSettings(s)
+			if err == nil {
+				t.Fatalf("Expected error for transport %q", tt.transport)
+			}
+			if !strings.Contains(err.Error(), "transport must be") {
+				t.Errorf("Expected 'transport must be' in error, got: %v", err)
+			}
+		})
 	}
 }

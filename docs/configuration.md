@@ -16,9 +16,9 @@ When the same setting is specified in multiple places, the following priority ap
 | CLI Flag | Short | Environment Variable | Description | Default |
 |----------|-------|---------------------|-------------|---------|
 | `--content-dir` | `-c` | `ACDC_MCP_CONTENT_DIR` | Path to content directory | `./content` |
-| `--transport` | `-t` | `ACDC_MCP_TRANSPORT` | Transport type: `stdio` or `sse` | `sse` |
-| `--host` | `-H` | `ACDC_MCP_HOST` | Host for SSE server | `0.0.0.0` |
-| `--port` | `-p` | `ACDC_MCP_PORT` | Port for SSE server | `8080` |
+| `--transport` | `-t` | `ACDC_MCP_TRANSPORT` | Transport type: `stdio` or `sse` | `stdio` |
+| `--host` | `-H` | `ACDC_MCP_HOST` | Host for SSE server (SSE mode only) | `0.0.0.0` |
+| `--port` | `-p` | `ACDC_MCP_PORT` | Port for SSE server (SSE mode only) | `8080` |
 | `--search-max-results` | `-m` | `ACDC_MCP_SEARCH_MAX_RESULTS` | Maximum search results | `10` |
 
 ## Authentication Settings
@@ -32,19 +32,24 @@ When the same setting is specified in multiple places, the following priority ap
 
 ## Examples
 
-**CLI flags (stdio mode):**
+**CLI flags (stdio mode - default):**
 ```bash
-./bin/acdc-mcp -t stdio -c /path/to/content
+./bin/acdc-mcp -c /path/to/content
+```
+
+**CLI flags (SSE mode):**
+```bash
+./bin/acdc-mcp -t sse --port 9000
 ```
 
 **CLI flags (SSE with basic auth):**
 ```bash
-./bin/acdc-mcp --port 9000 --auth-type basic -u admin -P secret
+./bin/acdc-mcp -t sse --port 9000 --auth-type basic -u admin -P secret
 ```
 
 **Environment variables:**
 ```bash
-ACDC_MCP_TRANSPORT=stdio ACDC_MCP_CONTENT_DIR=/data ./bin/acdc-mcp
+ACDC_MCP_TRANSPORT=sse ACDC_MCP_CONTENT_DIR=/data ./bin/acdc-mcp
 ```
 
 **Using a `.env` file:**
