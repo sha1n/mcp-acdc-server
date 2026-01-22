@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/sha1n/mcp-acdc-server-go/internal/domain"
-	"github.com/sha1n/mcp-acdc-server-go/internal/resources"
-	"github.com/sha1n/mcp-acdc-server-go/internal/search"
+	"github.com/sha1n/mcp-acdc-server/internal/domain"
+	"github.com/sha1n/mcp-acdc-server/internal/resources"
+	"github.com/sha1n/mcp-acdc-server/internal/search"
 )
 
 func TestCreateServer(t *testing.T) {

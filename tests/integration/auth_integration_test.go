@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/sha1n/mcp-acdc-server-go/tests/integration/testkit"
+	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
 )
 
 func TestAPIKeyAuthIntegration(t *testing.T) {

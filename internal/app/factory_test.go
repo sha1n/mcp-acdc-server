@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sha1n/mcp-acdc-server-go/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/config"
 )
 
 func TestCreateMCPServer_Success(t *testing.T) {

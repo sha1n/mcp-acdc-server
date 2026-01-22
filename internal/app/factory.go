@@ -7,12 +7,12 @@ import (
 	"strings"
 
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/sha1n/mcp-acdc-server-go/internal/config"
-	"github.com/sha1n/mcp-acdc-server-go/internal/content"
-	"github.com/sha1n/mcp-acdc-server-go/internal/domain"
-	"github.com/sha1n/mcp-acdc-server-go/internal/mcp"
-	"github.com/sha1n/mcp-acdc-server-go/internal/resources"
-	"github.com/sha1n/mcp-acdc-server-go/internal/search"
+	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/content"
+	"github.com/sha1n/mcp-acdc-server/internal/domain"
+	"github.com/sha1n/mcp-acdc-server/internal/mcp"
+	"github.com/sha1n/mcp-acdc-server/internal/resources"
+	"github.com/sha1n/mcp-acdc-server/internal/search"
 	"gopkg.in/yaml.v3"
 )
 

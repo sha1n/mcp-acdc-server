@@ -33,7 +33,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/mcp-acdc-server-go
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/mcp-acdc-server
           tags: |
             type=ref,event=branch
             type=ref,event=pr

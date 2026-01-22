@@ -6,8 +6,8 @@ import (
 	"net/http"
 
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/sha1n/mcp-acdc-server-go/internal/auth"
-	"github.com/sha1n/mcp-acdc-server-go/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/auth"
+	"github.com/sha1n/mcp-acdc-server/internal/config"
 )
 
 // StartSSEServer starts the SSE server with authentication

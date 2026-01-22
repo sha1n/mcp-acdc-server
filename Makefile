@@ -182,8 +182,8 @@ go-clean:
 .PHONY: build-docker
 build-docker:
 	@echo "  >  Building docker image..."
-	docker build -t sha1n/mcp-acdc-server-go:latest .
-	docker tag sha1n/mcp-acdc-server-go:latest sha1n/mcp-acdc-server-go:$(VERSION:v%=%)
+	docker build -t sha1n/mcp-acdc-server:latest .
+	docker tag sha1n/mcp-acdc-server:latest sha1n/mcp-acdc-server:$(VERSION:v%=%)
 
 .PHONY: release
 release:

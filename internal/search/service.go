@@ -8,8 +8,8 @@ import (
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
 	"github.com/blevesearch/bleve/v2/search/query"
-	"github.com/sha1n/mcp-acdc-server-go/internal/config"
-	"github.com/sha1n/mcp-acdc-server-go/internal/resources"
+	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/resources"
 )
 
 // SearchResult represents a search result

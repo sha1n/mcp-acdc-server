@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/sha1n/mcp-acdc-server-go/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/spf13/pflag"
 )
 

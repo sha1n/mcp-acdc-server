@@ -5,7 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/sha1n/mcp-acdc-server-go/internal/resources"
+	"github.com/sha1n/mcp-acdc-server/internal/resources"
 )
 
 func makeResourceHandler(resourceProvider *resources.ResourceProvider, uri string) func(context.Context, mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {

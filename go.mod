@@ -1,4 +1,4 @@
-module github.com/sha1n/mcp-acdc-server-go
+module github.com/sha1n/mcp-acdc-server
 
 go 1.25.6
 

@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/sha1n/mcp-acdc-server-go/internal/content"
+	"github.com/sha1n/mcp-acdc-server/internal/content"
 )
 
 // ResourceProvider provides access to resources
