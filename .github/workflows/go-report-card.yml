@@ -3,8 +3,14 @@ name: Go report card
 on:
   push:
     branches: [ master ]
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
   pull_request:
     branches: [ master ]
+    paths-ignore:
+      - 'README.md'
+      - 'docs/**'
 
 jobs:
   refresh_go_report_card:
