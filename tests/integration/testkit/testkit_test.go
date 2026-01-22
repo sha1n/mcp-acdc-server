@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sha1n/mcp-acdc-server-go/internal/app"
+	"github.com/sha1n/mcp-acdc-server/internal/app"
 	"github.com/spf13/pflag"
 )
 

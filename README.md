@@ -1,10 +1,10 @@
-[![CI](https://github.com/sha1n/mcp-acdc-server-go/actions/workflows/ci.yml/badge.svg)](https://github.com/sha1n/mcp-acdc-server-go/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/sha1n/mcp-acdc-server-go/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/sha1n/mcp-acdc-server-go/actions/workflows/codeql-analysis.yml)
-[![codecov](https://codecov.io/gh/sha1n/mcp-acdc-server-go/graph/badge.svg?token=T67S1K956N)](https://codecov.io/gh/sha1n/mcp-acdc-server-go)
-[![Go Report Card](https://goreportcard.com/badge/github.com/sha1n/mcp-acdc-server-go)](https://goreportcard.com/report/github.com/sha1n/mcp-acdc-server-go)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/sha1n/mcp-acdc-server-go)](https://go.dev/)
-[![License](https://img.shields.io/github/license/sha1n/mcp-acdc-server-go)](LICENSE)
-[![Docker Image](https://img.shields.io/docker/v/sha1n/mcp-acdc-server-go?label=docker)](https://hub.docker.com/r/sha1n/mcp-acdc-server-go)
+[![CI](https://github.com/sha1n/mcp-acdc-server/actions/workflows/ci.yml/badge.svg)](https://github.com/sha1n/mcp-acdc-server/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/sha1n/mcp-acdc-server/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/sha1n/mcp-acdc-server/actions/workflows/codeql-analysis.yml)
+[![codecov](https://codecov.io/gh/sha1n/mcp-acdc-server/graph/badge.svg?token=T67S1K956N)](https://codecov.io/gh/sha1n/mcp-acdc-server)
+[![Go Report Card](https://goreportcard.com/badge/github.com/sha1n/mcp-acdc-server)](https://goreportcard.com/report/github.com/sha1n/mcp-acdc-server)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/sha1n/mcp-acdc-server)](https://go.dev/)
+[![License](https://img.shields.io/github/license/sha1n/mcp-acdc-server)](LICENSE)
+[![Docker Image](https://img.shields.io/docker/v/sha1n/mcp-acdc-server?label=docker)](https://hub.docker.com/r/sha1n/mcp-acdc-server)
 
 # mcp-acdc-server
 
@@ -33,8 +33,8 @@ ACDC is a high-performance Model Context Protocol (MCP) server designed to help 
 
 ```bash
 # Clone the repository
-git clone https://github.com/sha1n/mcp-acdc-server-go.git
-cd mcp-acdc-server-go
+git clone https://github.com/sha1n/mcp-acdc-server.git
+cd mcp-acdc-server
 
 # Install dependencies
 make install
@@ -70,7 +70,7 @@ ACDC_MCP_TRANSPORT=stdio ./bin/acdc-mcp
 ```bash
 docker run -p 8080:8080 \
   -v $(pwd)/content:/app/content \
-  sha1n/mcp-acdc-server-go:latest
+  sha1n/mcp-acdc-server:latest
 ```
 
 ## ⚙️ Configuration

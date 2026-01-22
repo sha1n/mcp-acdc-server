@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/sha1n/mcp-acdc-server-go/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/config"
 )
 
 // excludedPaths are paths that bypass authentication (e.g., health checks)

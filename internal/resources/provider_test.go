@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/sha1n/mcp-acdc-server-go/internal/content"
+	"github.com/sha1n/mcp-acdc-server/internal/content"
 )
 
 func TestResourceProvider_Methods(t *testing.T) {

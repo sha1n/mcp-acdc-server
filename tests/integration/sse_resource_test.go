@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sha1n/mcp-acdc-server-go/tests/integration/testkit"
+	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
 )
 
 // TestSSEResourceListAndRead tests that resources can be listed and read via SSE transport
