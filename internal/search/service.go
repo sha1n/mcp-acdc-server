@@ -116,20 +116,20 @@ func buildMapping() mapping.IndexMapping {
 	nameMapping := bleve.NewTextFieldMapping()
 	nameMapping.Store = true
 	nameMapping.IncludeInAll = true
-	nameMapping.Analyzer = "standard"
+	nameMapping.Analyzer = "en"
 
 	// Content field: Indexed, Not Stored, Included in All
 	contentMapping := bleve.NewTextFieldMapping()
 	contentMapping.Store = true // DEBUG: Store content to ensure we can see it
 	contentMapping.IncludeInAll = true
-	contentMapping.Analyzer = "standard"
+	contentMapping.Analyzer = "en"
 
 	// Keywords field: Indexed, Not Stored, Included in All
 	// Boosting is done at query-time via DisjunctionQuery
 	keywordsMapping := bleve.NewTextFieldMapping()
 	keywordsMapping.Store = false
 	keywordsMapping.IncludeInAll = true
-	keywordsMapping.Analyzer = "standard"
+	keywordsMapping.Analyzer = "en"
 
 	docMapping := bleve.NewDocumentMapping()
 	docMapping.AddFieldMappingsAt(resources.FieldURI, uriMapping)
@@ -159,24 +159,30 @@ func (s *Service) Search(queryStr string, limit *int) ([]SearchResult, error) {
 	if queryStr == "*" {
 		q = bleve.NewMatchAllQuery()
 	} else {
-		// Create field-specific queries with boosting
+		// Create field-specific queries with boosting and fuzziness
 		nameQuery := bleve.NewMatchQuery(queryStr)
 		nameQuery.SetField(resources.FieldName)
+		nameQuery.SetFuzziness(1)
+		nameQuery.SetBoost(s.settings.NameBoost)
 
 		contentQuery := bleve.NewMatchQuery(queryStr)
 		contentQuery.SetField(resources.FieldContent)
+		contentQuery.SetFuzziness(1)
+		contentQuery.SetBoost(s.settings.ContentBoost)
 
 		keywordsQuery := bleve.NewMatchQuery(queryStr)
 		keywordsQuery.SetField(resources.FieldKeywords)
-		keywordsQuery.SetBoost(2.0) // Boost keyword matches 2x
+		keywordsQuery.SetFuzziness(1)
+		keywordsQuery.SetBoost(s.settings.KeywordsBoost)
 
-		// DisjunctionQuery combines results, boosted keywords will score higher
+		// DisjunctionQuery combines results, boosted fields will score higher
 		q = bleve.NewDisjunctionQuery(nameQuery, contentQuery, keywordsQuery)
 	}
 
 	searchRequest := bleve.NewSearchRequest(q)
 	searchRequest.Size = maxResults
 	searchRequest.Fields = []string{resources.FieldURI, resources.FieldName, resources.FieldContent}
+	searchRequest.Highlight = bleve.NewHighlight()
 
 	searchResult, err := s.index.Search(searchRequest)
 	if err != nil {
@@ -196,8 +202,11 @@ func (s *Service) Search(queryStr string, limit *int) ([]SearchResult, error) {
 			name = "Unknown" // Fallback
 		}
 
-		// Replicate Python snippet behavior
+		// Improved snippet generation with highlighting
 		snippet := fmt.Sprintf("%s (relevance: %.2f)", name, hit.Score)
+		if fragments, ok := hit.Fragments[resources.FieldContent]; ok && len(fragments) > 0 {
+			snippet = fmt.Sprintf("%s... (relevance: %.2f)", fragments[0], hit.Score)
+		}
 
 		results = append(results, SearchResult{
 			URI:     uri,

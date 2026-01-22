@@ -25,6 +25,15 @@ func TestLoadSettings_Defaults(t *testing.T) {
 	if settings.Auth.Type != AuthTypeNone {
 		t.Errorf("Expected default auth type '%s', got '%s'", AuthTypeNone, settings.Auth.Type)
 	}
+	if settings.Search.KeywordsBoost != 3.0 {
+		t.Errorf("Expected default keywords boost 3.0, got %f", settings.Search.KeywordsBoost)
+	}
+	if settings.Search.NameBoost != 2.0 {
+		t.Errorf("Expected default name boost 2.0, got %f", settings.Search.NameBoost)
+	}
+	if settings.Search.ContentBoost != 1.0 {
+		t.Errorf("Expected default content boost 1.0, got %f", settings.Search.ContentBoost)
+	}
 }
 
 func TestLoadSettings_EnvVars(t *testing.T) {
@@ -45,6 +54,12 @@ func TestLoadSettings_EnvVars(t *testing.T) {
 	}
 	if settings.Auth.Basic.Username != "admin" {
 		t.Errorf("Expected username 'admin', got '%s'", settings.Auth.Basic.Username)
+	}
+
+	t.Setenv("ACDC_MCP_SEARCH_KEYWORDS_BOOST", "5.5")
+	settings, _ = LoadSettings()
+	if settings.Search.KeywordsBoost != 5.5 {
+		t.Errorf("Expected keywords boost 5.5, got %f", settings.Search.KeywordsBoost)
 	}
 }
 
@@ -186,6 +201,9 @@ func TestLoadSettingsWithFlags_AllFlagTypes(t *testing.T) {
 	flags.String("host", "", "")
 	flags.Int("port", 0, "")
 	flags.Int("search-max-results", 0, "")
+	flags.Float64("search-keywords-boost", 0, "")
+	flags.Float64("search-name-boost", 0, "")
+	flags.Float64("search-content-boost", 0, "")
 	flags.String("auth-type", "", "")
 	flags.String("auth-basic-username", "", "")
 	flags.String("auth-basic-password", "", "")
@@ -196,6 +214,9 @@ func TestLoadSettingsWithFlags_AllFlagTypes(t *testing.T) {
 	_ = flags.Set("host", "localhost")
 	_ = flags.Set("port", "3000")
 	_ = flags.Set("search-max-results", "50")
+	_ = flags.Set("search-keywords-boost", "10.0")
+	_ = flags.Set("search-name-boost", "5.0")
+	_ = flags.Set("search-content-boost", "2.0")
 	_ = flags.Set("auth-type", "basic")
 	_ = flags.Set("auth-basic-username", "testuser")
 	_ = flags.Set("auth-basic-password", "testpass")
@@ -219,6 +240,15 @@ func TestLoadSettingsWithFlags_AllFlagTypes(t *testing.T) {
 	}
 	if settings.Search.MaxResults != 50 {
 		t.Errorf("Expected max results 50, got %d", settings.Search.MaxResults)
+	}
+	if settings.Search.KeywordsBoost != 10.0 {
+		t.Errorf("Expected keywords boost 10.0, got %f", settings.Search.KeywordsBoost)
+	}
+	if settings.Search.NameBoost != 5.0 {
+		t.Errorf("Expected name boost 5.0, got %f", settings.Search.NameBoost)
+	}
+	if settings.Search.ContentBoost != 2.0 {
+		t.Errorf("Expected content boost 2.0, got %f", settings.Search.ContentBoost)
 	}
 	if settings.Auth.Type != "basic" {
 		t.Errorf("Expected auth type 'basic', got '%s'", settings.Auth.Type)
