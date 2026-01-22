@@ -47,7 +47,8 @@ func RunWithDeps(params RunParams, flags *pflag.FlagSet, version string) error {
 	handler := slog.NewTextHandler(os.Stderr, nil)
 	slog.SetDefault(slog.New(handler))
 
-	slog.Info("Starting MCP Acdc server", "version", version, "transport", settings.Transport)
+	slog.Info("Starting MCP Acdc server", "version", version)
+	config.Log(settings)
 
 	mcpServer, cleanup, err := params.CreateServer(settings)
 	if err != nil {
