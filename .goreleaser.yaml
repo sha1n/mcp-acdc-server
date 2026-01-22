@@ -28,7 +28,7 @@ builds:
 
 archives:
   - id: nix
-    builds:
+    ids:
       - default
     formats:
       - tar.gz
@@ -41,7 +41,7 @@ archives:
       {{- if .Arm }}v{{ .Arm }}{{ end }}
 
   - id: windows
-    builds:
+    ids:
       - windows
     formats:
       - zip
@@ -66,21 +66,14 @@ changelog:
       - '^docs:'
       - '^test:'
 
-brews:
+homebrew_casks:
   - repository:
       owner: sha1n
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-
-    # TAP repository directory
-    directory: Formula
 
     # Homepage placeholder
     homepage: "https://github.com/sha1n/mcp-acdc-server"
 
     # Description placeholder
     description: "MCP ACDC Server"
-
-    # Custom install instruction
-    install: |
-      bin.install "acdc-mcp"
