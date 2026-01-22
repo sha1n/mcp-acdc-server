@@ -1,0 +1,79 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: default
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    main: ./cmd/acdc-mcp
+    binary: acdc-mcp
+    ldflags:
+      - -s -w -X main.Version={{.Version}} -X main.Build={{.ShortCommit}} -X main.ProgramName=acdc-mcp
+
+  - id: windows
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - windows
+    main: ./cmd/acdc-mcp
+    binary: acdc-mcp
+    ldflags:
+      - -s -w -X main.Version={{.Version}} -X main.Build={{.ShortCommit}} -X main.ProgramName=acdc-mcp
+
+archives:
+  - id: nix
+    ids:
+      - default
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+
+  - id: windows
+    ids:
+      - windows
+    formats:
+      - zip
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+
+homebrew_casks:
+  - repository:
+      owner: sha1n
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+
+    # Homepage placeholder
+    homepage: "https://github.com/sha1n/mcp-acdc-server"
+
+    # Description placeholder
+    description: "MCP ACDC Server"

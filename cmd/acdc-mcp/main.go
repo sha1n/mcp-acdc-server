@@ -14,7 +14,7 @@ var (
 	// Build is injected at build time
 	Build = "unknown"
 	// ProgramName is injected at build time
-	ProgramName = "mcp-acdc"
+	ProgramName = "acdc-mcp"
 )
 
 func main() {
