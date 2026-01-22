@@ -12,12 +12,14 @@ on:
     paths-ignore:
       - 'README.md'
       - 'docs/**'
+      - 'examples/**'
   pull_request:
     branches:
       - 'master'
     paths-ignore:
       - 'README.md'
       - 'docs/**'
+      - 'examples/**'
 
 jobs:
   docker:

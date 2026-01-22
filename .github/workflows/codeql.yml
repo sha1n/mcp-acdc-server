@@ -6,11 +6,13 @@ on:
     paths-ignore:
       - 'README.md'
       - 'docs/**'
+      - 'examples/**'
   pull_request:
     branches: [ "master" ]
     paths-ignore:
       - 'README.md'
       - 'docs/**'
+      - 'examples/**'
   schedule:
     - cron: '16 6 * * 2'
 

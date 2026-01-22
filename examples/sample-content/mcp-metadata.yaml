@@ -1,0 +1,28 @@
+server:
+  name: MCP Acdc Server (Go)
+  version: 1.0.0
+  instructions: |
+    MCP ACDC provides development resources and tools through the Model Context Protocol.
+
+    This server demonstrates the Docker content mount pattern, where content is provided
+    via a separate content image that can be versioned and deployed independently.
+
+    Use resources for broad context (standards, guidelines, best practices).
+    Use the search tool to find specific information across all resources.
+
+tools:
+  - name: search
+    description: |
+      Search across all development resources using full-text search. This tool searches resource names, descriptions, and content to help you find relevant standards, guidelines, and documentation.
+
+      WHEN TO USE: Use this as your first step before generating code or reviewing implementations. Search for relevant topics to discover which resources apply to your task.
+
+      HOW IT WORKS: Searches are performed across resource names, descriptions, and full markdown content. Results include the resource name, URI, and a relevant text snippet showing where your query was found.
+
+  - name: read
+    description: |
+      Read the full content of a specified resource. This tool allows you to retrieve the complete markdown content of any development resource using its URI.
+
+      WHEN TO USE: Use this after you have found a relevant resource URI (e.g., via the search tool or by listing resources) and need to read its full content to understand specific standards, guidelines, or instructions.
+
+      HOW IT WORKS: Provide the URI of the resource you wish to read (e.g., 'acdc://guides/getting-started.md'). The tool returns the full markdown content of the resource with frontmatter removed.

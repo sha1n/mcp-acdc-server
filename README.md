@@ -16,11 +16,21 @@
 
 A high-performance Model Context Protocol (MCP) server for AI agents to discover and search local content. Features full-text search powered by [Bleve](https://github.com/blevesearch/bleve), dual transport support (stdio/SSE), and flexible authentication.
 
-## 🚀 Quick Start
+## 🌐 Why ACDC?
 
-**Docker (recommended):**
+ACDC solves the challenge of managing team-specific knowledge in the AI agent space. While general-purpose LLMs are powerful, they lack the context of your team's specific tools, patterns, and standards.
+
+ACDC provides a bridge between your content repositories and AI agents, making it easy to manage and develop relevant context at scale.
+
+### Deployment Patterns
+
+*   **Centralized (SSE):** For large teams, deploy ACDC as a central service. Agents across the organization can connect via the SSE interface, making knowledge management transparent and consistent.
+*   **Localized (stdio):** For smaller teams or individual developers, running ACDC locally might be good enough. Point it at a Git-managed content repository and pull changes as needed.
+
+**Docker (Quick Start):**
 ```bash
-docker run -p 8080:8080 -v $(pwd)/content:/app/content sha1n/mcp-acdc-server:latest
+cd examples/docker-local-content
+docker-compose up -d
 ```
 
 **Homebrew:**
@@ -132,6 +142,12 @@ claude mcp add --scope user --transport sse acdc http://<host>:<port>/sse
 The server requires an `mcp-metadata.yaml` file in your content directory to define server identity.
 
 For details on authoring resource files, including frontmatter format and search keyword boosting, see the [Authoring Resources Guide](docs/authoring-resources.md).
+
+### Examples
+
+Check out the [examples/](examples/) directory for structured deployment patterns:
+- [Local Content Demo](examples/docker-local-content/) — Direct mount for rapid iteration.
+- [Remote Image Demo](examples/docker-image-content/) — Production-like init container pattern.
 
 ## 🛠️ Development
 

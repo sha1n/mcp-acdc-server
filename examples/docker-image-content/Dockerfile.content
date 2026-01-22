@@ -1,0 +1,10 @@
+# Dockerfile for content image
+FROM alpine:latest
+
+# Copy content files into the image at /content
+COPY ./content /content
+
+LABEL description="MCP ACDC content image with documentation files"
+LABEL version="1.0"
+
+# No CMD needed - this image is just a content container
