@@ -67,7 +67,8 @@ changelog:
       - '^test:'
 
 brews:
-  - repository:
+  - name: acdc-mcp
+    repository:
       owner: sha1n
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
