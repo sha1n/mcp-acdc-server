@@ -23,6 +23,37 @@ type McpMetadata struct {
 	Tools  []ToolMetadata `yaml:"tools"`
 }
 
+// DefaultToolMetadata provides sensible defaults for known tools
+var DefaultToolMetadata = map[string]ToolMetadata{
+	"search": {
+		Name: "search",
+		Description: `Search across all development resources using full-text search. This tool searches resource names, descriptions, and content to help you find relevant standards, guidelines, and documentation.
+
+WHEN TO USE: Use this as your first step before generating code or reviewing implementations. Search for relevant topics to discover which resources apply to your task.
+
+HOW IT WORKS: Searches are performed across resource names, descriptions, and full markdown content. Results include the resource name, URI, and a relevant text snippet showing where your query was found.`,
+	},
+	"read": {
+		Name: "read",
+		Description: `Read the full content of a specified resource. This tool allows you to retrieve the complete markdown content of any development resource using its URI.
+
+WHEN TO USE: Use after you have found a relevant resource URI (e.g., via the search tool or by listing resources) and need to read its full content to understand specific standards, guidelines, or instructions.
+
+HOW IT WORKS: Provide the URI of the resource you wish to read (e.g., 'acdc://guides/getting-started.md'). The tool returns the full markdown content of the resource with frontmatter removed.`,
+	},
+}
+
+// GetToolMetadata returns metadata for the specified tool name, using overrides if provided
+// in the config, otherwise falling back to defaults.
+func (m *McpMetadata) GetToolMetadata(name string) ToolMetadata {
+	for _, t := range m.Tools {
+		if t.Name == name {
+			return t
+		}
+	}
+	return DefaultToolMetadata[name]
+}
+
 // ToolsMap returns tools as a map for easy lookup
 func (m *McpMetadata) ToolsMap() (map[string]ToolMetadata, error) {
 	tools := make(map[string]ToolMetadata)

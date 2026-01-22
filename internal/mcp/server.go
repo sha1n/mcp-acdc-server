@@ -44,19 +44,11 @@ func CreateServer(
 	}
 
 	// Register Tools
-	toolsMap, _ := metadata.ToolsMap()
-	if toolMeta, ok := toolsMap[ToolNameSearch]; ok {
-		RegisterSearchTool(s, searchService, toolMeta)
-		slog.Info("Registered tool", "name", ToolNameSearch)
-	} else {
-		slog.Warn("Tool not registered (missing metadata)", "name", ToolNameSearch)
-	}
-	if toolMeta, ok := toolsMap[ToolNameRead]; ok {
-		RegisterReadTool(s, resourceProvider, toolMeta)
-		slog.Info("Registered tool", "name", ToolNameRead)
-	} else {
-		slog.Warn("Tool not registered (missing metadata)", "name", ToolNameRead)
-	}
+	RegisterSearchTool(s, searchService, metadata.GetToolMetadata(ToolNameSearch))
+	slog.Info("Registered tool", "name", ToolNameSearch)
+
+	RegisterReadTool(s, resourceProvider, metadata.GetToolMetadata(ToolNameRead))
+	slog.Info("Registered tool", "name", ToolNameRead)
 
 	return s
 }

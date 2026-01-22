@@ -139,7 +139,7 @@ claude mcp add --scope user --transport sse acdc http://<host>:<port>/sse
 
 ## 📚 Content & Resources
 
-The server requires an `mcp-metadata.yaml` file in your content directory to define server identity.
+The server requires an `mcp-metadata.yaml` file in your content directory to define server identity. Tool metadata is optional and the server provides high-quality default descriptions for `search` and `read` tools.
 
 For details on authoring resource files, including frontmatter format and search keyword boosting, see the [Authoring Resources Guide](docs/authoring-resources.md).
 
