@@ -1,3 +1,5 @@
+<div align="center">
+
 [![CI](https://github.com/sha1n/mcp-acdc-server/actions/workflows/ci.yml/badge.svg)](https://github.com/sha1n/mcp-acdc-server/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/sha1n/mcp-acdc-server/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/sha1n/mcp-acdc-server/actions/workflows/codeql-analysis.yml)
 [![codecov](https://codecov.io/gh/sha1n/mcp-acdc-server/graph/badge.svg?token=T67S1K956N)](https://codecov.io/gh/sha1n/mcp-acdc-server)
@@ -6,67 +8,64 @@
 [![License](https://img.shields.io/github/license/sha1n/mcp-acdc-server)](LICENSE)
 [![Docker Image](https://img.shields.io/docker/v/sha1n/mcp-acdc-server?label=docker)](https://hub.docker.com/r/sha1n/mcp-acdc-server)
 
+</div>
+
 # mcp-acdc-server
 
 **Agent Content Discovery Companion (ACDC) MCP Server**
 
-ACDC is a high-performance Model Context Protocol (MCP) server designed to help AI agents discover and search through local content and resources dynamically. It provides a robust search interface and automatic resource discovery, making it easy for agents to find the context they need.
+A high-performance Model Context Protocol (MCP) server for AI agents to discover and search local content. Features full-text search powered by [Bleve](https://github.com/blevesearch/bleve), dual transport support (stdio/SSE), and flexible authentication.
 
-## 🚀 Features
+## 🚀 Quick Start
 
-- **Dynamic Resource Discovery**: Automatically scans and identifies resources from a configurable content directory.
-- **Full-Text Search**: Provides a built-in search tool powered by [Bleve](https://github.com/blevesearch/bleve) for fast and efficient indexing/searching of local content.
-- **MCP Compliant**: Fully supports the Model Context Protocol, enabling seamless integration with AI agents.
-- **Dual Transport Support**: Works with both `stdio` (standard I/O) and `sse` (Server-Sent Events) transports.
-- **Dockerized**: Simplified deployment with multi-stage Docker builds.
-- **Cross-Platform**: Go-based implementation ensures compatibility across Linux, macOS, and Windows.
-
-## 📋 Prerequisites
-
-- [Go](https://go.dev/doc/install) 1.24 or later (for local builds)
-- [Docker](https://docs.docker.com/get-docker/) (optional, for containerized execution)
-- [Make](https://www.gnu.org/software/make/) (recommended for easy orchestration)
-
-## 🛠️ Installation & Setup
-
-### Building From Source
-
+**Docker (recommended):**
 ```bash
-# Clone the repository
-git clone https://github.com/sha1n/mcp-acdc-server.git
-cd mcp-acdc-server
-
-# Install dependencies
-make install
-
-# Build the binary
-make build-current # Builds for your current OS/Arch
+docker run -p 8080:8080 -v $(pwd)/content:/app/content sha1n/mcp-acdc-server:latest
 ```
 
-### Building Docker Image
-
+**Homebrew:**
 ```bash
-make build-docker
+brew install sha1n/tap/acdc-mcp
+acdc-mcp --content-dir ./content
 ```
 
-## 🏃 Running the Server
+## ✨ Features
 
-### Local Execution
+- **Full-Text Search** — Fast indexing and search with keyword boosting
+- **Dynamic Resource Discovery** — Automatic scanning of content directories
+- **MCP Compliant** — Seamless integration with AI agents
+- **Dual Transport** — `stdio` for local agents, `sse` for remote/Docker
+- **Authentication** — Optional basic auth or API key protection
+- **Cross-Platform** — Linux, macOS, and Windows
 
-By default, the server starts with SSE transport on port 8080:
+## � Installation
 
+### Docker
 ```bash
-./bin/acdc-mcp
+docker pull sha1n/mcp-acdc-server:latest
 ```
 
-### Using Stdio (Common for Local Agent Integration)
-
+### Homebrew
 ```bash
-ACDC_MCP_TRANSPORT=stdio ./bin/acdc-mcp
+brew install sha1n/tap/acdc-mcp
 ```
 
-### Docker Execution
+### Build from Source
+See [Development Guide](docs/development.md) for build instructions.
 
+## 🏃 Running
+
+### SSE Transport (default)
+```bash
+acdc-mcp --content-dir ./content
+```
+
+### Stdio Transport
+```bash
+acdc-mcp --transport stdio --content-dir ./content
+```
+
+### Docker
 ```bash
 docker run -p 8080:8080 \
   -v $(pwd)/content:/app/content \
@@ -75,95 +74,54 @@ docker run -p 8080:8080 \
 
 ## ⚙️ Configuration
 
-The server can be configured using **CLI flags**, **environment variables**, or a **`.env` file**. 
+| Flag | Short | Environment Variable | Default |
+|------|-------|---------------------|---------|
+| `--content-dir` | `-c` | `ACDC_MCP_CONTENT_DIR` | `./content` |
+| `--transport` | `-t` | `ACDC_MCP_TRANSPORT` | `sse` |
+| `--port` | `-p` | `ACDC_MCP_PORT` | `8080` |
+| `--auth-type` | `-a` | `ACDC_MCP_AUTH_TYPE` | `none` |
 
-### Configuration Priority
+For full configuration options including authentication, see [Configuration Reference](docs/configuration.md).
 
-When the same setting is specified in multiple places, the following priority applies (highest to lowest):
+## 🤖 Agent Configuration
 
-1. **CLI flags** — Explicit command-line arguments
-2. **Environment variables** — Shell environment or exported vars
-3. **`.env` file** — Key-value pairs in a `.env` file in the working directory
-4. **Defaults** — Built-in fallback values
+### [Gemini CLI](https://github.com/google-gemini/gemini-cli)
 
-### General Settings
-
-| CLI Flag | Short | Environment Variable | Description | Default |
-|----------|-------|---------------------|-------------|---------|
-| `--content-dir` | `-c` | `ACDC_MCP_CONTENT_DIR` | Path to content directory | `./content` |
-| `--transport` | `-t` | `ACDC_MCP_TRANSPORT` | Transport type: `stdio` or `sse` | `sse` |
-| `--host` | `-H` | `ACDC_MCP_HOST` | Host for SSE server | `0.0.0.0` |
-| `--port` | `-p` | `ACDC_MCP_PORT` | Port for SSE server | `8080` |
-| `--search-max-results` | `-m` | `ACDC_MCP_SEARCH_MAX_RESULTS` | Maximum search results | `10` |
-
-### Authentication Settings
-
-| CLI Flag | Short | Environment Variable | Description | Default |
-|----------|-------|---------------------|-------------|---------|
-| `--auth-type` | `-a` | `ACDC_MCP_AUTH_TYPE` | Auth type: `none`, `basic`, or `apikey` | `none` |
-| `--auth-basic-username` | `-u` | `ACDC_MCP_AUTH_BASIC_USERNAME` | Basic auth username | — |
-| `--auth-basic-password` | `-P` | `ACDC_MCP_AUTH_BASIC_PASSWORD` | Basic auth password | — |
-| `--auth-api-keys` | `-k` | `ACDC_MCP_AUTH_API_KEYS` | Comma-separated API keys | — |
-
-### Examples
-
-**Using CLI flags (stdio mode):**
+**Stdio:**
 ```bash
-./bin/acdc-mcp -t stdio -c /path/to/content
+gemini mcp add --scope user --transport stdio --trust acdc acdc-mcp -- --transport stdio --content-dir $ACDC_MCP_CONTENT_DIR
 ```
 
-**Using CLI flags (SSE with basic auth):**
+**SSE:**
 ```bash
-./bin/acdc-mcp --port 9000 --auth-type basic -u admin -P secret
+gemini mcp add --scope user --transport sse --trust acdc http://<host>:<port>/sse
 ```
 
-**Using environment variables:**
+### [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code)
+
+**Stdio:**
 ```bash
-ACDC_MCP_TRANSPORT=stdio ACDC_MCP_CONTENT_DIR=/data ./bin/acdc-mcp
+claude mcp add --scope user --transport stdio acdc -- acdc-mcp --transport stdio --content-dir $ACDC_MCP_CONTENT_DIR
 ```
 
-**Using a `.env` file:**
-```env
-transport=sse
-port=9000
-auth.type=basic
-auth.basic.username=admin
-auth.basic.password=secret
+**SSE:**
+```bash
+claude mcp add --scope user --transport sse acdc http://<host>:<port>/sse
 ```
 
-### Configuration Validation
+> [!NOTE]
+> For authenticated servers, provide the required headers (`Authorization` or `X-API-Key`) as part of the client configuration.
 
-The server validates configuration at startup and will fail with a clear error if:
-- `--auth-type=basic` is set without username/password
-- `--auth-type=apikey` is set without API keys
-- `--auth-type=none` is set with auth credentials (conflicting intent)
-- `--auth-type=basic` is combined with `--auth-api-keys` (mutually exclusive)
+## 📚 Content & Resources
 
-API keys must be provided via the `X-API-Key` header in HTTP requests.
-
-> [!CAUTION]
-> **Security Best Practices:**
-> - Never commit credentials to version control. Ensure `.env` files are in `.gitignore`.
-> - Use a secrets manager (e.g., HashiCorp Vault, AWS Secrets Manager) in production.
-> - For containerized deployments, use Kubernetes Secrets or Docker secrets.
-> - Rotate credentials regularly and use strong, unique passwords/keys.
-
-### Content Metadata
-The server expects an `mcp-metadata.yaml` file in the root of your content directory to define server identity.
+The server requires an `mcp-metadata.yaml` file in your content directory to define server identity.
 
 For details on authoring resource files, including frontmatter format and search keyword boosting, see the [Authoring Resources Guide](docs/authoring-resources.md).
 
 ## 🛠️ Development
 
-Use the provided `Makefile` for common tasks:
-
-- `make install`: Tidy Go modules.
-- `make build`: Build binaries for all supported platforms.
-- `make test`: Run all tests.
-- `make lint`: Run linters.
-- `make format`: Format source files.
-- `make clean`: Remove build artifacts.
+See [Development Guide](docs/development.md) for building, testing, and contributing.
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the `LICENSE` file for details.
+MIT License - see [LICENSE](LICENSE) for details.
