@@ -3,6 +3,7 @@ package testkit
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -22,6 +23,13 @@ type acdcService struct {
 	StopDelay    time.Duration
 	StartTimeout time.Duration
 	runner       RunnerFunc
+
+	// Stdio pipes
+	stdinReader  *io.PipeReader
+	stdinWriter  *io.PipeWriter
+	stdoutReader *io.PipeReader
+	stdoutWriter *io.PipeWriter
+	ctxCancel    context.CancelFunc
 }
 
 func NewACDCService(name string, flags *pflag.FlagSet) Service {
@@ -41,18 +49,41 @@ func (s *acdcService) GetName() string {
 
 func (s *acdcService) Start() (map[string]any, error) {
 	params := app.DefaultRunParams()
-	params.StartSSEServer = func(mcpSrv *server.MCPServer, settings *config.Settings) error {
-		var err error
-		s.srv, err = app.NewSSEServer(mcpSrv, settings)
-		if err != nil {
-			return err
+	transport, _ := s.flags.GetString("transport")
+
+	if transport == "stdio" {
+		s.stdinReader, s.stdinWriter = io.Pipe()
+		s.stdoutReader, s.stdoutWriter = io.Pipe()
+
+		var ctx context.Context
+		ctx, s.ctxCancel = context.WithCancel(context.Background())
+
+		params.ServeStdio = func(mcpSrv *server.MCPServer, opts ...server.StdioOption) error {
+			stdioSrv := server.NewStdioServer(mcpSrv)
+			return stdioSrv.Listen(ctx, s.stdinReader, s.stdoutWriter)
 		}
-		return s.srv.ListenAndServe()
+	} else {
+		params.StartSSEServer = func(mcpSrv *server.MCPServer, settings *config.Settings) error {
+			var err error
+			s.srv, err = app.NewSSEServer(mcpSrv, settings)
+			if err != nil {
+				return err
+			}
+			return s.srv.ListenAndServe()
+		}
 	}
 
 	go func() {
 		s.errChan <- s.runner(params, s.flags, "testkit")
 	}()
+
+	if transport == "stdio" {
+		return map[string]any{
+			"acdc.transport": "stdio",
+			"acdc.stdin":     s.stdinWriter,
+			"acdc.stdout":    s.stdoutReader,
+		}, nil
+	}
 
 	// Wait for server to start by polling /sse
 	port, _ := s.flags.GetInt("port")
@@ -73,9 +104,10 @@ func (s *acdcService) Start() (map[string]any, error) {
 			if err == nil {
 				_ = resp.Body.Close()
 				return map[string]any{
-					"acdc.port":    port,
-					"acdc.host":    host,
-					"acdc.baseURL": baseURL,
+					"acdc.transport": "sse",
+					"acdc.port":      port,
+					"acdc.host":      host,
+					"acdc.baseURL":   baseURL,
 				}, nil
 			}
 			time.Sleep(100 * time.Millisecond)
@@ -94,9 +126,19 @@ func (s *acdcService) Stop() error {
 		}
 	}
 
+	if s.ctxCancel != nil {
+		s.ctxCancel()
+	}
+	if s.stdinWriter != nil {
+		_ = s.stdinWriter.Close()
+	}
+	if s.stdoutWriter != nil {
+		_ = s.stdoutWriter.Close()
+	}
+
 	select {
 	case err := <-s.errChan:
-		if err != nil && err != http.ErrServerClosed {
+		if err != nil && err != http.ErrServerClosed && err != context.Canceled {
 			return err
 		}
 	case <-time.After(s.StopDelay):

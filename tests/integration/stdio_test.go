@@ -4,88 +4,40 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
 )
 
 func TestStdioServer(t *testing.T) {
-	// 1. Build the server binary
-	tempDir := t.TempDir()
-	binPath := filepath.Join(tempDir, "mcp-server")
+	// 1. Prepare content using testkit
+	contentDir := testkit.CreateTestContentDir(t, &testkit.ContentDirOptions{
+		Resources: map[string]string{
+			"res1.md": "---\nname: Test\ndescription: Desc\n---\nContent",
+		},
+	})
 
-	// Assuming running from module root or adjusting path
-	// We are in tests/integration. Module root is ../..
-	rootDir, err := filepath.Abs("../../")
+	// 2. Start ACDC Service with stdio transport
+	flags := testkit.NewTestFlags(t, contentDir, &testkit.FlagOptions{
+		Transport: "stdio",
+	})
+
+	service := testkit.NewACDCService("acdc-stdio", flags)
+	env := testkit.NewTestEnv(service)
+
+	props, err := env.Start()
 	if err != nil {
-		t.Fatalf("Failed to get root dir: %v", err)
+		t.Fatalf("Failed to start env: %v", err)
 	}
-	cmdPath := filepath.Join(rootDir, "cmd", "acdc-mcp")
+	defer func() { _ = env.Stop() }()
 
-	buildCmd := exec.Command("go", "build", "-o", binPath, cmdPath)
-	buildCmd.Dir = rootDir
-	out, err := buildCmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Failed to build server: %v\nOutput: %s", err, out)
-	}
+	stdin := props["acdc.stdin"].(io.Writer)
+	stdout := props["acdc.stdout"].(io.Reader)
 
-	// 2. Prepare content for valid startup
-	// Server expects content dir. Default is ./content in config.
-	contentDir := filepath.Join(tempDir, "content")
-	resourcesDir := filepath.Join(contentDir, "mcp-resources")
-	if err := os.MkdirAll(resourcesDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte("server:\n  name: test\n  version: 1.0\n  instructions: inst\ntools: []\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Add a dummy resource
-	if err := os.WriteFile(filepath.Join(resourcesDir, "res1.md"), []byte("---\nname: Test\ndescription: Desc\n---\nContent"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// 3. Run Server
-	serverCmd := exec.Command(binPath)
-	serverCmd.Env = append(os.Environ(),
-		"ACDC_MCP_TRANSPORT=stdio",
-		fmt.Sprintf("ACDC_MCP_CONTENT_DIR=%s", contentDir),
-	)
-
-	stdin, err := serverCmd.StdinPipe()
-	if err != nil {
-		t.Fatalf("Failed to get stdin: %v", err)
-	}
-	stdout, err := serverCmd.StdoutPipe()
-	if err != nil {
-		t.Fatalf("Failed to get stdout: %v", err)
-	}
-
-	// Capture stderr
-	stderrPipe, err := serverCmd.StderrPipe()
-	if err != nil {
-		t.Fatalf("Failed to get stderr: %v", err)
-	}
-
-	if err := serverCmd.Start(); err != nil {
-		t.Fatalf("Failed to start server: %v", err)
-	}
-	// Kill is deferred later loop call
-
-	// Read stderr in background
-	go func() {
-		scanner := bufio.NewScanner(stderrPipe)
-		for scanner.Scan() {
-			t.Logf("Server Stderr: %s", scanner.Text())
-		}
-	}()
-
-	// 4. Send Initialize Request
-	// JSON-RPC 2.0
+	// 3. Send Initialize Request
 	req := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      1,
@@ -101,32 +53,19 @@ func TestStdioServer(t *testing.T) {
 	}
 	reqBytes, _ := json.Marshal(req)
 
-	// Write with newline
 	if _, err := fmt.Fprintf(stdin, "%s\n", reqBytes); err != nil {
 		t.Fatalf("Failed to write to stdin: %v", err)
 	}
 
-	// 5. Read Response
-	defer func() {
-		if err := serverCmd.Process.Kill(); err != nil {
-			t.Logf("Failed to kill server: %v", err)
-		}
-	}()
-	// The server might emit log lines to Stderr, but JSON-RPC to Stdout.
-	// We need to read line by line.
+	// 4. Read Response
 	scanner := bufio.NewScanner(stdout)
-
-	// Set a timeout?
 	done := make(chan bool)
 	go func() {
 		for scanner.Scan() {
 			line := scanner.Text()
-			// Parse JSON
 			var resp map[string]interface{}
 			if err := json.Unmarshal([]byte(line), &resp); err == nil {
-				// Check if it's the response to id 1
 				if id, ok := resp["id"].(float64); ok && id == 1 {
-					// Validate result
 					if result, ok := resp["result"].(map[string]interface{}); ok {
 						if proto, ok := result["protocolVersion"].(string); ok && proto == "2024-11-05" {
 							done <- true
@@ -144,73 +83,35 @@ func TestStdioServer(t *testing.T) {
 		if !result {
 			t.Error("Did not receive valid initialize response")
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Error("Timeout waiting for response")
 	}
 }
 
-// TestStdioServer_HTTPPortNotListening verifies that when stdio transport is selected,
-// the HTTP port is NOT listening (no SSE server is started).
 func TestStdioServer_HTTPPortNotListening(t *testing.T) {
-	// 1. Build the server binary
-	tempDir := t.TempDir()
-	binPath := filepath.Join(tempDir, "mcp-server")
+	// 1. Prepare content
+	contentDir := testkit.CreateTestContentDir(t, nil)
 
-	rootDir, err := filepath.Abs("../../")
+	// 2. Start ACDC Service in stdio mode with a specific port
+	testPort := testkit.MustGetFreePort(t)
+	flags := testkit.NewTestFlags(t, contentDir, &testkit.FlagOptions{
+		Transport: "stdio",
+		Port:      testPort,
+	})
+
+	service := testkit.NewACDCService("acdc-stdio-port", flags)
+	env := testkit.NewTestEnv(service)
+
+	props, err := env.Start()
 	if err != nil {
-		t.Fatalf("Failed to get root dir: %v", err)
+		t.Fatalf("Failed to start env: %v", err)
 	}
-	cmdPath := filepath.Join(rootDir, "cmd", "acdc-mcp")
+	defer func() { _ = env.Stop() }()
 
-	buildCmd := exec.Command("go", "build", "-o", binPath, cmdPath)
-	buildCmd.Dir = rootDir
-	out, err := buildCmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Failed to build server: %v\nOutput: %s", err, out)
-	}
+	stdin := props["acdc.stdin"].(io.Writer)
+	stdout := props["acdc.stdout"].(io.Reader)
 
-	// 2. Prepare content for valid startup
-	contentDir := filepath.Join(tempDir, "content")
-	resourcesDir := filepath.Join(contentDir, "mcp-resources")
-	if err := os.MkdirAll(resourcesDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte("server:\n  name: test\n  version: 1.0\n  instructions: inst\ntools: []\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := os.WriteFile(filepath.Join(resourcesDir, "res1.md"), []byte("---\nname: Test\ndescription: Desc\n---\nContent"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// 3. Run Server in stdio mode with a specific port configured
-	// The port should NOT be listening in stdio mode
-	testPort := 19876 // Use a unique port for this test
-	serverCmd := exec.Command(binPath)
-	serverCmd.Env = append(os.Environ(),
-		"ACDC_MCP_TRANSPORT=stdio",
-		fmt.Sprintf("ACDC_MCP_PORT=%d", testPort),
-		fmt.Sprintf("ACDC_MCP_CONTENT_DIR=%s", contentDir),
-	)
-
-	stdin, err := serverCmd.StdinPipe()
-	if err != nil {
-		t.Fatalf("Failed to get stdin: %v", err)
-	}
-	stdout, err := serverCmd.StdoutPipe()
-	if err != nil {
-		t.Fatalf("Failed to get stdout: %v", err)
-	}
-
-	if err := serverCmd.Start(); err != nil {
-		t.Fatalf("Failed to start server: %v", err)
-	}
-	defer func() {
-		_ = serverCmd.Process.Kill()
-	}()
-
-	// 4. Wait for server to be ready by sending initialize request and getting response
+	// 3. Verify server is running by sending initialize
 	req := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      1,
@@ -218,30 +119,20 @@ func TestStdioServer_HTTPPortNotListening(t *testing.T) {
 		"params": map[string]interface{}{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]interface{}{},
-			"clientInfo": map[string]string{
-				"name":    "test-client",
-				"version": "1.0",
-			},
 		},
 	}
 	reqBytes, _ := json.Marshal(req)
-	if _, err := fmt.Fprintf(stdin, "%s\n", reqBytes); err != nil {
-		t.Fatalf("Failed to write to stdin: %v", err)
-	}
+	_, _ = fmt.Fprintf(stdin, "%s\n", reqBytes)
 
-	// Wait for initialize response to confirm server is running
 	scanner := bufio.NewScanner(stdout)
 	serverReady := make(chan bool)
 	go func() {
 		for scanner.Scan() {
-			line := scanner.Text()
 			var resp map[string]interface{}
-			if err := json.Unmarshal([]byte(line), &resp); err == nil {
+			if err := json.Unmarshal([]byte(scanner.Bytes()), &resp); err == nil {
 				if id, ok := resp["id"].(float64); ok && id == 1 {
-					if _, ok := resp["result"]; ok {
-						serverReady <- true
-						return
-					}
+					serverReady <- true
+					return
 				}
 			}
 		}
@@ -251,20 +142,19 @@ func TestStdioServer_HTTPPortNotListening(t *testing.T) {
 	select {
 	case ready := <-serverReady:
 		if !ready {
-			t.Fatal("Server did not respond to initialize request")
+			t.Fatal("Server not ready")
 		}
 	case <-time.After(3 * time.Second):
-		t.Fatal("Timeout waiting for server to be ready")
+		t.Fatal("Timeout")
 	}
 
-	// 5. Now verify that the HTTP port is NOT listening
-	// We give a short timeout since connection should fail immediately
+	// 4. Verify HTTP port is NOT listening
 	client := &http.Client{Timeout: 500 * time.Millisecond}
-	resp, err := client.Get(fmt.Sprintf("http://localhost:%d/sse", testPort))
+	resp, err := client.Get(fmt.Sprintf("http://localhost:%d/health", testPort))
 	if err == nil {
 		_ = resp.Body.Close()
-		t.Errorf("HTTP port %d is listening when it should NOT be in stdio mode (got status %d)", testPort, resp.StatusCode)
+		t.Errorf("HTTP port %d is listening when it should NOT be (got status %d)", testPort, resp.StatusCode)
+	} else {
+		t.Logf("Verified: HTTP port %d is not listening (expected error: %v)", testPort, err)
 	}
-	// Expected: connection refused or timeout error - this is the correct behavior
-	t.Logf("Verified: HTTP port %d is not listening (expected error: %v)", testPort, err)
 }

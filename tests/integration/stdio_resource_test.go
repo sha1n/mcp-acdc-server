@@ -4,87 +4,37 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
+	"io"
 	"testing"
+
+	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
 )
 
 func TestResourceReadIntegration(t *testing.T) {
-	// 1. Build the server binary
-	tempDir := t.TempDir()
-	binPath := filepath.Join(tempDir, "mcp-server")
-
-	rootDir, err := filepath.Abs("../../")
-	if err != nil {
-		t.Fatalf("Failed to get root dir: %v", err)
-	}
-	cmdPath := filepath.Join(rootDir, "cmd", "acdc-mcp")
-
-	buildCmd := exec.Command("go", "build", "-o", binPath, cmdPath)
-	buildCmd.Dir = rootDir
-	out, err := buildCmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Failed to build server: %v\nOutput: %s", err, out)
-	}
-
-	// 2. Prepare content
-	contentDir := filepath.Join(tempDir, "content")
-	resourcesDir := filepath.Join(contentDir, "mcp-resources")
-	toolsDir := filepath.Join(resourcesDir, "tools") // Subdirectory to match user case
-	if err := os.MkdirAll(toolsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte("server:\n  name: test\n  version: 1.0\n  instructions: inst\ntools: []\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Add the specific resource mentioned by user
+	// 1. Prepare content using testkit
 	resourceContent := "---\nname: Bert Benchmarking Tool\ndescription: A tool\n---\nHere is the content of the tool."
-	if err := os.WriteFile(filepath.Join(toolsDir, "bert-benchmarking.md"), []byte(resourceContent), 0644); err != nil {
-		t.Fatal(err)
-	}
+	contentDir := testkit.CreateTestContentDir(t, &testkit.ContentDirOptions{
+		Resources: map[string]string{
+			"tools/bert-benchmarking.md": resourceContent,
+		},
+	})
 
-	// 3. Run Server
-	serverCmd := exec.Command(binPath)
-	serverCmd.Env = append(os.Environ(),
-		"ACDC_MCP_TRANSPORT=stdio",
-		fmt.Sprintf("ACDC_MCP_CONTENT_DIR=%s", contentDir),
-	)
+	// 2. Start ACDC Service with stdio transport
+	flags := testkit.NewTestFlags(t, contentDir, &testkit.FlagOptions{
+		Transport: "stdio",
+	})
 
-	stdin, err := serverCmd.StdinPipe()
+	service := testkit.NewACDCService("acdc-resource", flags)
+	env := testkit.NewTestEnv(service)
+
+	props, err := env.Start()
 	if err != nil {
-		t.Fatalf("Failed to get stdin: %v", err)
+		t.Fatalf("Failed to start env: %v", err)
 	}
-	stdout, err := serverCmd.StdoutPipe()
-	if err != nil {
-		t.Fatalf("Failed to get stdout: %v", err)
-	}
+	defer func() { _ = env.Stop() }()
 
-	// Capture stderr
-	stderrPipe, err := serverCmd.StderrPipe()
-	if err != nil {
-		t.Fatalf("Failed to get stderr: %v", err)
-	}
-
-	if err := serverCmd.Start(); err != nil {
-		t.Fatalf("Failed to start server: %v", err)
-	}
-
-	defer func() {
-		if err := serverCmd.Process.Kill(); err != nil {
-			t.Logf("Failed to kill server: %v", err)
-		}
-	}()
-
-	// Read stderr in background
-	go func() {
-		scanner := bufio.NewScanner(stderrPipe)
-		for scanner.Scan() {
-			t.Logf("Server Stderr: %s", scanner.Text())
-		}
-	}()
+	stdin := props["acdc.stdin"].(io.Writer)
+	stdout := props["acdc.stdout"].(io.Reader)
 
 	scanner := bufio.NewScanner(stdout)
 
@@ -98,7 +48,6 @@ func TestResourceReadIntegration(t *testing.T) {
 	readResponse := func(expectedID int) map[string]interface{} {
 		for scanner.Scan() {
 			line := scanner.Text()
-			// t.Logf("Server Stdout: %s", line)
 			var resp map[string]interface{}
 			if err := json.Unmarshal([]byte(line), &resp); err == nil {
 				if id, ok := resp["id"].(float64); ok && int(id) == expectedID {
@@ -109,7 +58,7 @@ func TestResourceReadIntegration(t *testing.T) {
 		return nil
 	}
 
-	// 4. Initialize
+	// 3. Initialize
 	sendRequest(map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      1,
@@ -129,13 +78,13 @@ func TestResourceReadIntegration(t *testing.T) {
 		t.Fatal("Failed to get initialize response")
 	}
 
-	// 5. Send initialized notification
+	// 4. Send initialized notification
 	sendRequest(map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  "notifications/initialized",
 	})
 
-	// 6. List Resources to verify exact URI string
+	// 5. List Resources to verify exact URI string
 	targetURI := "acdc://tools/bert-benchmarking"
 	sendRequest(map[string]interface{}{
 		"jsonrpc": "2.0",
@@ -171,7 +120,7 @@ func TestResourceReadIntegration(t *testing.T) {
 		t.Errorf("Target URI %s not found in resources/list", targetURI)
 	}
 
-	// 7. Read Resource
+	// 6. Read Resource
 	sendRequest(map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      2,

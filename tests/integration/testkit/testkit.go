@@ -151,6 +151,9 @@ func CreateTestContentDir(t *testing.T, opts *ContentDirOptions) string {
 	if opts != nil && opts.Resources != nil {
 		for name, content := range opts.Resources {
 			path := filepath.Join(resourcesDir, name)
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+				t.Fatalf("Failed to create parent dir for resource %s: %v", name, err)
+			}
 			if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 				t.Fatalf("Failed to write resource %s: %v", name, err)
 			}
