@@ -66,7 +66,7 @@ changelog:
       - '^docs:'
       - '^test:'
 
-homebrew_casks:
+brews:
   - repository:
       owner: sha1n
       name: homebrew-tap
@@ -77,3 +77,6 @@ homebrew_casks:
 
     # Description placeholder
     description: "MCP ACDC Server"
+
+    # Directory in the repository to put the formula.
+    directory: Formula
