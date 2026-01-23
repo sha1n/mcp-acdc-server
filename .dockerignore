@@ -1,0 +1,14 @@
+.git
+.github
+bin
+build
+dist
+docs
+examples
+tests
+*.out
+.gitignore
+.goreleaser.yaml
+README.md
+GEMINI.md
+LICENSE

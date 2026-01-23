@@ -1,50 +1,151 @@
 name: CI
-permissions:
-  contents: read
 
 on:
   push:
     branches: [ master ]
-    paths-ignore:
-      - 'README.md'
-      - 'docs/**'
-      - 'examples/**'
+    tags: [ 'v*' ]
   pull_request:
     branches: [ master ]
-    paths-ignore:
-      - 'README.md'
-      - 'docs/**'
-      - 'examples/**'
+  schedule:
+    - cron: '16 6 * * 2'
+
+permissions:
+  contents: write
+  security-events: write
+  pull-requests: read
+  packages: read
 
 jobs:
-  test:
+  changes:
     runs-on: ubuntu-latest
-
+    outputs:
+      src: ${{ steps.filter.outputs.src }}
+      docker: ${{ steps.filter.outputs.docker }}
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            # 'src' is true if any file NOT in the list below has changed.
+            # This captures all code and configuration changes that require testing.
+            src:
+              - '!(README.md|docs/**|examples/**)'
+            # 'docker' is true if any file that affects the container image has changed.
+            # We use a negative match to be "safe" - it triggers on anything NOT ignored by .dockerignore.
+            docker:
+              - '!({README.md,GEMINI.md,LICENSE,.gitignore,.goreleaser.yaml,.github/**,docs/**,examples/**,tests/**,bin/**,build/**,dist/**,*.out})'
 
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version-file: go.mod
+  test:
+    needs: changes
+    if: needs.changes.outputs.src == 'true' || github.event_name == 'push' && contains(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install dependencies
+        run: make install
+      - name: Install golangci-lint
+        run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.8.0
+      - name: Run linting and format checks
+        run: make lint
+      - name: Run tests
+        run: make coverage
+        env:
+          CI: true
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage.out
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
 
-    - name: Install dependencies
-      run: make install
+  docker:
+    needs: [changes, test]
+    if: |
+      (needs.changes.outputs.docker == 'true' || github.event_name == 'push' && contains(github.ref, 'refs/tags/')) &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/mcp-acdc-server
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-    - name: Install golangci-lint
-      run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.8.0
+  codeql:
+    needs: changes
+    if: needs.changes.outputs.src == 'true' || github.event_name == 'schedule' || contains(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          - language: go
+            build-mode: autobuild
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{matrix.language}}"
 
-    - name: Run linting and format checks
-      run: make lint
+  go-report-card:
+    needs: changes
+    if: needs.changes.outputs.src == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Go report card
+        uses: creekorful/goreportcard-action@v1.0
 
-    - name: Run tests
-      run: make coverage
-      env:
-        CI: true
-
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v5
-      with:
-        files: ./coverage.out
-        fail_ci_if_error: true
-        token: ${{ secrets.CODECOV_TOKEN }}
+  # This job acts as a bridge for documentation-only PRs to satisfy status checks
+  status-check:
+    needs: [changes, test, docker, codeql, go-report-card]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify status
+        run: |
+          if [[ "${{ needs.test.result }}" == "failure" || "${{ needs.docker.result }}" == "failure" || "${{ needs.codeql.result }}" == "failure" ]]; then
+            echo "One or more critical jobs failed."
+            exit 1
+          fi
+          echo "All critical jobs passed or were skipped."
