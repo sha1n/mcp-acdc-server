@@ -9,11 +9,26 @@
 	},
 	"customizations": {
 		"vscode": {
+			"settings": {
+				"go.toolsManagement.checkForUpdates": "local",
+				"go.useLanguageServer": true,
+				"go.lintTool": "golangci-lint",
+				"go.lintFlags": [
+					"--fast"
+				],
+				"editor.formatOnSave": true,
+				"editor.codeActionsOnSave": {
+					"source.organizeImports": "explicit"
+				}
+			},
 			"extensions": [
-				"golang.Go"
+				"golang.Go",
+				"eamodio.gitlens",
+				"usernamehw.errorlens",
+				"editorconfig.editorconfig"
 			]
 		}
 	},
-	"postCreateCommand": "go mod download",
+	"postCreateCommand": "make install",
 	"remoteUser": "vscode"
 }
