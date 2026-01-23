@@ -1,0 +1,19 @@
+{
+	"name": "Go",
+	"image": "mcr.microsoft.com/devcontainers/go:1",
+	"features": {
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {},
+		"ghcr.io/devcontainers/features/github-cli:1": {},
+		"ghcr.io/devcontainers-contrib/features/golangci-lint:1": {},
+		"ghcr.io/devcontainers-contrib/features/goreleaser:1": {}
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"golang.Go"
+			]
+		}
+	},
+	"postCreateCommand": "go mod download",
+	"remoteUser": "vscode"
+}
