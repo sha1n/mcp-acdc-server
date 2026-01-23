@@ -8,6 +8,7 @@ dist/
 
 # Output of the go coverage tool, specifically when used with Litmus or `go test -coverprofile`
 *.out
+*.html
 
 # OS specific files
 .DS_Store
@@ -18,3 +19,4 @@ dist/
 
 # Local configuration
 .env
+.gemini

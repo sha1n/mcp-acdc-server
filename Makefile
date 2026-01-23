@@ -185,6 +185,18 @@ build-docker:
 	docker build -t sha1n/mcp-acdc-server:latest .
 	docker tag sha1n/mcp-acdc-server:latest sha1n/mcp-acdc-server:$(VERSION:v%=%)
 
+## gemini-add-dev: Adds the latest binaries from ./bin as acdc-dev to Gemini
+.PHONY: gemini-add-dev
+gemini-add-dev: go-build-current
+	@echo "  >  Adding acdc-dev to gemini..."
+	gemini mcp add acdc-dev $(GOBIN)/$(PROGRAMNAME) --content-dir $(GOBASE)/examples/sample-content
+
+## gemini-remove-dev: Removes acdc-dev from Gemini
+.PHONY: gemini-remove-dev
+gemini-remove-dev:
+	@echo "  >  Removing acdc-dev from gemini..."
+	gemini mcp remove acdc-dev
+
 .PHONY: release
 release:
 ifdef GITHUB_TOKEN
