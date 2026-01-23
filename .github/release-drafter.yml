@@ -11,20 +11,50 @@ categories:
       - 'bugfix'
       - 'bug'
   - title: '🧰 Maintenance'
-    label: 'chore'
+    labels:
+      - 'chore'
+      - 'dependencies'
 change-template: '- $TITLE @$AUTHOR (#$NUMBER)'
 change-title-escapes: '\<*_&#@'
 version-resolver:
   major:
     labels:
       - 'major'
+      - 'breaking'
   minor:
     labels:
       - 'minor'
+      - 'feature'
+      - 'enhancement'
   patch:
     labels:
       - 'patch'
+      - 'fix'
+      - 'bugfix'
+      - 'bug'
+      - 'chore'
+      - 'dependencies'
   default: patch
+autolabeler:
+  - label: 'major'
+    title:
+      - '/!:/'
+  - label: 'feature'
+    title:
+      - '/^feat/i'
+  - label: 'fix'
+    title:
+      - '/^fix/i'
+  - label: 'chore'
+    title:
+      - '/^chore/i'
+      - '/^build/i'
+      - '/^ci/i'
+      - '/^docs/i'
+      - '/^style/i'
+      - '/^refactor/i'
+      - '/^perf/i'
+      - '/^test/i'
 template: |
   ## Changes
 
