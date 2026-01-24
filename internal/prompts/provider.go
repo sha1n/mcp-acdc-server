@@ -153,7 +153,7 @@ func DiscoverPrompts(cp *content.ContentProvider) ([]PromptDefinition, error) {
 		}
 
 		// Parse and cache template
-		tmpl, err := template.New(name).Option("missingkey=error").Parse(md.Content)
+		tmpl, err := template.New(name).Option("missingkey=zero").Parse(md.Content)
 		if err != nil {
 			slog.Warn("Skipping prompt with invalid template", "file", d.Name(), "error", err)
 			return nil
