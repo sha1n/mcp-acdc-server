@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"text/template"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/content"
 )
 
@@ -37,9 +37,9 @@ func NewPromptProvider(definitions []PromptDefinition, cp *content.ContentProvid
 func (p *PromptProvider) ListPrompts() []mcp.Prompt {
 	prompts := make([]mcp.Prompt, len(p.definitions))
 	for i, d := range p.definitions {
-		args := make([]mcp.PromptArgument, len(d.Arguments))
+		args := make([]*mcp.PromptArgument, len(d.Arguments))
 		for j, a := range d.Arguments {
-			args[j] = mcp.PromptArgument{
+			args[j] = &mcp.PromptArgument{
 				Name:        a.Name,
 				Description: a.Description,
 				Required:    a.Required,
@@ -56,7 +56,7 @@ func (p *PromptProvider) ListPrompts() []mcp.Prompt {
 }
 
 // GetPrompt renders a prompt by name with arguments
-func (p *PromptProvider) GetPrompt(name string, arguments map[string]string) ([]mcp.PromptMessage, error) {
+func (p *PromptProvider) GetPrompt(name string, arguments map[string]string) ([]*mcp.PromptMessage, error) {
 	defn, ok := p.nameMap[name]
 	if !ok {
 		return nil, fmt.Errorf("unknown prompt: %s", name)
@@ -77,11 +77,10 @@ func (p *PromptProvider) GetPrompt(name string, arguments map[string]string) ([]
 		return nil, fmt.Errorf("failed to execute prompt template: %w", err)
 	}
 
-	return []mcp.PromptMessage{
+	return []*mcp.PromptMessage{
 		{
-			Role: mcp.RoleUser,
-			Content: mcp.TextContent{
-				Type: "text",
+			Role: "user",
+			Content: &mcp.TextContent{
 				Text: buf.String(),
 			},
 		},

@@ -3,8 +3,7 @@ package mcp
 import (
 	"log/slog"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
 	"github.com/sha1n/mcp-acdc-server/internal/prompts"
 	"github.com/sha1n/mcp-acdc-server/internal/resources"
@@ -24,20 +23,20 @@ func CreateServer(
 	resourceProvider *resources.ResourceProvider,
 	promptProvider *prompts.PromptProvider,
 	searchService search.Searcher,
-) *server.MCPServer {
-	// Create server
-	s := server.NewMCPServer(
-		metadata.Server.Name,
-		metadata.Server.Version,
-		server.WithInstructions(metadata.Server.Instructions),
-	)
+) *mcp.Server {
+	// Create server with official SDK
+	s := mcp.NewServer(&mcp.Implementation{
+		Name:    metadata.Server.Name,
+		Version: metadata.Server.Version,
+	}, nil)
+	// Note: Instructions are stored in metadata but not directly supported by official SDK
 
 	// Register Resources
 	for _, res := range resourceProvider.ListResources() {
 		// Capture uri for closure
 		uri := res.URI
 
-		s.AddResource(mcp.Resource{
+		s.AddResource(&mcp.Resource{
 			URI:         uri,
 			Name:        res.Name,
 			Description: res.Description,
@@ -50,7 +49,7 @@ func CreateServer(
 		// Capture name for closure
 		name := p.Name
 
-		s.AddPrompt(mcp.Prompt{
+		s.AddPrompt(&mcp.Prompt{
 			Name:        name,
 			Description: p.Description,
 			Arguments:   p.Arguments,

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 
 	"github.com/sha1n/mcp-acdc-server/internal/app"
@@ -49,5 +50,5 @@ func Execute(version, build, programName string, args []string) error {
 }
 
 func runWithFlags(flags *pflag.FlagSet, version string) error {
-	return app.RunWithDeps(app.DefaultRunParams(), flags, version)
+	return app.RunWithDeps(context.Background(), app.DefaultRunParams(), flags, version)
 }

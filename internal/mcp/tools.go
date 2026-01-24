@@ -2,13 +2,11 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
 	"github.com/sha1n/mcp-acdc-server/internal/resources"
 	"github.com/sha1n/mcp-acdc-server/internal/search"
@@ -16,61 +14,48 @@ import (
 
 // SearchToolArgument represents arguments for search tool
 type SearchToolArgument struct {
-	Query string `json:"query"`
+	Query string `json:"query" jsonschema_description:"The search query. Use natural language or keywords."`
 }
 
 // ReadToolArgument represents arguments for read tool
 type ReadToolArgument struct {
-	URI string `json:"uri"`
+	URI string `json:"uri" jsonschema_description:"The acdc:// URI of the resource to fetch"`
 }
 
 // RegisterSearchTool registers the search tool with the server
-func RegisterSearchTool(s *server.MCPServer, searchService search.Searcher, metadata domain.ToolMetadata) {
-	tool := mcp.NewTool(
-		metadata.Name,
-		mcp.WithDescription(metadata.Description),
-		mcp.WithString("query", mcp.Description("The search query. Use natural language or keywords.")),
+func RegisterSearchTool(s *mcp.Server, searchService search.Searcher, metadata domain.ToolMetadata) {
+	mcp.AddTool(s,
+		&mcp.Tool{
+			Name:        metadata.Name,
+			Description: metadata.Description,
+			// InputSchema auto-generated from SearchToolArgument
+		},
+		NewSearchToolHandler(searchService),
 	)
-
-	s.AddTool(tool, NewSearchToolHandler(searchService))
 }
 
 // RegisterReadTool registers the read tool with the server
-func RegisterReadTool(s *server.MCPServer, resourceProvider *resources.ResourceProvider, metadata domain.ToolMetadata) {
-	tool := mcp.NewTool(
-		metadata.Name,
-		mcp.WithDescription(metadata.Description),
-		mcp.WithString("uri", mcp.Description("The acdc:// URI of the resource to fetch")),
+func RegisterReadTool(s *mcp.Server, resourceProvider *resources.ResourceProvider, metadata domain.ToolMetadata) {
+	mcp.AddTool(s,
+		&mcp.Tool{
+			Name:        metadata.Name,
+			Description: metadata.Description,
+			// InputSchema auto-generated from ReadToolArgument
+		},
+		NewReadToolHandler(resourceProvider),
 	)
-
-	s.AddTool(tool, NewReadToolHandler(resourceProvider))
 }
 
 // NewSearchToolHandler creates the handler for the search tool
-func NewSearchToolHandler(searchService search.Searcher) func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Marshal arguments back to JSON then unmarshal into struct for validation
-		// This is a common pattern when arguments are map[string]interface{}
-		argsJSON, err := json.Marshal(req.Params.Arguments)
-		if err != nil {
-			return nil, fmt.Errorf("failed to process arguments: %w", err)
-		}
-
-		var args SearchToolArgument
-		if err := json.Unmarshal(argsJSON, &args); err != nil {
-			return nil, fmt.Errorf("invalid arguments: %w", err)
-		}
-
-		if args.Query == "" {
-			return nil, fmt.Errorf("missing 'query' argument")
-		}
-
+func NewSearchToolHandler(searchService search.Searcher) mcp.ToolHandlerFor[SearchToolArgument, any] {
+	return func(ctx context.Context, req *mcp.CallToolRequest, args SearchToolArgument) (*mcp.CallToolResult, any, error) {
+		// Args are already validated and unmarshaled by SDK via jsonschema tags
 		slog.Info("Search request", "query", args.Query)
 
 		results, err := searchService.Search(args.Query, nil)
 		if err != nil {
 			slog.Error("Search failed", "query", args.Query, "error", err)
-			return nil, err
+			return nil, nil, err
 		}
 
 		var sb strings.Builder
@@ -83,31 +68,30 @@ func NewSearchToolHandler(searchService search.Searcher) func(ctx context.Contex
 			}
 		}
 
-		return mcp.NewToolResultText(sb.String()), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: sb.String()},
+			},
+		}, nil, nil
 	}
 }
 
 // NewReadToolHandler creates the handler for the read tool
-func NewReadToolHandler(resourceProvider *resources.ResourceProvider) func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		args, ok := req.Params.Arguments.(map[string]interface{})
-		if !ok {
-			return nil, fmt.Errorf("invalid arguments format")
-		}
+func NewReadToolHandler(resourceProvider *resources.ResourceProvider) mcp.ToolHandlerFor[ReadToolArgument, any] {
+	return func(ctx context.Context, req *mcp.CallToolRequest, args ReadToolArgument) (*mcp.CallToolResult, any, error) {
+		// Args are already validated and unmarshaled by SDK via jsonschema tags
+		slog.Info("Get resource request", "uri", args.URI)
 
-		uri, ok := args["uri"].(string)
-		if !ok {
-			return nil, fmt.Errorf("missing 'uri' argument")
-		}
-
-		slog.Info("Get resource request", "uri", uri)
-
-		content, err := resourceProvider.ReadResource(uri)
+		content, err := resourceProvider.ReadResource(args.URI)
 		if err != nil {
-			slog.Error("Get resource failed", "uri", uri, "error", err)
-			return nil, err
+			slog.Error("Get resource failed", "uri", args.URI, "error", err)
+			return nil, nil, err
 		}
 
-		return mcp.NewToolResultText(content), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: content},
+			},
+		}, nil, nil
 	}
 }

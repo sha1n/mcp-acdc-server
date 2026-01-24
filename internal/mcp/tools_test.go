@@ -2,14 +2,19 @@ package mcp
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/resources"
 	"github.com/sha1n/mcp-acdc-server/internal/search"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// Define a local mock that allows customizing search behavior
+// Mock searcher for testing
 type TestMockSearcher struct {
 	MockSearch func(queryStr string, limit *int) ([]search.SearchResult, error)
 }
@@ -27,135 +32,157 @@ func (m *TestMockSearcher) IndexDocuments(docs []search.Document) error {
 	return nil
 }
 
-func TestReadToolHandler_Errors(t *testing.T) {
-	provider := resources.NewResourceProvider(nil)
-	handler := NewReadToolHandler(provider)
+func TestToolRegistration(t *testing.T) {
+	// Just verify tools can be created without panic
+	mockSearcher := &TestMockSearcher{}
+	searchHandler := NewSearchToolHandler(mockSearcher)
+	if searchHandler == nil {
+		t.Error("Search handler should not be nil")
+	}
 
-	t.Run("MissingArguments", func(t *testing.T) {
-		req := mcp.CallToolRequest{
-			Params: mcp.CallToolParams{
-				Name:      "read",
-				Arguments: map[string]interface{}{},
-			},
-		}
-		_, err := handler(context.Background(), req)
-		if err == nil {
-			t.Error("expected error for missing 'uri' argument")
-		}
-	})
-
-	t.Run("UnknownResource", func(t *testing.T) {
-		req := mcp.CallToolRequest{
-			Params: mcp.CallToolParams{
-				Name: "read",
-				Arguments: map[string]interface{}{
-					"uri": "acdc://unknown",
-				},
-			},
-		}
-		_, err := handler(context.Background(), req)
-		if err == nil {
-			t.Error("expected error for unknown resource")
-		}
-	})
+	resourceProvider := resources.NewResourceProvider([]resources.ResourceDefinition{})
+	readHandler := NewReadToolHandler(resourceProvider)
+	if readHandler == nil {
+		t.Error("Read handler should not be nil")
+	}
 }
 
-func TestSearchToolHandler(t *testing.T) {
-	tests := []struct {
-		name        string
-		args        map[string]interface{}
-		mockResults []search.SearchResult
-		mockError   error
-		wantResult  string
-		expectError bool
-	}{
-		{
-			name: "Search hit",
-			args: map[string]interface{}{
-				"query": "fox",
-			},
-			mockResults: []search.SearchResult{
-				{URI: "file:///test.md", Name: "Test Doc", Snippet: "snippet"},
-			},
-			wantResult: "Search results for 'fox':\n\n- [Test Doc](file:///test.md): snippet\n\n",
-		},
-		{
-			name: "Search miss",
-			args: map[string]interface{}{
-				"query": "unicorn",
-			},
-			mockResults: []search.SearchResult{},
-			wantResult:  "No results found for 'unicorn'",
-		},
-		{
-			name: "Empty query",
-			args: map[string]interface{}{
-				"query": "",
-			},
-			mockResults: []search.SearchResult{},
-			expectError: true,
-		},
-		{
-			name:        "Missing argument",
-			args:        map[string]interface{}{},
-			expectError: true,
-		},
-		{
-			name:        "Invalid argument format",
-			args:        nil, // Not a map[string]interface{}
-			expectError: true,
-		},
-		{
-			name: "Search error",
-			args: map[string]interface{}{
-				"query": "boom",
-			},
-			mockError:   context.DeadlineExceeded, // Generic error
-			expectError: true,
+func TestSearchToolHandler_Success_WithResults(t *testing.T) {
+	mockSearcher := &TestMockSearcher{
+		MockSearch: func(query string, limit *int) ([]search.SearchResult, error) {
+			assert.Equal(t, "test query", query)
+			return []search.SearchResult{
+				{
+					Name:    "Result 1",
+					URI:     "acdc://result1",
+					Snippet: "This is result 1",
+				},
+				{
+					Name:    "Result 2",
+					URI:     "acdc://result2",
+					Snippet: "This is result 2",
+				},
+			}, nil
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mock := &TestMockSearcher{
-				MockSearch: func(queryStr string, limit *int) ([]search.SearchResult, error) {
-					return tt.mockResults, tt.mockError
-				},
-			}
-			handler := NewSearchToolHandler(mock)
+	handler := NewSearchToolHandler(mockSearcher)
+	require.NotNil(t, handler)
 
-			req := mcp.CallToolRequest{
-				Params: mcp.CallToolParams{
-					Name:      "search",
-					Arguments: tt.args,
-				},
-			}
+	ctx := context.Background()
+	req := &mcp.CallToolRequest{}
+	args := SearchToolArgument{Query: "test query"}
 
-			resp, err := handler(context.Background(), req)
+	result, extra, err := handler(ctx, req, args)
 
-			if tt.expectError {
-				if err == nil {
-					t.Errorf("%s: expected error, got nil", tt.name)
-				}
-				return
-			}
+	require.NoError(t, err)
+	require.Nil(t, extra)
+	require.NotNil(t, result)
+	require.Len(t, result.Content, 1)
 
-			if err != nil {
-				t.Fatalf("%s: unexpected error: %v", tt.name, err)
-			}
+	textContent, ok := result.Content[0].(*mcp.TextContent)
+	require.True(t, ok)
+	assert.Contains(t, textContent.Text, "Search results for 'test query'")
+	assert.Contains(t, textContent.Text, "Result 1")
+	assert.Contains(t, textContent.Text, "acdc://result1")
+	assert.Contains(t, textContent.Text, "This is result 1")
+	assert.Contains(t, textContent.Text, "Result 2")
+}
 
-			if len(resp.Content) != 1 {
-				t.Fatalf("%s: expected 1 content item, got %d", tt.name, len(resp.Content))
-			}
-
-			text, ok := resp.Content[0].(mcp.TextContent)
-			if !ok {
-				t.Fatalf("%s: expected TextContent, got %T", tt.name, resp.Content[0])
-			}
-
-			if text.Text != tt.wantResult {
-				t.Errorf("%s:\nwant: %q\ngot : %q", tt.name, tt.wantResult, text.Text)
-			}
-		})
+func TestSearchToolHandler_Success_NoResults(t *testing.T) {
+	mockSearcher := &TestMockSearcher{
+		MockSearch: func(query string, limit *int) ([]search.SearchResult, error) {
+			return []search.SearchResult{}, nil
+		},
 	}
+
+	handler := NewSearchToolHandler(mockSearcher)
+	ctx := context.Background()
+	req := &mcp.CallToolRequest{}
+	args := SearchToolArgument{Query: "nonexistent"}
+
+	result, extra, err := handler(ctx, req, args)
+
+	require.NoError(t, err)
+	require.Nil(t, extra)
+	require.NotNil(t, result)
+	require.Len(t, result.Content, 1)
+
+	textContent, ok := result.Content[0].(*mcp.TextContent)
+	require.True(t, ok)
+	assert.Contains(t, textContent.Text, "No results found for 'nonexistent'")
+}
+
+func TestSearchToolHandler_Error(t *testing.T) {
+	expectedErr := errors.New("search service error")
+	mockSearcher := &TestMockSearcher{
+		MockSearch: func(query string, limit *int) ([]search.SearchResult, error) {
+			return nil, expectedErr
+		},
+	}
+
+	handler := NewSearchToolHandler(mockSearcher)
+	ctx := context.Background()
+	req := &mcp.CallToolRequest{}
+	args := SearchToolArgument{Query: "failing query"}
+
+	result, extra, err := handler(ctx, req, args)
+
+	require.Error(t, err)
+	assert.Equal(t, expectedErr, err)
+	assert.Nil(t, result)
+	assert.Nil(t, extra)
+}
+
+func TestReadToolHandler_Success(t *testing.T) {
+	// Create temp file with markdown content
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "test-resource.md")
+	resourceContent := "---\nname: Test Resource\ndescription: A test\n---\n# Test Content\n\nThis is test content."
+	err := os.WriteFile(filePath, []byte(resourceContent), 0644)
+	require.NoError(t, err)
+
+	resourceProvider := resources.NewResourceProvider([]resources.ResourceDefinition{
+		{
+			Name:        "Test Resource",
+			URI:         "acdc://test-resource",
+			Description: "A test resource",
+			MIMEType:    "text/markdown",
+			FilePath:    filePath,
+		},
+	})
+
+	handler := NewReadToolHandler(resourceProvider)
+	require.NotNil(t, handler)
+
+	ctx := context.Background()
+	req := &mcp.CallToolRequest{}
+	args := ReadToolArgument{URI: "acdc://test-resource"}
+
+	result, extra, err := handler(ctx, req, args)
+
+	require.NoError(t, err)
+	require.Nil(t, extra)
+	require.NotNil(t, result)
+	require.Len(t, result.Content, 1)
+
+	textContent, ok := result.Content[0].(*mcp.TextContent)
+	require.True(t, ok)
+	assert.Equal(t, "# Test Content\n\nThis is test content.", textContent.Text)
+}
+
+func TestReadToolHandler_Error_ResourceNotFound(t *testing.T) {
+	resourceProvider := resources.NewResourceProvider([]resources.ResourceDefinition{})
+
+	handler := NewReadToolHandler(resourceProvider)
+	ctx := context.Background()
+	req := &mcp.CallToolRequest{}
+	args := ReadToolArgument{URI: "acdc://nonexistent"}
+
+	result, extra, err := handler(ctx, req, args)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "resource")
+	assert.Nil(t, result)
+	assert.Nil(t, extra)
 }

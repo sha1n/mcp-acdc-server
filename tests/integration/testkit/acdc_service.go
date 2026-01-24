@@ -7,13 +7,13 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/app"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/spf13/pflag"
 )
 
-type RunnerFunc func(params app.RunParams, flags *pflag.FlagSet, version string) error
+type RunnerFunc func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error
 
 type acdcService struct {
 	name         string
@@ -51,19 +51,22 @@ func (s *acdcService) Start() (map[string]any, error) {
 	params := app.DefaultRunParams()
 	transport, _ := s.flags.GetString("transport")
 
+	var ctx context.Context
+	ctx, s.ctxCancel = context.WithCancel(context.Background())
+
 	if transport == "stdio" {
+		// Create pipes for stdio testing
 		s.stdinReader, s.stdinWriter = io.Pipe()
 		s.stdoutReader, s.stdoutWriter = io.Pipe()
 
-		var ctx context.Context
-		ctx, s.ctxCancel = context.WithCancel(context.Background())
-
-		params.ServeStdio = func(mcpSrv *server.MCPServer, opts ...server.StdioOption) error {
-			stdioSrv := server.NewStdioServer(mcpSrv)
-			return stdioSrv.Listen(ctx, s.stdinReader, s.stdoutWriter)
+		// Create custom IO transport for testing
+		params.CustomIOTransport = &mcp.IOTransport{
+			Reader: s.stdinReader,
+			Writer: s.stdoutWriter,
 		}
 	} else {
-		params.StartSSEServer = func(mcpSrv *server.MCPServer, settings *config.Settings) error {
+		// For SSE, use custom handler that captures server instance
+		params.StartSSEServer = func(mcpSrv *mcp.Server, settings *config.Settings) error {
 			var err error
 			s.srv, err = app.NewSSEServer(mcpSrv, settings)
 			if err != nil {
@@ -74,7 +77,7 @@ func (s *acdcService) Start() (map[string]any, error) {
 	}
 
 	go func() {
-		s.errChan <- s.runner(params, s.flags, "testkit")
+		s.errChan <- s.runner(ctx, params, s.flags, "testkit")
 	}()
 
 	if transport == "stdio" {

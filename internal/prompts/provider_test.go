@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/content"
 	"github.com/stretchr/testify/assert"
 )
@@ -177,7 +177,7 @@ func TestPromptProvider_GetPrompt(t *testing.T) {
 		messages, err := p.GetPrompt("test", map[string]string{"name": "World"})
 		assert.NoError(t, err)
 		assert.Len(t, messages, 1)
-		assert.Equal(t, "Hello World", messages[0].Content.(mcp.TextContent).Text)
+		assert.Equal(t, "Hello World", messages[0].Content.(*mcp.TextContent).Text)
 	})
 
 	t.Run("RequiredArgumentMissing", func(t *testing.T) {

@@ -1,6 +1,7 @@
 package testkit
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -180,7 +181,7 @@ func TestACDCService_StartExit(t *testing.T) {
 
 	service := NewACDCService("exit", flags)
 	acdc := service.(*acdcService)
-	acdc.runner = func(params app.RunParams, flags *pflag.FlagSet, version string) error {
+	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error {
 		return errors.New("exit early")
 	}
 
@@ -197,7 +198,7 @@ func TestACDCService_StartTimeout(t *testing.T) {
 	service := NewACDCService("timeout", flags)
 	acdc := service.(*acdcService)
 	acdc.StartTimeout = 100 * time.Millisecond
-	acdc.runner = func(params app.RunParams, flags *pflag.FlagSet, version string) error {
+	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error {
 		time.Sleep(1 * time.Second)
 		return nil
 	}
@@ -215,14 +216,14 @@ func TestACDCService_StopTimeout(t *testing.T) {
 	service := NewACDCService("stop-timeout", flags)
 	acdc := service.(*acdcService)
 	acdc.StopDelay = 100 * time.Millisecond
-	acdc.runner = func(params app.RunParams, flags *pflag.FlagSet, version string) error {
+	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error {
 		time.Sleep(1 * time.Second)
 		return nil
 	}
 
 	// Mock Start to avoid polling
 	go func() {
-		acdc.errChan <- acdc.runner(app.RunParams{}, flags, "test")
+		acdc.errChan <- acdc.runner(context.Background(), app.RunParams{}, flags, "test")
 	}()
 
 	err := service.Stop()
@@ -237,13 +238,13 @@ func TestACDCService_StopError(t *testing.T) {
 
 	service := NewACDCService("stop-error", flags)
 	acdc := service.(*acdcService)
-	acdc.runner = func(params app.RunParams, flags *pflag.FlagSet, version string) error {
+	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error {
 		return errors.New("stop error")
 	}
 
 	// Mock Start
 	go func() {
-		acdc.errChan <- acdc.runner(app.RunParams{}, flags, "test")
+		acdc.errChan <- acdc.runner(context.Background(), app.RunParams{}, flags, "test")
 	}()
 
 	err := service.Stop()

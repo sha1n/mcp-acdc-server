@@ -1,22 +1,23 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/spf13/pflag"
 )
 
 // RunParams contains dependencies for the run function
 type RunParams struct {
-	LoadSettings   func(*pflag.FlagSet) (*config.Settings, error)
-	ValidSettings  func(*config.Settings) error
-	ServeStdio     func(*server.MCPServer, ...server.StdioOption) error
-	StartSSEServer func(*server.MCPServer, *config.Settings) error
-	CreateServer   func(*config.Settings) (*server.MCPServer, func(), error)
+	LoadSettings      func(*pflag.FlagSet) (*config.Settings, error)
+	ValidSettings     func(*config.Settings) error
+	StartSSEServer    func(*mcp.Server, *config.Settings) error
+	CreateServer      func(*config.Settings) (*mcp.Server, func(), error)
+	CustomIOTransport mcp.Transport // Optional: for testing with custom IO
 }
 
 // DefaultRunParams returns production dependencies
@@ -24,14 +25,13 @@ func DefaultRunParams() RunParams {
 	return RunParams{
 		LoadSettings:   config.LoadSettingsWithFlags,
 		ValidSettings:  config.ValidateSettings,
-		ServeStdio:     server.ServeStdio,
 		StartSSEServer: StartSSEServer,
 		CreateServer:   CreateMCPServer,
 	}
 }
 
 // RunWithDeps executes the server with the provided dependencies
-func RunWithDeps(params RunParams, flags *pflag.FlagSet, version string) error {
+func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, version string) error {
 	// Load settings
 	settings, err := params.LoadSettings(flags)
 	if err != nil {
@@ -60,7 +60,12 @@ func RunWithDeps(params RunParams, flags *pflag.FlagSet, version string) error {
 
 	// Start server
 	if settings.Transport == "stdio" {
-		return params.ServeStdio(mcpServer)
+		// Use custom transport if provided (for testing), otherwise use stdio
+		transport := params.CustomIOTransport
+		if transport == nil {
+			transport = &mcp.StdioTransport{}
+		}
+		return mcpServer.Run(ctx, transport)
 	} else {
 		slog.Info("Starting SSE server", "host", settings.Host, "port", settings.Port)
 		return params.StartSSEServer(mcpServer, settings)

@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/server"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/content"
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
@@ -18,7 +18,7 @@ import (
 )
 
 // CreateMCPServer initializes the core MCP server components
-func CreateMCPServer(settings *config.Settings) (*server.MCPServer, func(), error) {
+func CreateMCPServer(settings *config.Settings) (*mcpsdk.Server, func(), error) {
 	// Initialize content provider
 	cp := content.NewContentProvider(settings.ContentDir)
 
