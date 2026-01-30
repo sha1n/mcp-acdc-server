@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/sha1n/mcp-acdc-server/internal/domain"
 	"github.com/sha1n/mcp-acdc-server/internal/resources"
 	"github.com/sha1n/mcp-acdc-server/internal/search"
 	"github.com/stretchr/testify/assert"
@@ -28,7 +29,10 @@ func (m *TestMockSearcher) Search(query string, options *int) ([]search.SearchRe
 
 func (m *TestMockSearcher) Close() {}
 
-func (m *TestMockSearcher) IndexDocuments(docs []search.Document) error {
+func (m *TestMockSearcher) Index(ctx context.Context, docs <-chan domain.Document) error {
+	for range docs {
+		// drain
+	}
 	return nil
 }
 

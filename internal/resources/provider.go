@@ -1,6 +1,7 @@
 package resources
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/content"
+	"github.com/sha1n/mcp-acdc-server/internal/domain"
 )
 
 // ResourceProvider provides access to resources
@@ -57,23 +59,35 @@ func (p *ResourceProvider) ReadResource(uri string) (string, error) {
 	return c.Content, nil
 }
 
-// GetAllResourceContents retrieves contents for all resources
-func (p *ResourceProvider) GetAllResourceContents() []map[string]string {
-	var results []map[string]string
+// StreamResources streams all resource contents to a channel
+func (p *ResourceProvider) StreamResources(ctx context.Context, ch chan<- domain.Document) error {
 	for _, defn := range p.definitions {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		content, err := p.ReadResource(defn.URI)
 		if err != nil {
 			slog.Error("Error reading resource for indexing", "uri", defn.URI, "error", err)
 			continue
 		}
-		results = append(results, map[string]string{
-			FieldURI:      defn.URI,
-			FieldName:     defn.Name,
-			FieldContent:  content,
-			FieldKeywords: strings.Join(defn.Keywords, ","),
-		})
+
+		doc := domain.Document{
+			URI:      defn.URI,
+			Name:     defn.Name,
+			Content:  content,
+			Keywords: defn.Keywords,
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case ch <- doc:
+		}
 	}
-	return results
+	return nil
 }
 
 // DiscoverResources discovers resources from markdown files

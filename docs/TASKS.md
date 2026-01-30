@@ -28,6 +28,7 @@
 
 ### Large Content Repository Support
 
+- [x] Stream Search Indexing: Refactor search indexing to use streaming and batching to prevent OOM on large content repositories.
 - [ ] Stream File Processing: Refactor ContentProvider to stream files instead of reading them entirely into memory (os.ReadFile), improving large file handling.
 - [ ] Define a hard limit on the number of resources that can return from a search query
 

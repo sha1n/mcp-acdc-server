@@ -1,11 +1,14 @@
 package resources
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/sha1n/mcp-acdc-server/internal/content"
+	"github.com/sha1n/mcp-acdc-server/internal/domain"
 )
 
 func TestResourceProvider_Methods(t *testing.T) {
@@ -57,52 +60,129 @@ func TestResourceProvider_Methods(t *testing.T) {
 		}
 	})
 
-	// Test GetAllResourceContents
-	t.Run("GetAllResourceContents", func(t *testing.T) {
-		got := p.GetAllResourceContents()
-		if len(got) != 1 {
-			t.Errorf("GetAllResourceContents returned %d items, want 1", len(got))
+	// Test StreamResources
+	t.Run("StreamResources", func(t *testing.T) {
+		ch := make(chan domain.Document, 10)
+		go func() {
+			defer close(ch)
+			_ = p.StreamResources(context.Background(), ch)
+		}()
+
+		var docs []domain.Document
+		for d := range ch {
+			docs = append(docs, d)
 		}
-		if got[0]["content"] != "Body" {
-			t.Errorf("GetAllResourceContents content = %q, want %q", got[0]["content"], "Body")
+
+		if len(docs) != 1 {
+			t.Errorf("StreamResources returned %d items, want 1", len(docs))
+		}
+		if docs[0].Content != "Body" {
+			t.Errorf("StreamResources content = %q, want %q", docs[0].Content, "Body")
 		}
 	})
 }
 
-func TestResourceProvider_GetAllResourceContents_ErrorHandling(t *testing.T) {
+func TestResourceProvider_StreamResources_ErrorHandling(t *testing.T) {
 	defs := []ResourceDefinition{
 		{
 			URI:      "acdc://valid",
 			Name:     "Valid",
-			FilePath: "non-existent-but-wont-be-called-if-we-mock-it", // wait, ReadResource calls LoadMarkdownWithFrontmatter which reads from disk
+			FilePath: "valid.md",
 		},
 		{
 			URI:      "acdc://invalid",
 			Name:     "Invalid",
-			FilePath: "non-existent.md",
+			FilePath: "invalid.md",
 		},
 	}
 
-	// We can't easily mock content.NewContentProvider("").LoadMarkdownWithFrontmatter(defn.FilePath)
-	// Because it's called inside ReadResource.
-	// But we can create a real file for the first one and let the second one fail.
-
-	tmp := t.TempDir()
-	validFile := filepath.Join(tmp, "valid.md")
-	_ = os.WriteFile(validFile, []byte("---\nname: Valid\ndescription: D\n---\nValidBody"), 0644)
-
+	tempDir := t.TempDir()
+	validFile := filepath.Join(tempDir, "valid.md")
+	// content requires frontmatter to be parsed correctly by content provider if it uses LoadMarkdownWithFrontmatter?
+	// But ReadResource uses content.NewContentProvider("").LoadMarkdownWithFrontmatter(defn.FilePath)
+	// which expects frontmatter.
+	_ = os.WriteFile(validFile, []byte("---\nname: Valid\n---\nBody"), 0644)
 	defs[0].FilePath = validFile
 
 	p := NewResourceProvider(defs)
-	got := p.GetAllResourceContents()
+
+	ch := make(chan domain.Document, 10)
+	go func() {
+		defer close(ch)
+		_ = p.StreamResources(context.Background(), ch)
+	}()
+
+	var got []domain.Document
+	for d := range ch {
+		got = append(got, d)
+	}
 
 	if len(got) != 1 {
-		t.Errorf("GetAllResourceContents returned %d items, want 1 (successful one)", len(got))
+		t.Errorf("StreamResources returned %d items, want 1 (successful one)", len(got))
 		return
 	}
 
-	if got[0]["uri"] != "acdc://valid" {
-		t.Errorf("Expected uri 'acdc://valid', got '%s'", got[0]["uri"])
+	if got[0].URI != "acdc://valid" {
+		t.Errorf("Expected uri 'acdc://valid', got '%s'", got[0].URI)
+	}
+}
+
+func TestResourceProvider_StreamResources_ContextCancellation(t *testing.T) {
+	defs := []ResourceDefinition{
+		{
+			URI:  "acdc://1",
+			Name: "1",
+		},
+	}
+	p := NewResourceProvider(defs)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	ch := make(chan domain.Document)
+	err := p.StreamResources(ctx, ch)
+	if err == nil {
+		t.Error("Expected error on context cancellation, got nil")
+	}
+	if err != context.Canceled {
+		t.Errorf("Expected context.Canceled, got %v", err)
+	}
+}
+
+func TestResourceProvider_StreamResources_ContextCancellation_Blocked(t *testing.T) {
+	defs := []ResourceDefinition{
+		{
+			URI:  "acdc://1",
+			Name: "1",
+			// FilePath needs to exist for ReadResource to succeed and reach the send block
+			FilePath: "valid.md",
+		},
+	}
+	tempDir := t.TempDir()
+	defs[0].FilePath = filepath.Join(tempDir, "valid.md")
+	_ = os.WriteFile(defs[0].FilePath, []byte("---\nname: 1\n---\nBody"), 0644)
+
+	p := NewResourceProvider(defs)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan domain.Document) // Unbuffered, so send will block
+
+	errChan := make(chan error)
+	go func() {
+		errChan <- p.StreamResources(ctx, ch)
+	}()
+
+	// Wait a bit to ensure ReadResource completes and we are blocked on sending
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-errChan:
+		if err != context.Canceled {
+			t.Errorf("Expected context.Canceled, got %v", err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("Timeout waiting for StreamResources to return")
 	}
 }
 

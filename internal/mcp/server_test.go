@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"testing"
 
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
@@ -42,6 +43,9 @@ func (m *mockSearcher) Search(query string, options *int) ([]search.SearchResult
 
 func (m *mockSearcher) Close() {}
 
-func (m *mockSearcher) IndexDocuments(docs []search.Document) error {
+func (m *mockSearcher) Index(ctx context.Context, docs <-chan domain.Document) error {
+	for range docs {
+		// drain
+	}
 	return nil
 }
