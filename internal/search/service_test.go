@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 
@@ -26,6 +27,74 @@ func indexDocsHelper(s *Service, docs []domain.Document) error {
 	}
 	close(ch)
 	return s.Index(context.Background(), ch)
+}
+
+func TestService_Index_ContextCancellation(t *testing.T) {
+	s := NewService(testSettings())
+	defer s.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan domain.Document)
+
+	// Cancel immediately
+	cancel()
+
+	err := s.Index(ctx, ch)
+	if err == nil {
+		t.Error("Expected error on context cancellation, got nil")
+	}
+	if err != context.Canceled {
+		t.Errorf("Expected context.Canceled, got %v", err)
+	}
+}
+
+func TestService_Index_BatchingAndFlushing(t *testing.T) {
+	s := NewService(testSettings())
+	defer s.Close()
+
+	// 150 documents to test batching (100) and flushing (50)
+	count := 150
+	ch := make(chan domain.Document, count)
+	for i := 0; i < count; i++ {
+		ch <- domain.Document{
+			URI:     fmt.Sprintf("uri-%d", i),
+			Name:    fmt.Sprintf("Doc %d", i),
+			Content: "content",
+		}
+	}
+	close(ch)
+
+	if err := s.Index(context.Background(), ch); err != nil {
+		t.Fatalf("Index failed: %v", err)
+	}
+
+	docCount, err := s.DocCount()
+	if err != nil {
+		t.Fatalf("DocCount failed: %v", err)
+	}
+	if docCount != uint64(count) {
+		t.Errorf("Expected %d documents, got %d", count, docCount)
+	}
+}
+
+func TestService_Index_EmptyChannel(t *testing.T) {
+	s := NewService(testSettings())
+	defer s.Close()
+
+	ch := make(chan domain.Document)
+	close(ch)
+
+	if err := s.Index(context.Background(), ch); err != nil {
+		t.Fatalf("Index failed: %v", err)
+	}
+
+	docCount, err := s.DocCount()
+	if err != nil {
+		t.Fatalf("DocCount failed: %v", err)
+	}
+	if docCount != 0 {
+		t.Errorf("Expected 0 documents, got %d", docCount)
+	}
 }
 
 func TestSearchService(t *testing.T) {
