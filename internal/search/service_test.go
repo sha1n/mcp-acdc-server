@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -10,6 +11,102 @@ import (
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
 )
+
+type mockBatchIndexer struct {
+	realIndex bleve.Index
+	batchErr  error
+}
+
+func (m *mockBatchIndexer) NewBatch() *bleve.Batch {
+	return m.realIndex.NewBatch()
+}
+
+func (m *mockBatchIndexer) Batch(b *bleve.Batch) error {
+	if m.batchErr != nil {
+		return m.batchErr
+	}
+	return m.realIndex.Batch(b)
+}
+
+func TestService_BatchIndex_AddToBatchError(t *testing.T) {
+	s := NewService(testSettings())
+	defer s.Close()
+
+	// Create a real index to pass to batchIndex
+	index, _ := bleve.NewMemOnly(buildMapping())
+
+	// Document with empty URI should fail batch.Index
+	docs := []domain.Document{
+		{URI: "", Name: "Invalid", Content: "Content"},
+	}
+
+	ch := make(chan domain.Document, 1)
+	ch <- docs[0]
+	close(ch)
+
+	err := s.batchIndex(context.Background(), index, ch)
+	if err == nil {
+		t.Error("Expected error for empty URI, got nil")
+	}
+	if !contains(err.Error(), "failed to add document to batch") {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestService_BatchIndex_BatchExecutionError(t *testing.T) {
+	s := NewService(testSettings())
+	defer s.Close()
+
+	realIndex, _ := bleve.NewMemOnly(buildMapping())
+	mockIndex := &mockBatchIndexer{
+		realIndex: realIndex,
+		batchErr:  errors.New("simulated batch error"),
+	}
+
+	// Send enough docs to trigger batch flush (assuming batchSize=100 in service.go)
+	// Or just close channel to trigger final flush.
+	// We need > 0 docs to trigger final flush.
+	ch := make(chan domain.Document, 1)
+	ch <- domain.Document{URI: "1", Name: "1", Content: "C"}
+	close(ch)
+
+	err := s.batchIndex(context.Background(), mockIndex, ch)
+	if err == nil {
+		t.Error("Expected error for batch execution, got nil")
+	}
+	if !contains(err.Error(), "failed to execute final batch index") && !contains(err.Error(), "simulated batch error") {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestService_BatchIndex_FullBatchError(t *testing.T) {
+	s := NewService(testSettings())
+	defer s.Close()
+
+	realIndex, _ := bleve.NewMemOnly(buildMapping())
+	mockIndex := &mockBatchIndexer{
+		realIndex: realIndex,
+		batchErr:  errors.New("simulated batch error"),
+	}
+
+	// Send 100 docs to trigger intermediate flush
+	count := 100
+	ch := make(chan domain.Document, count)
+	for i := 0; i < count; i++ {
+		ch <- domain.Document{URI: fmt.Sprintf("%d", i), Name: "N", Content: "C"}
+	}
+	// Don't close yet, we want the flush to happen during loop
+	// Actually we can close, it buffers.
+	close(ch)
+
+	err := s.batchIndex(context.Background(), mockIndex, ch)
+	if err == nil {
+		t.Error("Expected error for full batch execution, got nil")
+	}
+	if !contains(err.Error(), "failed to execute batch index") {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
 
 func testSettings() config.SearchSettings {
 	return config.SearchSettings{

@@ -27,6 +27,12 @@ type Searcher interface {
 	Close()
 }
 
+// BatchIndexer is a subset of bleve.Index needed for batch indexing
+type BatchIndexer interface {
+	NewBatch() *bleve.Batch
+	Batch(b *bleve.Batch) error
+}
+
 // Service search service using Bleve
 type Service struct {
 	settings config.SearchSettings
@@ -84,6 +90,10 @@ func (s *Service) Index(ctx context.Context, documents <-chan domain.Document) e
 	}
 	s.index = index
 
+	return s.batchIndex(ctx, s.index, documents)
+}
+
+func (s *Service) batchIndex(ctx context.Context, index BatchIndexer, documents <-chan domain.Document) error {
 	// Batch index
 	batch := index.NewBatch()
 	batchSize := 100 // configurable?
