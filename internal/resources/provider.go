@@ -121,6 +121,9 @@ func (p *ResourceProvider) StreamResources(ctx context.Context, ch chan<- domain
 }
 
 // DiscoverResources discovers resources from markdown files in multiple locations
+//
+// Deprecated: Use adapter-based discovery from internal/app/factory.go instead.
+// This function is maintained for backward compatibility but will be removed in a future version.
 func DiscoverResources(locations []content.ResourceLocation, cp *content.ContentProvider) ([]ResourceDefinition, error) {
 	var definitions []ResourceDefinition
 

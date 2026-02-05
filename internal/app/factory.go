@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/sha1n/mcp-acdc-server/internal/adapters"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/content"
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
@@ -44,16 +45,19 @@ func CreateMCPServer(settings *config.Settings) (*mcpsdk.Server, func(), error) 
 		return nil, nil, fmt.Errorf("failed to initialize content provider: %w", err)
 	}
 
-	// Discover resources from all locations
-	resourceDefinitions, err := resources.DiscoverResources(cp.ResourceLocations(), cp)
+	// Create adapter registry with standard adapters
+	registry := createAdapterRegistry()
+
+	// Discover resources using adapter-based discovery
+	resourceDefinitions, err := DiscoverResourcesWithAdapters(metadata.Content, cp, registry, configDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to discover resources: %w", err)
 	}
 
 	resourceProvider := resources.NewResourceProvider(resourceDefinitions)
 
-	// Discover prompts from all locations
-	promptDefinitions, err := prompts.DiscoverPrompts(cp.PromptLocations(), cp)
+	// Discover prompts using adapter-based discovery
+	promptDefinitions, err := DiscoverPromptsWithAdapters(metadata.Content, cp, registry, configDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to discover prompts: %w", err)
 	}
@@ -92,4 +96,108 @@ func buildInstructions(baseInstructions string, locations []domain.ContentLocati
 	}
 	sb.WriteString("\nUse the search tool to find information. You can optionally filter by source.")
 	return sb.String()
+}
+
+// createAdapterRegistry creates and initializes the adapter registry with standard adapters
+func createAdapterRegistry() *adapters.Registry {
+	registry := adapters.NewRegistry()
+	registry.Register(adapters.NewACDCAdapter())
+	registry.Register(adapters.NewLegacyAdapter())
+	return registry
+}
+
+// DiscoverResourcesWithAdapters discovers resources using the adapter system
+func DiscoverResourcesWithAdapters(locations []domain.ContentLocation, cp *content.ContentProvider, registry *adapters.Registry, configDir string) ([]resources.ResourceDefinition, error) {
+	var allDefinitions []resources.ResourceDefinition
+
+	for _, loc := range locations {
+		// Get the resolved base path from content provider
+		basePath, ok := cp.GetBasePath(loc.Name)
+		if !ok {
+			return nil, fmt.Errorf("content location %q: base path not found", loc.Name)
+		}
+
+		// Resolve adapter for this location
+		var adapter adapters.Adapter
+		if loc.Type != "" {
+			// Explicit adapter type
+			var ok bool
+			adapter, ok = registry.Get(loc.Type)
+			if !ok {
+				return nil, fmt.Errorf("content location %q: unknown adapter type %q", loc.Name, loc.Type)
+			}
+		} else {
+			// Auto-detect adapter
+			var err error
+			adapter, err = registry.AutoDetect(basePath)
+			if err != nil {
+				return nil, fmt.Errorf("content location %q: %w", loc.Name, err)
+			}
+		}
+
+		// Create adapter location
+		adapterLoc := adapters.Location{
+			Name:        loc.Name,
+			BasePath:    basePath,
+			AdapterType: loc.Type,
+		}
+
+		// Discover resources using the adapter
+		defs, err := adapter.DiscoverResources(adapterLoc, cp)
+		if err != nil {
+			return nil, fmt.Errorf("content location %q: failed to discover resources: %w", loc.Name, err)
+		}
+
+		allDefinitions = append(allDefinitions, defs...)
+	}
+
+	return allDefinitions, nil
+}
+
+// DiscoverPromptsWithAdapters discovers prompts using the adapter system
+func DiscoverPromptsWithAdapters(locations []domain.ContentLocation, cp *content.ContentProvider, registry *adapters.Registry, configDir string) ([]prompts.PromptDefinition, error) {
+	var allDefinitions []prompts.PromptDefinition
+
+	for _, loc := range locations {
+		// Get the resolved base path from content provider
+		basePath, ok := cp.GetBasePath(loc.Name)
+		if !ok {
+			return nil, fmt.Errorf("content location %q: base path not found", loc.Name)
+		}
+
+		// Resolve adapter for this location
+		var adapter adapters.Adapter
+		if loc.Type != "" {
+			// Explicit adapter type
+			var ok bool
+			adapter, ok = registry.Get(loc.Type)
+			if !ok {
+				return nil, fmt.Errorf("content location %q: unknown adapter type %q", loc.Name, loc.Type)
+			}
+		} else {
+			// Auto-detect adapter
+			var err error
+			adapter, err = registry.AutoDetect(basePath)
+			if err != nil {
+				return nil, fmt.Errorf("content location %q: %w", loc.Name, err)
+			}
+		}
+
+		// Create adapter location
+		adapterLoc := adapters.Location{
+			Name:        loc.Name,
+			BasePath:    basePath,
+			AdapterType: loc.Type,
+		}
+
+		// Discover prompts using the adapter
+		defs, err := adapter.DiscoverPrompts(adapterLoc, cp)
+		if err != nil {
+			return nil, fmt.Errorf("content location %q: failed to discover prompts: %w", loc.Name, err)
+		}
+
+		allDefinitions = append(allDefinitions, defs...)
+	}
+
+	return allDefinitions, nil
 }

@@ -85,6 +85,9 @@ func (p *PromptProvider) GetPrompt(name string, arguments map[string]string) ([]
 }
 
 // DiscoverPrompts discovers prompts from markdown files in multiple locations
+//
+// Deprecated: Use adapter-based discovery from internal/app/factory.go instead.
+// This function is maintained for backward compatibility but will be removed in a future version.
 func DiscoverPrompts(locations []content.PromptLocation, cp *content.ContentProvider) ([]PromptDefinition, error) {
 	var definitions []PromptDefinition
 
