@@ -36,20 +36,22 @@ docker-compose up -d
 **Homebrew:**
 ```bash
 brew install sha1n/tap/acdc-mcp
-acdc-mcp --content-dir ./content
+acdc-mcp --config ./mcp-metadata.yaml
 ```
 
 ## ✨ Features
 
 - **Full-Text Search** — Fast indexing with stemming, fuzzy matching, and configurable boosting
+- **Multiple Content Locations** — Organize content from different sources with named locations
+- **Source Filtering** — Search within specific content sources
 - **Dynamic Resource Discovery** — Automatic scanning of content directories
-- **Dynamic Prompt Discovery** — Automatic scanning of prompt templates
+- **Dynamic Prompt Discovery** — Automatic scanning of prompt templates with namespacing
 - **MCP Compliant** — Seamless integration with AI agents
 - **Dual Transport** — `stdio` for local agents, `sse` for remote/Docker
 - **Authentication** — Optional basic auth or API key protection
 - **Cross-Platform** — Linux, macOS, and Windows
 
-## � Installation
+## 📦 Installation
 
 ### Docker
 ```bash
@@ -68,18 +70,19 @@ See [Development Guide](docs/development.md) for build instructions.
 
 ### Stdio Transport (default)
 ```bash
-acdc-mcp --content-dir ./content
+acdc-mcp --config ./mcp-metadata.yaml
 ```
 
 ### SSE Transport
 ```bash
-acdc-mcp --transport sse --content-dir ./content
+acdc-mcp --transport sse --config ./mcp-metadata.yaml
 ```
 
 ### Docker
 ```bash
 docker run -p 8080:8080 \
   -v $(pwd)/content:/app/content \
+  -e ACDC_MCP_CONFIG=/app/content/mcp-metadata.yaml \
   sha1n/mcp-acdc-server:latest
 ```
 
@@ -102,7 +105,7 @@ readinessProbe:
 
 | Flag | Short | Environment Variable | Default |
 |------|-------|---------------------|---------|
-| `--content-dir` | `-c` | `ACDC_MCP_CONTENT_DIR` | `./content` |
+| `--config` | `-c` | `ACDC_MCP_CONFIG` | (required) |
 | `--transport` | `-t` | `ACDC_MCP_TRANSPORT` | `stdio` |
 | `--port` | `-p` | `ACDC_MCP_PORT` | `8080` |
 | `--search-max-results` | `-m` | `ACDC_MCP_SEARCH_MAX_RESULTS` | `10` |
@@ -117,7 +120,7 @@ For full configuration options including authentication, see [Configuration Refe
 
 **Stdio:**
 ```bash
-gemini mcp add --scope user --transport stdio --trust acdc acdc-mcp -- --transport stdio --content-dir $ACDC_MCP_CONTENT_DIR
+gemini mcp add --scope user --transport stdio --trust acdc acdc-mcp -- --transport stdio --config $ACDC_MCP_CONFIG
 ```
 
 **SSE:**
@@ -129,7 +132,7 @@ gemini mcp add --scope user --transport sse --trust acdc http://<host>:<port>/ss
 
 **Stdio:**
 ```bash
-claude mcp add --scope user --transport stdio acdc -- acdc-mcp --transport stdio --content-dir $ACDC_MCP_CONTENT_DIR
+claude mcp add --scope user --transport stdio acdc -- acdc-mcp --transport stdio --config $ACDC_MCP_CONFIG
 ```
 
 **SSE:**
@@ -142,7 +145,57 @@ claude mcp add --scope user --transport sse acdc http://<host>:<port>/sse
 
 ## 📚 Content & Resources
 
-The server requires an `mcp-metadata.yaml` file in your content directory to define server identity. Tool metadata is optional and the server provides high-quality default descriptions for `search` and `read` tools.
+### Config File Structure
+
+The server requires a config file (typically `mcp-metadata.yaml`) that defines server identity and content locations:
+
+```yaml
+server:
+  name: "My MCP Server"
+  version: "1.0.0"
+  instructions: "Server instructions for AI agents..."
+
+content:
+  - name: docs
+    description: "Public documentation and guides"
+    path: ./documentation
+  - name: internal
+    description: "Internal runbooks and procedures"
+    path: ./internal
+
+tools:  # Optional - server provides default descriptions
+  - name: search
+    description: "Custom search description..."
+  - name: read
+    description: "Custom read description..."
+```
+
+### Content Location Structure
+
+Each content location should have the following structure:
+
+```
+location-path/
+├── mcp-resources/       # Markdown resources with YAML frontmatter
+│   └── guides/
+│       └── getting-started.md
+└── mcp-prompts/         # Optional: prompt templates
+    └── code-review.md
+```
+
+### URI Scheme
+
+Resources are addressed using URIs that include the source name:
+- `acdc://<source>/<path>` (e.g., `acdc://docs/guides/getting-started`)
+
+### Prompt Namespacing
+
+Prompts are namespaced by their source:
+- `<source>:<prompt-name>` (e.g., `docs:code-review`)
+
+### Search Source Filtering
+
+The search tool supports an optional `source` parameter to filter results to a specific content source.
 
 For details on authoring resource files, including frontmatter format and search keyword boosting, see the [Authoring Resources Guide](docs/authoring-resources.md).
 

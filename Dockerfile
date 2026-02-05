@@ -13,9 +13,9 @@ COPY --from=builder /app/acdc-mcp .
 # Install ca-certificates for external requests if needed
 RUN apk --no-cache add ca-certificates
 
-ENV ACDC_MCP_CONTENT_DIR=/app/content \
+ENV ACDC_MCP_CONFIG=/app/content/mcp-metadata.yaml \
     ACDC_MCP_HOST=0.0.0.0 \
-  ACDC_MCP_PORT=8080
+    ACDC_MCP_PORT=8080
 
 EXPOSE 8080
 CMD ["./acdc-mcp"]

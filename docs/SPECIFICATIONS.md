@@ -5,9 +5,9 @@
 The ACDC (Agent Content Discovery Companion) MCP Server is designed to serve organization-wide knowledge base resources to AI agents via the Model Context Protocol (MCP). It acts as a bridge between static content repositories and AI agents, providing discovery, search, and retrieval capabilities.
 
 ### Core Principles
-1.  **Centralized Content**: Operates on a local directory (typically a mounted volume) containing static Markdown resources.
+1.  **Multiple Content Sources**: Supports multiple named content locations, each with its own resources and prompts.
 2.  **Zero-Config Client**: Clients discover capabilities dynamically via MCP tool definitions.
-3.  **Metadata-Driven**: Server identity and tool exposure are controlled by a `mcp-metadata.yaml` manifest in the content root.
+3.  **Metadata-Driven**: Server identity and content locations are controlled by a config file (typically `mcp-metadata.yaml`).
 4.  **Transport Agnostic**: Supports both `stdio` (local process) and `sse` (HTTP) transports.
 
 ---
@@ -18,7 +18,7 @@ The server is configured via environment variables, command-line flags, or a `.e
 
 | Environment Variable | CLI Flag | Description | Default |
 | :--- | :--- | :--- | :--- |
-| `ACDC_MCP_CONTENT_DIR` | `--content-dir`, `-c` | Root directory containing `mcp-metadata.yaml` and `mcp-resources/`. | `./content` |
+| `ACDC_MCP_CONFIG` | `--config`, `-c` | Path to the config file containing server metadata and content locations. | (required) |
 | `ACDC_MCP_TRANSPORT` | `--transport`, `-t` | Communication transport: `stdio` or `sse`. | `stdio` |
 | `ACDC_MCP_HOST` | `--host`, `-H` | Host interface to bind for SSE transport. | `0.0.0.0` |
 | `ACDC_MCP_PORT` | `--port`, `-p` | Port to listen on for SSE transport. | `8080` |
@@ -33,47 +33,61 @@ The server is configured via environment variables, command-line flags, or a `.e
 
 ---
 
-## Content Repository Structure
+## Config File Structure
 
-The server expects a specific directory structure within `ACDC_MCP_CONTENT_DIR`:
+The config file (typically `mcp-metadata.yaml`) defines the server's identity and content locations:
 
-```text
-/ (Content Root)
-├── mcp-metadata.yaml       # Server identity and tool configuration (Required)
-└── mcp-resources/          # Directory containing resource files (Required)
-    ├── guide.md
-    └── subfolder/
-        └── details.md
-```
-
-### 1. Metadata Manifest (`mcp-metadata.yaml`)
-
-Defines the server's identity and optional tool overrides.
-
-**Schema:**
 ```yaml
 server:
   name: <string>        # Display name of the MCP server
   version: <string>     # Semantic version string
   instructions: <string> # System prompt / context instructions for the agent
 
+content:                # Required: List of content locations
+  - name: <string>      # Unique identifier for this content source
+    description: <string> # Human-readable description
+    path: <string>      # Path to content directory (relative to config file or absolute)
+
 tools:                  # Optional: Override default tool descriptions
   - name: search
-    description: <string> 
+    description: <string>
   - name: read
-    description: <string> 
+    description: <string>
 ```
+
 *Note: If the `tools` section is omitted or a specific tool is not listed, the server provides high-quality default descriptions for the `search` and `read` tools.*
 
-### 2. Resources (`mcp-resources/`)
+### Content Location Structure
 
--   **Discovery**: The server recursively scans `mcp-resources/` for `.md` files.
--   **URI Scheme**: `acdc://<relative_path_without_extension>`
-    -   Example: `mcp-resources/docs/guide.md` -> `acdc://docs/guide`
-    -   Windows backslashes are normalized to forward slashes.
--   **File Format**: Must be Markdown with YAML Frontmatter.
+Each content location should have the following structure:
 
-**Frontmatter Requirements:**
+```text
+<location-path>/
+├── mcp-resources/          # Directory containing resource files (Required)
+│   ├── guide.md
+│   └── subfolder/
+│       └── details.md
+└── mcp-prompts/            # Optional: Directory containing prompt templates
+    └── code-review.md
+```
+
+---
+
+## Resources
+
+### Discovery
+-   The server recursively scans each content location's `mcp-resources/` directory for `.md` files.
+
+### URI Scheme
+Resources are addressed using URIs that include the source name:
+-   Format: `acdc://<source>/<relative_path_without_extension>`
+-   Example: For a resource at `docs/mcp-resources/guides/getting-started.md` in source "docs":
+    -   URI: `acdc://docs/guides/getting-started`
+-   Windows backslashes are normalized to forward slashes.
+
+### File Format
+Must be Markdown with YAML Frontmatter:
+
 ```markdown
 ---
 name: <string>          # Required: Human-readable title
@@ -87,9 +101,37 @@ Markdown content follows...
 
 ---
 
+## Prompts
+
+### Discovery
+-   The server scans each content location's `mcp-prompts/` directory (if it exists) for `.md` files.
+
+### Namespacing
+Prompts are namespaced by their source:
+-   Format: `<source>:<prompt-name>`
+-   Example: For a prompt at `docs/mcp-prompts/code-review.md` in source "docs":
+    -   Name: `docs:code-review`
+
+### File Format
+Prompt files use YAML frontmatter to define metadata and arguments:
+
+```markdown
+---
+name: <string>          # Prompt name (without namespace)
+description: <string>   # Brief description
+arguments:
+  - name: <string>      # Argument name
+    description: <string>
+    required: <boolean>
+---
+Template content with {{.argumentName}} placeholders...
+```
+
+---
+
 ## Tools
 
-The server always implements and registers the following MCP tools. Their descriptions can be customized via `mcp-metadata.yaml`, but sensible defaults are provided.
+The server always implements and registers the following MCP tools. Their descriptions can be customized via the config file, but sensible defaults are provided.
 
 ### `search`
 Performs a full-text search across all indexed resources.
@@ -97,19 +139,21 @@ Performs a full-text search across all indexed resources.
 *   **Input Schema:**
     ```json
     {
-      "query": "string (Required) - Natural language or keyword query"
+      "query": "string (Required) - Natural language or keyword query",
+      "source": "string (Optional) - Filter results to a specific content source"
     }
     ```
 *   **Behavior:**
     *   Searches against `name`, `content`, and `keywords` using fuzzy matching (distance 1) and stemming.
     *   Applies boosting: `keywords` (3.0), `name` (2.0), `content` (1.0) by default.
+    *   If `source` is provided, filters results to only that content source.
     *   Returns a maximum of `ACDC_MCP_SEARCH_MAX_RESULTS`.
 *   **Output:**
     Text summary of results in the format:
     ```text
     Search results for '<query>':
 
-    - [<Name>](<URI>): <Snippet> (relevance: <Score>)
+    - [<Source>] [<Name>](<URI>): <Snippet> (relevance: <Score>)
     ...
     ```
     *If no results found, returns a descriptive message.*
@@ -120,7 +164,7 @@ Retrieves the full raw content of a resource.
 *   **Input Schema:**
     ```json
     {
-      "uri": "string (Required) - The acdc:// URI of the resource"
+      "uri": "string (Required) - The acdc:// URI of the resource (e.g., acdc://docs/guide)"
     }
     ```
 *   **Behavior:**
@@ -135,7 +179,7 @@ Retrieves the full raw content of a resource.
 
 In addition to tools, the server exposes resources directly via the MCP `resources/list` capability.
 
-*   **URI**: Same as the `acdc://` URI used in tools.
+*   **URI**: `acdc://<source>/<path>` format.
 *   **Name**: From frontmatter `name`.
 *   **Description**: From frontmatter `description`.
 *   **MIME Type**: `text/markdown`.
@@ -173,8 +217,10 @@ Used for remote connections.
     *   **Fuzzy Search**: Matches terms with an edit distance of 1.
     *   **Stemming**: Uses the standard English analyzer for language-aware matching.
     *   **Highlighting**: Generates dynamic snippets with search term context.
+    *   **Source Filtering**: Filter results to a specific content source.
 *   **Indexed Fields (Default Boosts)**:
     *   `uri` (Stored, Indexed)
     *   `name` (Stored, Indexed, Boost x2.0)
     *   `content` (Stored, Indexed, Boost x1.0)
     *   `keywords` (Indexed, Boost x3.0, Optional)
+    *   `source` (Stored, Indexed as keyword - not analyzed)

@@ -36,9 +36,9 @@ func TestExecute_UnknownFlag(t *testing.T) {
 
 func TestExecute_Run(t *testing.T) {
 	// Trigger runWithFlags by providing a valid transport but invalid settings that cause early exit
-	err := Execute("test", "test", "test", []string{"--transport", "sse", "--content-dir", "/non-existent"})
+	err := Execute("test", "test", "test", []string{"--transport", "sse", "--config", "/non-existent.yaml"})
 	if err == nil {
-		t.Error("Expected error for non-existent content-dir")
+		t.Error("Expected error for non-existent config file")
 	}
 }
 
