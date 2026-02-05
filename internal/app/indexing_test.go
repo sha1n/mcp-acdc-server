@@ -36,7 +36,7 @@ func (m *mockIndexer) Index(ctx context.Context, documents <-chan domain.Documen
 	return nil
 }
 
-func (m *mockIndexer) Search(queryStr string, limit *int) ([]search.SearchResult, error) {
+func (m *mockIndexer) Search(queryStr string, opts *search.SearchOptions) ([]search.SearchResult, error) {
 	return nil, nil
 }
 func (m *mockIndexer) Close() {}

@@ -14,7 +14,8 @@ import (
 
 // SearchToolArgument represents arguments for search tool
 type SearchToolArgument struct {
-	Query string `json:"query" jsonschema_description:"The search query. Use natural language or keywords."`
+	Query  string `json:"query" jsonschema_description:"The search query. Use natural language or keywords."`
+	Source string `json:"source,omitempty" jsonschema_description:"Optional: filter results to a specific content source."`
 }
 
 // ReadToolArgument represents arguments for read tool
@@ -50,21 +51,39 @@ func RegisterReadTool(s *mcp.Server, resourceProvider *resources.ResourceProvide
 func NewSearchToolHandler(searchService search.Searcher) mcp.ToolHandlerFor[SearchToolArgument, any] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, args SearchToolArgument) (*mcp.CallToolResult, any, error) {
 		// Args are already validated and unmarshaled by SDK via jsonschema tags
-		slog.Info("Search request", "query", args.Query)
+		slog.Info("Search request", "query", args.Query, "source", args.Source)
 
-		results, err := searchService.Search(args.Query, nil)
+		// Build search options with optional source filter
+		var opts *search.SearchOptions
+		if args.Source != "" {
+			opts = &search.SearchOptions{Source: args.Source}
+		}
+
+		results, err := searchService.Search(args.Query, opts)
 		if err != nil {
-			slog.Error("Search failed", "query", args.Query, "error", err)
+			slog.Error("Search failed", "query", args.Query, "source", args.Source, "error", err)
 			return nil, nil, err
 		}
 
 		var sb strings.Builder
 		if len(results) == 0 {
-			sb.WriteString(fmt.Sprintf("No results found for '%s'", args.Query))
+			if args.Source != "" {
+				sb.WriteString(fmt.Sprintf("No results found for '%s' in source '%s'", args.Query, args.Source))
+			} else {
+				sb.WriteString(fmt.Sprintf("No results found for '%s'", args.Query))
+			}
 		} else {
-			sb.WriteString(fmt.Sprintf("Search results for '%s':\n\n", args.Query))
+			if args.Source != "" {
+				sb.WriteString(fmt.Sprintf("Search results for '%s' in source '%s':\n\n", args.Query, args.Source))
+			} else {
+				sb.WriteString(fmt.Sprintf("Search results for '%s':\n\n", args.Query))
+			}
 			for _, r := range results {
-				sb.WriteString(fmt.Sprintf("- [%s](%s): %s\n\n", r.Name, r.URI, r.Snippet))
+				if r.Source != "" {
+					sb.WriteString(fmt.Sprintf("- [%s] [%s](%s): %s\n\n", r.Source, r.Name, r.URI, r.Snippet))
+				} else {
+					sb.WriteString(fmt.Sprintf("- [%s](%s): %s\n\n", r.Name, r.URI, r.Snippet))
+				}
 			}
 		}
 

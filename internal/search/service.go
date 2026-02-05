@@ -18,11 +18,18 @@ type SearchResult struct {
 	URI     string
 	Name    string
 	Snippet string
+	Source  string
+}
+
+// SearchOptions contains optional search parameters
+type SearchOptions struct {
+	Limit  *int
+	Source string // Optional: filter results to a specific content source
 }
 
 // Searcher interface in search package
 type Searcher interface {
-	Search(queryStr string, limit *int) ([]SearchResult, error)
+	Search(queryStr string, opts *SearchOptions) ([]SearchResult, error)
 	Index(ctx context.Context, documents <-chan domain.Document) error
 	Close()
 }
@@ -155,11 +162,18 @@ func buildMapping() mapping.IndexMapping {
 	keywordsMapping.IncludeInAll = true
 	keywordsMapping.Analyzer = "en"
 
+	// Source field: Stored, Indexed as keyword (not analyzed)
+	// Used for filtering by content source
+	sourceMapping := bleve.NewKeywordFieldMapping()
+	sourceMapping.Store = true
+	sourceMapping.IncludeInAll = false
+
 	docMapping := bleve.NewDocumentMapping()
 	docMapping.AddFieldMappingsAt(domain.FieldURI, uriMapping)
 	docMapping.AddFieldMappingsAt(domain.FieldName, nameMapping)
 	docMapping.AddFieldMappingsAt(domain.FieldContent, contentMapping)
 	docMapping.AddFieldMappingsAt(domain.FieldKeywords, keywordsMapping)
+	docMapping.AddFieldMappingsAt(domain.FieldSource, sourceMapping)
 
 	mapping := bleve.NewIndexMapping()
 	mapping.DefaultMapping = docMapping
@@ -167,21 +181,21 @@ func buildMapping() mapping.IndexMapping {
 }
 
 // Search searches for resources
-func (s *Service) Search(queryStr string, limit *int) ([]SearchResult, error) {
+func (s *Service) Search(queryStr string, opts *SearchOptions) ([]SearchResult, error) {
 	if s.index == nil {
 		return []SearchResult{}, nil
 	}
 
 	maxResults := s.settings.MaxResults
-	if limit != nil {
-		maxResults = *limit
+	if opts != nil && opts.Limit != nil {
+		maxResults = *opts.Limit
 	}
 
 	// Build query with keyword boosting
 	// Use DisjunctionQuery to search multiple fields with different boosts
-	var q query.Query
+	var textQuery query.Query
 	if queryStr == "*" {
-		q = bleve.NewMatchAllQuery()
+		textQuery = bleve.NewMatchAllQuery()
 	} else {
 		// Create field-specific queries with boosting and fuzziness
 		nameQuery := bleve.NewMatchQuery(queryStr)
@@ -200,12 +214,20 @@ func (s *Service) Search(queryStr string, limit *int) ([]SearchResult, error) {
 		keywordsQuery.SetBoost(s.settings.KeywordsBoost)
 
 		// DisjunctionQuery combines results, boosted fields will score higher
-		q = bleve.NewDisjunctionQuery(nameQuery, contentQuery, keywordsQuery)
+		textQuery = bleve.NewDisjunctionQuery(nameQuery, contentQuery, keywordsQuery)
+	}
+
+	// Apply source filter if specified
+	q := textQuery
+	if opts != nil && opts.Source != "" {
+		sourceQuery := bleve.NewTermQuery(opts.Source)
+		sourceQuery.SetField(domain.FieldSource)
+		q = bleve.NewConjunctionQuery(textQuery, sourceQuery)
 	}
 
 	searchRequest := bleve.NewSearchRequest(q)
 	searchRequest.Size = maxResults
-	searchRequest.Fields = []string{domain.FieldURI, domain.FieldName, domain.FieldContent}
+	searchRequest.Fields = []string{domain.FieldURI, domain.FieldName, domain.FieldContent, domain.FieldSource}
 	searchRequest.Highlight = bleve.NewHighlight()
 
 	searchResult, err := s.index.Search(searchRequest)
@@ -226,6 +248,8 @@ func (s *Service) Search(queryStr string, limit *int) ([]SearchResult, error) {
 			name = "Unknown" // Fallback
 		}
 
+		source, _ := hit.Fields[domain.FieldSource].(string)
+
 		// Improved snippet generation with highlighting
 		snippet := fmt.Sprintf("%s (relevance: %.2f)", name, hit.Score)
 		if fragments, ok := hit.Fragments[domain.FieldContent]; ok && len(fragments) > 0 {
@@ -236,6 +260,7 @@ func (s *Service) Search(queryStr string, limit *int) ([]SearchResult, error) {
 			URI:     uri,
 			Name:    name,
 			Snippet: snippet,
+			Source:  source,
 		})
 	}
 

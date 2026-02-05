@@ -37,7 +37,7 @@ func TestCreateServer(t *testing.T) {
 
 type mockSearcher struct{}
 
-func (m *mockSearcher) Search(query string, options *int) ([]search.SearchResult, error) {
+func (m *mockSearcher) Search(query string, opts *search.SearchOptions) ([]search.SearchResult, error) {
 	return nil, nil
 }
 

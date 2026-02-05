@@ -17,12 +17,12 @@ import (
 
 // Mock searcher for testing
 type TestMockSearcher struct {
-	MockSearch func(queryStr string, limit *int) ([]search.SearchResult, error)
+	MockSearch func(queryStr string, opts *search.SearchOptions) ([]search.SearchResult, error)
 }
 
-func (m *TestMockSearcher) Search(query string, options *int) ([]search.SearchResult, error) {
+func (m *TestMockSearcher) Search(query string, opts *search.SearchOptions) ([]search.SearchResult, error) {
 	if m.MockSearch != nil {
-		return m.MockSearch(query, options)
+		return m.MockSearch(query, opts)
 	}
 	return nil, nil
 }
@@ -53,7 +53,7 @@ func TestToolRegistration(t *testing.T) {
 
 func TestSearchToolHandler_Success_WithResults(t *testing.T) {
 	mockSearcher := &TestMockSearcher{
-		MockSearch: func(query string, limit *int) ([]search.SearchResult, error) {
+		MockSearch: func(query string, opts *search.SearchOptions) ([]search.SearchResult, error) {
 			assert.Equal(t, "test query", query)
 			return []search.SearchResult{
 				{
@@ -95,7 +95,7 @@ func TestSearchToolHandler_Success_WithResults(t *testing.T) {
 
 func TestSearchToolHandler_Success_NoResults(t *testing.T) {
 	mockSearcher := &TestMockSearcher{
-		MockSearch: func(query string, limit *int) ([]search.SearchResult, error) {
+		MockSearch: func(query string, opts *search.SearchOptions) ([]search.SearchResult, error) {
 			return []search.SearchResult{}, nil
 		},
 	}
@@ -120,7 +120,7 @@ func TestSearchToolHandler_Success_NoResults(t *testing.T) {
 func TestSearchToolHandler_Error(t *testing.T) {
 	expectedErr := errors.New("search service error")
 	mockSearcher := &TestMockSearcher{
-		MockSearch: func(query string, limit *int) ([]search.SearchResult, error) {
+		MockSearch: func(query string, opts *search.SearchOptions) ([]search.SearchResult, error) {
 			return nil, expectedErr
 		},
 	}
@@ -189,4 +189,132 @@ func TestReadToolHandler_Error_ResourceNotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "resource")
 	assert.Nil(t, result)
 	assert.Nil(t, extra)
+}
+
+func TestSearchToolHandler_WithSourceFilter(t *testing.T) {
+	mockSearcher := &TestMockSearcher{
+		MockSearch: func(query string, opts *search.SearchOptions) ([]search.SearchResult, error) {
+			assert.Equal(t, "test query", query)
+			require.NotNil(t, opts)
+			assert.Equal(t, "docs", opts.Source)
+			return []search.SearchResult{
+				{
+					Name:    "Doc Result",
+					URI:     "acdc://docs/result",
+					Snippet: "This is a docs result",
+					Source:  "docs",
+				},
+			}, nil
+		},
+	}
+
+	handler := NewSearchToolHandler(mockSearcher)
+	ctx := context.Background()
+	req := &mcp.CallToolRequest{}
+	args := SearchToolArgument{Query: "test query", Source: "docs"}
+
+	result, extra, err := handler(ctx, req, args)
+
+	require.NoError(t, err)
+	require.Nil(t, extra)
+	require.NotNil(t, result)
+	require.Len(t, result.Content, 1)
+
+	textContent, ok := result.Content[0].(*mcp.TextContent)
+	require.True(t, ok)
+	assert.Contains(t, textContent.Text, "Search results for 'test query' in source 'docs'")
+	assert.Contains(t, textContent.Text, "[docs]")
+	assert.Contains(t, textContent.Text, "Doc Result")
+}
+
+func TestSearchToolHandler_WithSourceFilter_NoResults(t *testing.T) {
+	mockSearcher := &TestMockSearcher{
+		MockSearch: func(query string, opts *search.SearchOptions) ([]search.SearchResult, error) {
+			require.NotNil(t, opts)
+			assert.Equal(t, "internal", opts.Source)
+			return []search.SearchResult{}, nil
+		},
+	}
+
+	handler := NewSearchToolHandler(mockSearcher)
+	ctx := context.Background()
+	req := &mcp.CallToolRequest{}
+	args := SearchToolArgument{Query: "test query", Source: "internal"}
+
+	result, extra, err := handler(ctx, req, args)
+
+	require.NoError(t, err)
+	require.Nil(t, extra)
+	require.NotNil(t, result)
+	require.Len(t, result.Content, 1)
+
+	textContent, ok := result.Content[0].(*mcp.TextContent)
+	require.True(t, ok)
+	assert.Contains(t, textContent.Text, "No results found for 'test query' in source 'internal'")
+}
+
+func TestSearchToolHandler_EmptySourceNotPassedAsFilter(t *testing.T) {
+	mockSearcher := &TestMockSearcher{
+		MockSearch: func(query string, opts *search.SearchOptions) ([]search.SearchResult, error) {
+			// Empty source should result in nil opts (no filter)
+			assert.Nil(t, opts)
+			return []search.SearchResult{
+				{
+					Name:    "Result",
+					URI:     "acdc://docs/result",
+					Snippet: "This is a result",
+					Source:  "docs",
+				},
+			}, nil
+		},
+	}
+
+	handler := NewSearchToolHandler(mockSearcher)
+	ctx := context.Background()
+	req := &mcp.CallToolRequest{}
+	args := SearchToolArgument{Query: "test query", Source: ""}
+
+	result, extra, err := handler(ctx, req, args)
+
+	require.NoError(t, err)
+	require.Nil(t, extra)
+	require.NotNil(t, result)
+}
+
+func TestSearchToolHandler_ResultsWithSource(t *testing.T) {
+	mockSearcher := &TestMockSearcher{
+		MockSearch: func(query string, opts *search.SearchOptions) ([]search.SearchResult, error) {
+			return []search.SearchResult{
+				{
+					Name:    "Doc 1",
+					URI:     "acdc://docs/doc1",
+					Snippet: "Documentation snippet",
+					Source:  "docs",
+				},
+				{
+					Name:    "Internal 1",
+					URI:     "acdc://internal/int1",
+					Snippet: "Internal snippet",
+					Source:  "internal",
+				},
+			}, nil
+		},
+	}
+
+	handler := NewSearchToolHandler(mockSearcher)
+	ctx := context.Background()
+	req := &mcp.CallToolRequest{}
+	args := SearchToolArgument{Query: "test"}
+
+	result, extra, err := handler(ctx, req, args)
+
+	require.NoError(t, err)
+	require.Nil(t, extra)
+	require.NotNil(t, result)
+
+	textContent, ok := result.Content[0].(*mcp.TextContent)
+	require.True(t, ok)
+	// Verify source prefixes in output
+	assert.Contains(t, textContent.Text, "[docs]")
+	assert.Contains(t, textContent.Text, "[internal]")
 }

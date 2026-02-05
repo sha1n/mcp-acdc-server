@@ -204,11 +204,13 @@ func TestSearchService(t *testing.T) {
 			URI:     "acdc://doc1",
 			Name:    "Document One",
 			Content: "This is the content of document one. It talks about testing.",
+			Source:  "docs",
 		},
 		{
 			URI:     "acdc://doc2",
 			Name:    "Document Two",
 			Content: "This is the content of document two. It talks about development.",
+			Source:  "internal",
 		},
 	}
 
@@ -227,6 +229,9 @@ func TestSearchService(t *testing.T) {
 	}
 	if results[0].URI != "acdc://doc1" {
 		t.Errorf("Expected URI 'acdc://doc1', got '%s'", results[0].URI)
+	}
+	if results[0].Source != "docs" {
+		t.Errorf("Expected Source 'docs', got '%s'", results[0].Source)
 	}
 
 	// Search for "document"
@@ -344,7 +349,7 @@ func TestSearchService_Extended(t *testing.T) {
 	// 2. Test MaxResults and Limits
 	// Default from settings is 5, request explicit limit 1
 	limit := 1
-	results, err = service.Search("*", &limit)
+	results, err = service.Search("*", &SearchOptions{Limit: &limit})
 	if err != nil {
 		t.Fatalf("Search with limit failed: %v", err)
 	}
@@ -685,5 +690,172 @@ func TestSearch_KeywordsOnlyMatch(t *testing.T) {
 	}
 	if results[0].URI != "acdc://guide" {
 		t.Errorf("Expected acdc://guide, got %s", results[0].URI)
+	}
+}
+
+// TestSearch_SourceFilter verifies that the source filter works correctly
+func TestSearch_SourceFilter(t *testing.T) {
+	settings := testSettings()
+	settings.InMemory = true
+	service := NewService(settings)
+	defer service.Close()
+
+	docs := []domain.Document{
+		{
+			URI:     "acdc://docs/guide1",
+			Name:    "Guide One",
+			Content: "Documentation content about testing",
+			Source:  "docs",
+		},
+		{
+			URI:     "acdc://internal/guide2",
+			Name:    "Guide Two",
+			Content: "Internal content about testing",
+			Source:  "internal",
+		},
+		{
+			URI:     "acdc://docs/guide3",
+			Name:    "Guide Three",
+			Content: "More documentation about testing",
+			Source:  "docs",
+		},
+	}
+
+	if err := indexDocsHelper(service, docs); err != nil {
+		t.Fatalf("IndexDocuments failed: %v", err)
+	}
+
+	// Search without source filter - should return all 3
+	results, err := service.Search("testing", nil)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) != 3 {
+		t.Errorf("Expected 3 results without source filter, got %d", len(results))
+	}
+
+	// Search with source filter "docs" - should return 2
+	results, err = service.Search("testing", &SearchOptions{Source: "docs"})
+	if err != nil {
+		t.Fatalf("Search with source filter failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("Expected 2 results with source=docs, got %d", len(results))
+	}
+	for _, r := range results {
+		if r.Source != "docs" {
+			t.Errorf("Expected Source 'docs', got '%s'", r.Source)
+		}
+	}
+
+	// Search with source filter "internal" - should return 1
+	results, err = service.Search("testing", &SearchOptions{Source: "internal"})
+	if err != nil {
+		t.Fatalf("Search with source filter failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("Expected 1 result with source=internal, got %d", len(results))
+	}
+	if results[0].Source != "internal" {
+		t.Errorf("Expected Source 'internal', got '%s'", results[0].Source)
+	}
+
+	// Search with non-existent source - should return 0
+	results, err = service.Search("testing", &SearchOptions{Source: "nonexistent"})
+	if err != nil {
+		t.Fatalf("Search with source filter failed: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("Expected 0 results with source=nonexistent, got %d", len(results))
+	}
+}
+
+// TestSearch_SourceFilterWithLimit verifies source filter works with limit
+func TestSearch_SourceFilterWithLimit(t *testing.T) {
+	settings := testSettings()
+	settings.InMemory = true
+	service := NewService(settings)
+	defer service.Close()
+
+	docs := []domain.Document{
+		{URI: "acdc://docs/1", Name: "Doc 1", Content: "testing one", Source: "docs"},
+		{URI: "acdc://docs/2", Name: "Doc 2", Content: "testing two", Source: "docs"},
+		{URI: "acdc://docs/3", Name: "Doc 3", Content: "testing three", Source: "docs"},
+	}
+
+	if err := indexDocsHelper(service, docs); err != nil {
+		t.Fatalf("IndexDocuments failed: %v", err)
+	}
+
+	limit := 2
+	results, err := service.Search("testing", &SearchOptions{Source: "docs", Limit: &limit})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("Expected 2 results with limit=2, got %d", len(results))
+	}
+}
+
+// TestSearch_SourceFilterCaseSensitive verifies source filter is case-sensitive
+func TestSearch_SourceFilterCaseSensitive(t *testing.T) {
+	settings := testSettings()
+	settings.InMemory = true
+	service := NewService(settings)
+	defer service.Close()
+
+	docs := []domain.Document{
+		{URI: "acdc://docs/1", Name: "Doc 1", Content: "testing", Source: "docs"},
+	}
+
+	if err := indexDocsHelper(service, docs); err != nil {
+		t.Fatalf("IndexDocuments failed: %v", err)
+	}
+
+	// Exact case should work
+	results, err := service.Search("testing", &SearchOptions{Source: "docs"})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("Expected 1 result with exact case source, got %d", len(results))
+	}
+
+	// Different case should not match (keyword field is case-sensitive)
+	results, err = service.Search("testing", &SearchOptions{Source: "DOCS"})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("Expected 0 results with wrong case source, got %d", len(results))
+	}
+}
+
+// TestSearch_SourceFilterMatchAll verifies source filter works with MatchAll query
+func TestSearch_SourceFilterMatchAll(t *testing.T) {
+	settings := testSettings()
+	settings.InMemory = true
+	service := NewService(settings)
+	defer service.Close()
+
+	docs := []domain.Document{
+		{URI: "acdc://docs/1", Name: "Doc 1", Content: "content one", Source: "docs"},
+		{URI: "acdc://internal/2", Name: "Doc 2", Content: "content two", Source: "internal"},
+	}
+
+	if err := indexDocsHelper(service, docs); err != nil {
+		t.Fatalf("IndexDocuments failed: %v", err)
+	}
+
+	// MatchAll with source filter
+	results, err := service.Search("*", &SearchOptions{Source: "docs"})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("Expected 1 result with MatchAll + source filter, got %d", len(results))
+	}
+	if results[0].Source != "docs" {
+		t.Errorf("Expected Source 'docs', got '%s'", results[0].Source)
 	}
 }
