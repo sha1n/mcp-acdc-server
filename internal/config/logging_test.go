@@ -17,7 +17,7 @@ func TestLog(t *testing.T) {
 		{
 			name: "stdio transport",
 			settings: &Settings{
-				ContentDir: "/tmp",
+				ConfigPath: "/path/to/config.yaml",
 				Transport:  "stdio",
 				Search: SearchSettings{
 					MaxResults:    10,
@@ -31,7 +31,7 @@ func TestLog(t *testing.T) {
 				},
 			},
 			expected: []string{
-				"Config: content_dir",
+				"Config: config",
 				"Config: transport",
 				"Config: search.max_results",
 				"Config: search.in_memory",
@@ -56,7 +56,7 @@ func TestLog(t *testing.T) {
 		{
 			name: "basic auth",
 			settings: &Settings{
-				ContentDir: "/tmp",
+				ConfigPath: "/path/to/config.yaml",
 				Transport:  "stdio",
 				Search:     SearchSettings{},
 				Auth: AuthSettings{
@@ -95,7 +95,7 @@ func TestLog(t *testing.T) {
 			LogWithLogger(tt.settings, logger)
 
 			if tt.name == "stdio transport" {
-				assert.Contains(t, captured, "Config: content_dir")
+				assert.Contains(t, captured, "Config: config")
 				assert.Contains(t, captured, "Config: transport")
 				assert.NotContains(t, captured, "Config: host")
 			}
@@ -115,7 +115,7 @@ func TestLog(t *testing.T) {
 
 func TestLogValues(t *testing.T) {
 	s := Settings{
-		ContentDir: "/tmp",
+		ConfigPath: "/path/to/config.yaml",
 		Transport:  "stdio",
 		Search: SearchSettings{
 			MaxResults: 10,
@@ -138,7 +138,7 @@ func TestLogValues(t *testing.T) {
 		for _, a := range attrs {
 			attrMap[a.Key] = a.Value
 		}
-		assert.Equal(t, "/tmp", attrMap["content_dir"].String())
+		assert.Equal(t, "/path/to/config.yaml", attrMap["config"].String())
 		assert.Equal(t, "stdio", attrMap["transport"].String())
 	})
 

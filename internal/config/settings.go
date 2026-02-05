@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/pflag"
@@ -41,7 +40,7 @@ type BasicAuthSettings struct {
 
 // Settings application settings
 type Settings struct {
-	ContentDir string         `mapstructure:"content_dir"`
+	ConfigPath string         `mapstructure:"config"`
 	Transport  string         `mapstructure:"transport"`
 	Host       string         `mapstructure:"host"`
 	Port       int            `mapstructure:"port"`
@@ -61,10 +60,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	v := viper.New()
 
 	// Default values
-	cwd, _ := os.Getwd()
-	defaultContentDir := filepath.Join(cwd, "content")
-
-	v.SetDefault("content_dir", defaultContentDir)
+	// Note: config has no default - it is required
 	v.SetDefault("transport", "stdio")
 	v.SetDefault("host", "0.0.0.0")
 	v.SetDefault("port", 8080)
@@ -82,6 +78,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	// Bind specific env vars for nested config.
 	// BindEnv only returns an error if the key is empty, which cannot happen
 	// with hardcoded keys. Errors are intentionally discarded here.
+	_ = v.BindEnv("config", "ACDC_MCP_CONFIG")
 	_ = v.BindEnv("search.max_results", "ACDC_MCP_SEARCH_MAX_RESULTS")
 	_ = v.BindEnv("search.keywords_boost", "ACDC_MCP_SEARCH_KEYWORDS_BOOST")
 	_ = v.BindEnv("search.name_boost", "ACDC_MCP_SEARCH_NAME_BOOST")
@@ -94,7 +91,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 
 	// Bind CLI flags if provided (highest priority)
 	if flags != nil {
-		_ = v.BindPFlag("content_dir", flags.Lookup("content-dir"))
+		_ = v.BindPFlag("config", flags.Lookup("config"))
 		_ = v.BindPFlag("transport", flags.Lookup("transport"))
 		_ = v.BindPFlag("host", flags.Lookup("host"))
 		_ = v.BindPFlag("port", flags.Lookup("port"))
@@ -141,6 +138,11 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 // ValidateSettings checks for conflicting configurations.
 // Returns an error if the settings contain mutually exclusive or incomplete auth config.
 func ValidateSettings(s *Settings) error {
+	// Validate config path is provided (required)
+	if s.ConfigPath == "" {
+		return errors.New("config path is required (use --config or ACDC_MCP_CONFIG)")
+	}
+
 	// Validate transport type
 	switch s.Transport {
 	case "stdio", "sse":

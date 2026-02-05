@@ -196,7 +196,7 @@ func TestLoadSettingsWithFlags_NilFlags(t *testing.T) {
 // TestLoadSettingsWithFlags_AllFlagTypes verifies all flag types work
 func TestLoadSettingsWithFlags_AllFlagTypes(t *testing.T) {
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	flags.String("content-dir", "", "")
+	flags.String("config", "", "")
 	flags.String("transport", "", "")
 	flags.String("host", "", "")
 	flags.Int("port", 0, "")
@@ -209,7 +209,7 @@ func TestLoadSettingsWithFlags_AllFlagTypes(t *testing.T) {
 	flags.String("auth-basic-password", "", "")
 	flags.StringSlice("auth-api-keys", nil, "")
 
-	_ = flags.Set("content-dir", "/custom/path")
+	_ = flags.Set("config", "/path/to/config.yaml")
 	_ = flags.Set("transport", "stdio")
 	_ = flags.Set("host", "localhost")
 	_ = flags.Set("port", "3000")
@@ -226,8 +226,8 @@ func TestLoadSettingsWithFlags_AllFlagTypes(t *testing.T) {
 		t.Fatalf("Failed to load settings: %v", err)
 	}
 
-	if settings.ContentDir != "/custom/path" {
-		t.Errorf("Expected content-dir '/custom/path', got '%s'", settings.ContentDir)
+	if settings.ConfigPath != "/path/to/config.yaml" {
+		t.Errorf("Expected config '/path/to/config.yaml', got '%s'", settings.ConfigPath)
 	}
 	if settings.Transport != "stdio" {
 		t.Errorf("Expected transport 'stdio', got '%s'", settings.Transport)
@@ -263,15 +263,71 @@ func TestLoadSettingsWithFlags_AllFlagTypes(t *testing.T) {
 
 // --- ValidateSettings Tests ---
 
+func TestValidateSettings_ConfigPathRequired(t *testing.T) {
+	s := &Settings{ConfigPath: "", Transport: "stdio", Auth: AuthSettings{Type: AuthTypeNone}}
+	err := ValidateSettings(s)
+	if err == nil {
+		t.Fatal("Expected error for missing config path")
+	}
+	if !strings.Contains(err.Error(), "config path is required") {
+		t.Errorf("Expected 'config path is required' in error, got: %v", err)
+	}
+}
+
+func TestValidateSettings_ConfigPathFromFlag(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	flags.String("config", "", "")
+	_ = flags.Set("config", "/path/to/config.yaml")
+
+	settings, err := LoadSettingsWithFlags(flags)
+	if err != nil {
+		t.Fatalf("Failed to load settings: %v", err)
+	}
+
+	if settings.ConfigPath != "/path/to/config.yaml" {
+		t.Errorf("Expected config path '/path/to/config.yaml', got '%s'", settings.ConfigPath)
+	}
+}
+
+func TestValidateSettings_ConfigPathFromEnv(t *testing.T) {
+	t.Setenv("ACDC_MCP_CONFIG", "/env/path/config.yaml")
+
+	settings, err := LoadSettings()
+	if err != nil {
+		t.Fatalf("Failed to load settings: %v", err)
+	}
+
+	if settings.ConfigPath != "/env/path/config.yaml" {
+		t.Errorf("Expected config path '/env/path/config.yaml', got '%s'", settings.ConfigPath)
+	}
+}
+
+func TestValidateSettings_ConfigPathFlagOverridesEnv(t *testing.T) {
+	t.Setenv("ACDC_MCP_CONFIG", "/env/path/config.yaml")
+
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	flags.String("config", "", "")
+	_ = flags.Set("config", "/flag/path/config.yaml")
+
+	settings, err := LoadSettingsWithFlags(flags)
+	if err != nil {
+		t.Fatalf("Failed to load settings: %v", err)
+	}
+
+	if settings.ConfigPath != "/flag/path/config.yaml" {
+		t.Errorf("Expected flag config path '/flag/path/config.yaml', got '%s'", settings.ConfigPath)
+	}
+}
+
 func TestValidateSettings_ValidNone(t *testing.T) {
-	s := &Settings{Transport: "stdio", Auth: AuthSettings{Type: AuthTypeNone}}
+	s := &Settings{ConfigPath: "/path/to/config.yaml", Transport: "stdio", Auth: AuthSettings{Type: AuthTypeNone}}
 	if err := ValidateSettings(s); err != nil {
 		t.Errorf("Expected no error for valid none auth, got: %v", err)
 	}
 }
 
 func TestValidateSettings_ValidNone_EmptyType(t *testing.T) {
-	s := &Settings{Transport: "stdio", Auth: AuthSettings{Type: ""}}
+	s := &Settings{ConfigPath: "/path/to/config.yaml", Transport: "stdio", Auth: AuthSettings{Type: ""}}
 	if err := ValidateSettings(s); err != nil {
 		t.Errorf("Expected no error for empty auth type, got: %v", err)
 	}
@@ -279,7 +335,8 @@ func TestValidateSettings_ValidNone_EmptyType(t *testing.T) {
 
 func TestValidateSettings_ValidBasic(t *testing.T) {
 	s := &Settings{
-		Transport: "stdio",
+		ConfigPath: "/path/to/config.yaml",
+		Transport:  "stdio",
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
 			Basic: BasicAuthSettings{
@@ -295,7 +352,8 @@ func TestValidateSettings_ValidBasic(t *testing.T) {
 
 func TestValidateSettings_ValidAPIKey(t *testing.T) {
 	s := &Settings{
-		Transport: "stdio",
+		ConfigPath: "/path/to/config.yaml",
+		Transport:  "stdio",
 		Auth: AuthSettings{
 			Type:    AuthTypeAPIKey,
 			APIKeys: []string{"key1", "key2"},
@@ -314,7 +372,8 @@ func TestValidateSettings_NoneWithCredentials(t *testing.T) {
 		{
 			name: "none with username",
 			settings: Settings{
-				Transport: "stdio",
+				ConfigPath: "/path/to/config.yaml",
+				Transport:  "stdio",
 				Auth: AuthSettings{
 					Type:  AuthTypeNone,
 					Basic: BasicAuthSettings{Username: "admin"},
@@ -324,7 +383,8 @@ func TestValidateSettings_NoneWithCredentials(t *testing.T) {
 		{
 			name: "none with password",
 			settings: Settings{
-				Transport: "stdio",
+				ConfigPath: "/path/to/config.yaml",
+				Transport:  "stdio",
 				Auth: AuthSettings{
 					Type:  AuthTypeNone,
 					Basic: BasicAuthSettings{Password: "secret"},
@@ -334,7 +394,8 @@ func TestValidateSettings_NoneWithCredentials(t *testing.T) {
 		{
 			name: "none with api keys",
 			settings: Settings{
-				Transport: "stdio",
+				ConfigPath: "/path/to/config.yaml",
+				Transport:  "stdio",
 				Auth: AuthSettings{
 					Type:    AuthTypeNone,
 					APIKeys: []string{"key1"},
@@ -358,7 +419,8 @@ func TestValidateSettings_NoneWithCredentials(t *testing.T) {
 
 func TestValidateSettings_BasicAuthMissingUsername(t *testing.T) {
 	s := &Settings{
-		Transport: "stdio",
+		ConfigPath: "/path/to/config.yaml",
+		Transport:  "stdio",
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
 			Basic: BasicAuthSettings{
@@ -377,7 +439,8 @@ func TestValidateSettings_BasicAuthMissingUsername(t *testing.T) {
 
 func TestValidateSettings_BasicAuthMissingPassword(t *testing.T) {
 	s := &Settings{
-		Transport: "stdio",
+		ConfigPath: "/path/to/config.yaml",
+		Transport:  "stdio",
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
 			Basic: BasicAuthSettings{
@@ -393,7 +456,8 @@ func TestValidateSettings_BasicAuthMissingPassword(t *testing.T) {
 
 func TestValidateSettings_BasicAuthWithAPIKeys(t *testing.T) {
 	s := &Settings{
-		Transport: "stdio",
+		ConfigPath: "/path/to/config.yaml",
+		Transport:  "stdio",
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
 			Basic: BasicAuthSettings{
@@ -414,7 +478,8 @@ func TestValidateSettings_BasicAuthWithAPIKeys(t *testing.T) {
 
 func TestValidateSettings_APIKeyMissingKeys(t *testing.T) {
 	s := &Settings{
-		Transport: "stdio",
+		ConfigPath: "/path/to/config.yaml",
+		Transport:  "stdio",
 		Auth: AuthSettings{
 			Type: AuthTypeAPIKey,
 		},
@@ -430,7 +495,8 @@ func TestValidateSettings_APIKeyMissingKeys(t *testing.T) {
 
 func TestValidateSettings_APIKeyWithBasicCreds(t *testing.T) {
 	s := &Settings{
-		Transport: "stdio",
+		ConfigPath: "/path/to/config.yaml",
+		Transport:  "stdio",
 		Auth: AuthSettings{
 			Type:    AuthTypeAPIKey,
 			APIKeys: []string{"key1"},
@@ -450,7 +516,8 @@ func TestValidateSettings_APIKeyWithBasicCreds(t *testing.T) {
 
 func TestValidateSettings_UnknownAuthType(t *testing.T) {
 	s := &Settings{
-		Transport: "stdio",
+		ConfigPath: "/path/to/config.yaml",
+		Transport:  "stdio",
 		Auth: AuthSettings{
 			Type: "oauth",
 		},
@@ -467,14 +534,14 @@ func TestValidateSettings_UnknownAuthType(t *testing.T) {
 // --- Transport Validation Tests ---
 
 func TestValidateSettings_ValidTransportStdio(t *testing.T) {
-	s := &Settings{Transport: "stdio", Auth: AuthSettings{Type: AuthTypeNone}}
+	s := &Settings{ConfigPath: "/path/to/config.yaml", Transport: "stdio", Auth: AuthSettings{Type: AuthTypeNone}}
 	if err := ValidateSettings(s); err != nil {
 		t.Errorf("Expected no error for valid stdio transport, got: %v", err)
 	}
 }
 
 func TestValidateSettings_ValidTransportSSE(t *testing.T) {
-	s := &Settings{Transport: "sse", Auth: AuthSettings{Type: AuthTypeNone}}
+	s := &Settings{ConfigPath: "/path/to/config.yaml", Transport: "sse", Auth: AuthSettings{Type: AuthTypeNone}}
 	if err := ValidateSettings(s); err != nil {
 		t.Errorf("Expected no error for valid sse transport, got: %v", err)
 	}
@@ -494,8 +561,9 @@ func TestValidateSettings_InvalidTransport(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &Settings{
-				Transport: tt.transport,
-				Auth:      AuthSettings{Type: AuthTypeNone},
+				ConfigPath: "/path/to/config.yaml",
+				Transport:  tt.transport,
+				Auth:       AuthSettings{Type: AuthTypeNone},
 			}
 			err := ValidateSettings(s)
 			if err == nil {

@@ -13,7 +13,7 @@ func Log(s *Settings) {
 // LogWithLogger logs the resolved settings using the provided logger
 func LogWithLogger(s *Settings, logger *slog.Logger) {
 	ctx := context.Background()
-	logger.InfoContext(ctx, "Config: content_dir", "value", s.ContentDir)
+	logger.InfoContext(ctx, "Config: config", "value", s.ConfigPath)
 	logger.InfoContext(ctx, "Config: transport", "value", s.Transport)
 	if s.Transport == "sse" {
 		logger.InfoContext(ctx, "Config: host", "value", s.Host)
@@ -71,7 +71,7 @@ func BasicAuthSettingsLogValue(s BasicAuthSettings) slog.Value {
 // SettingsLogValue returns a slog.Value for Settings with masked data
 func SettingsLogValue(s Settings) slog.Value {
 	return slog.GroupValue(
-		slog.String("content_dir", s.ContentDir),
+		slog.String("config", s.ConfigPath),
 		slog.String("transport", s.Transport),
 		slog.String("host", s.Host),
 		slog.Int("port", s.Port),

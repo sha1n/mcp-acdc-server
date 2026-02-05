@@ -14,7 +14,7 @@ func TestRegisterFlags_AllFlagsExist(t *testing.T) {
 		long  string
 		short string
 	}{
-		{"content-dir", "c"},
+		{"config", "c"},
 		{"transport", "t"},
 		{"host", "H"},
 		{"port", "p"},
@@ -49,21 +49,21 @@ func TestRegisterFlags_FlagDescriptions(t *testing.T) {
 	})
 }
 
-func TestCLI_FlagParsing_ContentDir(t *testing.T) {
+func TestCLI_FlagParsing_Config(t *testing.T) {
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	RegisterFlags(flags)
 
-	err := flags.Parse([]string{"--content-dir=/custom/path"})
+	err := flags.Parse([]string{"--config=/path/to/config.yaml"})
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
 
-	val, err := flags.GetString("content-dir")
+	val, err := flags.GetString("config")
 	if err != nil {
 		t.Fatalf("GetString failed: %v", err)
 	}
-	if val != "/custom/path" {
-		t.Errorf("Expected '/custom/path', got '%s'", val)
+	if val != "/path/to/config.yaml" {
+		t.Errorf("Expected '/path/to/config.yaml', got '%s'", val)
 	}
 }
 
