@@ -38,13 +38,13 @@ Hello {{.name}}, welcome to the SSE test!`
 		require.Len(t, result.Prompts, 1)
 
 		prompt := result.Prompts[0]
-		assert.Equal(t, "greeting-prompt", prompt.Name)
+		assert.Equal(t, "docs:greeting-prompt", prompt.Name)
 		assert.Equal(t, "A greeting prompt for SSE testing", prompt.Description)
 	})
 
 	// Test prompts/get via SSE
 	t.Run("prompts/get via SSE", func(t *testing.T) {
-		result, err := client.GetPrompt(ctx, "greeting-prompt", map[string]string{
+		result, err := client.GetPrompt(ctx, "docs:greeting-prompt", map[string]string{
 			"name": "SSE User",
 		})
 		require.NoError(t, err)

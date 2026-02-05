@@ -102,7 +102,7 @@ Hello {{.arg1}}`
 	listResult := listResp["result"].(map[string]interface{})
 	promptsList := listResult["prompts"].([]interface{})
 	assert.Len(t, promptsList, 1)
-	assert.Equal(t, "test-prompt", promptsList[0].(map[string]interface{})["name"])
+	assert.Equal(t, "docs:test-prompt", promptsList[0].(map[string]interface{})["name"])
 
 	// 6. Get Prompt
 	sendRequest(map[string]interface{}{
@@ -110,7 +110,7 @@ Hello {{.arg1}}`
 		"id":      2,
 		"method":  "prompts/get",
 		"params": map[string]interface{}{
-			"name": "test-prompt",
+			"name": "docs:test-prompt",
 			"arguments": map[string]string{
 				"arg1": "ACDC",
 			},

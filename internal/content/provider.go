@@ -2,10 +2,12 @@ package content
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/sha1n/mcp-acdc-server/internal/domain"
 	"gopkg.in/yaml.v3"
 )
 
@@ -15,29 +17,136 @@ type MarkdownWithFrontmatter struct {
 	Content  string
 }
 
-// ContentProvider provider for loading content files
+// ResourceLocation represents a named resource directory
+type ResourceLocation struct {
+	Name string // Content location name
+	Path string // Full path to mcp-resources/ directory
+}
+
+// PromptLocation represents a named prompt directory
+type PromptLocation struct {
+	Name string // Content location name
+	Path string // Full path to mcp-prompts/ directory
+}
+
+// ContentProvider provider for loading content files from multiple locations
 type ContentProvider struct {
-	ContentDir   string
-	ResourcesDir string
-	PromptsDir   string
+	locations []resolvedLocation
 }
 
-// NewContentProvider creates a new ContentProvider
-func NewContentProvider(contentDir string) *ContentProvider {
-	return &ContentProvider{
-		ContentDir:   contentDir,
-		ResourcesDir: filepath.Join(contentDir, "mcp-resources"),
-		PromptsDir:   filepath.Join(contentDir, "mcp-prompts"),
+// resolvedLocation is an internal type with resolved absolute paths
+type resolvedLocation struct {
+	name         string
+	basePath     string // Resolved absolute path to the content location
+	resourcePath string // Resolved absolute path to mcp-resources/
+	promptPath   string // Resolved absolute path to mcp-prompts/ (may not exist)
+	hasPrompts   bool   // Whether mcp-prompts/ exists
+}
+
+// NewContentProvider creates a new ContentProvider with multiple content locations.
+// Paths in locations can be absolute or relative to configDir.
+// Returns an error if any path doesn't exist or lacks an mcp-resources/ directory.
+func NewContentProvider(locations []domain.ContentLocation, configDir string) (*ContentProvider, error) {
+	if len(locations) == 0 {
+		return nil, fmt.Errorf("at least one content location is required")
 	}
+
+	resolved := make([]resolvedLocation, 0, len(locations))
+	seenPaths := make(map[string]string) // resolved path -> location name (for duplicate detection)
+
+	for _, loc := range locations {
+		// Resolve the path
+		basePath := loc.Path
+		if !filepath.IsAbs(basePath) {
+			basePath = filepath.Join(configDir, basePath)
+		}
+
+		// Clean and resolve the path
+		basePath = filepath.Clean(basePath)
+
+		// Resolve symlinks for duplicate detection
+		resolvedBasePath, err := filepath.EvalSymlinks(basePath)
+		if err != nil {
+			// If EvalSymlinks fails, the path likely doesn't exist
+			return nil, fmt.Errorf("content location %q: path does not exist: %s", loc.Name, basePath)
+		}
+
+		// Check for duplicate resolved paths
+		if existingName, exists := seenPaths[resolvedBasePath]; exists {
+			slog.Warn("Duplicate content path detected",
+				"path", resolvedBasePath,
+				"location1", existingName,
+				"location2", loc.Name)
+		}
+		seenPaths[resolvedBasePath] = loc.Name
+
+		// Verify the path exists and is a directory
+		info, err := os.Stat(basePath)
+		if err != nil {
+			return nil, fmt.Errorf("content location %q: path does not exist: %s", loc.Name, basePath)
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("content location %q: path is not a directory: %s", loc.Name, basePath)
+		}
+
+		// Check for mcp-resources/ directory (required)
+		resourcePath := filepath.Join(basePath, "mcp-resources")
+		resourceInfo, err := os.Stat(resourcePath)
+		if err != nil {
+			return nil, fmt.Errorf("content location %q: missing mcp-resources/ directory in %s", loc.Name, basePath)
+		}
+		if !resourceInfo.IsDir() {
+			return nil, fmt.Errorf("content location %q: mcp-resources is not a directory in %s", loc.Name, basePath)
+		}
+
+		// Check for mcp-prompts/ directory (optional)
+		promptPath := filepath.Join(basePath, "mcp-prompts")
+		hasPrompts := false
+		if promptInfo, err := os.Stat(promptPath); err == nil && promptInfo.IsDir() {
+			hasPrompts = true
+		}
+
+		resolved = append(resolved, resolvedLocation{
+			name:         loc.Name,
+			basePath:     basePath,
+			resourcePath: resourcePath,
+			promptPath:   promptPath,
+			hasPrompts:   hasPrompts,
+		})
+	}
+
+	return &ContentProvider{
+		locations: resolved,
+	}, nil
 }
 
-// GetPath returns a path within the content directory
-func (p *ContentProvider) GetPath(parts ...string) string {
-	allParts := append([]string{p.ContentDir}, parts...)
-	return filepath.Join(allParts...)
+// ResourceLocations returns all resource directories with their location names
+func (p *ContentProvider) ResourceLocations() []ResourceLocation {
+	result := make([]ResourceLocation, len(p.locations))
+	for i, loc := range p.locations {
+		result[i] = ResourceLocation{
+			Name: loc.name,
+			Path: loc.resourcePath,
+		}
+	}
+	return result
 }
 
-// LoadText loads a text file
+// PromptLocations returns all prompt directories that exist, with their location names
+func (p *ContentProvider) PromptLocations() []PromptLocation {
+	result := make([]PromptLocation, 0)
+	for _, loc := range p.locations {
+		if loc.hasPrompts {
+			result = append(result, PromptLocation{
+				Name: loc.name,
+				Path: loc.promptPath,
+			})
+		}
+	}
+	return result
+}
+
+// LoadText loads a text file from an absolute path
 func (p *ContentProvider) LoadText(filePath string) (string, error) {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
@@ -46,7 +155,7 @@ func (p *ContentProvider) LoadText(filePath string) (string, error) {
 	return string(content), nil
 }
 
-// LoadYAML loads and parses a YAML file
+// LoadYAML loads and parses a YAML file from an absolute path
 func (p *ContentProvider) LoadYAML(filePath string) (map[string]interface{}, error) {
 	content, err := p.LoadText(filePath)
 	if err != nil {

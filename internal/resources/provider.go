@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -52,11 +53,39 @@ func (p *ResourceProvider) ReadResource(uri string) (string, error) {
 		return "", fmt.Errorf("unknown resource: %s", uri)
 	}
 
-	c, err := content.NewContentProvider("").LoadMarkdownWithFrontmatter(defn.FilePath)
+	// Read the file directly
+	data, err := os.ReadFile(defn.FilePath)
 	if err != nil {
 		return "", err
 	}
-	return c.Content, nil
+
+	// Parse frontmatter to extract content only
+	contentStr := string(data)
+	normalized := strings.ReplaceAll(contentStr, "\r\n", "\n")
+
+	if !strings.HasPrefix(normalized, "---\n") {
+		return contentStr, nil // No frontmatter, return as-is
+	}
+
+	// Find closing delimiter
+	remainder := normalized[4:]
+	if strings.HasPrefix(remainder, "---\n") {
+		return remainder[4:], nil // Empty frontmatter
+	}
+
+	endIndex := strings.Index(remainder, "\n---")
+	if endIndex == -1 {
+		return contentStr, nil // Malformed, return as-is
+	}
+
+	afterDelimiter := endIndex + 4
+	if afterDelimiter < len(remainder) && remainder[afterDelimiter] == '\n' {
+		return remainder[afterDelimiter+1:], nil
+	} else if afterDelimiter >= len(remainder) {
+		return "", nil
+	}
+
+	return contentStr, nil
 }
 
 // StreamResources streams all resource contents to a channel
@@ -68,7 +97,7 @@ func (p *ResourceProvider) StreamResources(ctx context.Context, ch chan<- domain
 		default:
 		}
 
-		content, err := p.ReadResource(defn.URI)
+		resourceContent, err := p.ReadResource(defn.URI)
 		if err != nil {
 			slog.Error("Error reading resource for indexing", "uri", defn.URI, "error", err)
 			continue
@@ -77,8 +106,9 @@ func (p *ResourceProvider) StreamResources(ctx context.Context, ch chan<- domain
 		doc := domain.Document{
 			URI:      defn.URI,
 			Name:     defn.Name,
-			Content:  content,
+			Content:  resourceContent,
 			Keywords: defn.Keywords,
+			Source:   defn.Source,
 		}
 
 		select {
@@ -90,12 +120,26 @@ func (p *ResourceProvider) StreamResources(ctx context.Context, ch chan<- domain
 	return nil
 }
 
-// DiscoverResources discovers resources from markdown files
-func DiscoverResources(cp *content.ContentProvider) ([]ResourceDefinition, error) {
+// DiscoverResources discovers resources from markdown files in multiple locations
+func DiscoverResources(locations []content.ResourceLocation, cp *content.ContentProvider) ([]ResourceDefinition, error) {
 	var definitions []ResourceDefinition
-	resourcesDir := cp.ResourcesDir
 
-	err := filepath.WalkDir(resourcesDir, func(path string, d fs.DirEntry, err error) error {
+	for _, loc := range locations {
+		locDefs, err := discoverResourcesInLocation(loc, cp)
+		if err != nil {
+			return nil, fmt.Errorf("error discovering resources in %s: %w", loc.Name, err)
+		}
+		definitions = append(definitions, locDefs...)
+	}
+
+	return definitions, nil
+}
+
+// discoverResourcesInLocation discovers resources in a single location
+func discoverResourcesInLocation(loc content.ResourceLocation, cp *content.ContentProvider) ([]ResourceDefinition, error) {
+	var definitions []ResourceDefinition
+
+	err := filepath.WalkDir(loc.Path, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -132,8 +176,8 @@ func DiscoverResources(cp *content.ContentProvider) ([]ResourceDefinition, error
 			}
 		}
 
-		// Derive URI
-		relPath, err := filepath.Rel(resourcesDir, path)
+		// Derive URI with source prefix
+		relPath, err := filepath.Rel(loc.Path, path)
 		if err != nil {
 			return err
 		}
@@ -141,7 +185,7 @@ func DiscoverResources(cp *content.ContentProvider) ([]ResourceDefinition, error
 		relPathNoExt := strings.TrimSuffix(relPath, filepath.Ext(relPath))
 		// normalized for URI (slashes)
 		uriPath := filepath.ToSlash(relPathNoExt)
-		uri := fmt.Sprintf("acdc://%s", uriPath)
+		uri := fmt.Sprintf("acdc://%s/%s", loc.Name, uriPath)
 
 		definitions = append(definitions, ResourceDefinition{
 			URI:         uri,
@@ -150,9 +194,10 @@ func DiscoverResources(cp *content.ContentProvider) ([]ResourceDefinition, error
 			MIMEType:    "text/markdown",
 			FilePath:    path,
 			Keywords:    keywords,
+			Source:      loc.Name,
 		})
 
-		slog.Info("Loaded resource", "uri", uri, "name", name)
+		slog.Info("Loaded resource", "uri", uri, "name", name, "source", loc.Name)
 
 		return nil
 	})

@@ -6,11 +6,12 @@ import (
 
 // PromptDefinition definition of an MCP prompt
 type PromptDefinition struct {
-	Name        string
+	Name        string // Namespaced name: "source:promptname"
 	Description string
 	Arguments   []PromptArgument
 	FilePath    string
 	Template    *template.Template
+	Source      string // Content location name
 }
 
 // PromptArgument definition of an MCP prompt argument

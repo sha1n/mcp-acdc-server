@@ -6,6 +6,7 @@ const (
 	FieldName     = "name"
 	FieldContent  = "content"
 	FieldKeywords = "keywords"
+	FieldSource   = "source"
 )
 
 // Document represents a document to index
@@ -14,4 +15,5 @@ type Document struct {
 	Name     string   `json:"name"`
 	Content  string   `json:"content"`
 	Keywords []string `json:"keywords,omitempty"`
+	Source   string   `json:"source,omitempty"`
 }

@@ -30,6 +30,10 @@ This is SSE test content.
 tools:
   - name: search
     description: Search content
+content:
+  - name: docs
+    description: Test documentation
+    path: content
 `
 	contentDir := testkit.CreateTestContentDir(t, &testkit.ContentDirOptions{
 		Metadata: metadata,
@@ -201,7 +205,7 @@ tools:
 
 	// 7. Send resources/read request
 	readResp, err := sendRequest(3, "resources/read", map[string]interface{}{
-		"uri": "acdc://test-resource",
+		"uri": "acdc://docs/test-resource",
 	})
 	if err != nil {
 		t.Fatalf("resources/read failed: %v", err)

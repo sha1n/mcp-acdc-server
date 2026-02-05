@@ -103,7 +103,7 @@ This is the API documentation content.`,
 
 	t.Run("read with valid URI", func(t *testing.T) {
 		result, err := client.CallTool(ctx, "read", map[string]any{
-			"uri": "acdc://api-reference",
+			"uri": "acdc://docs/api-reference",
 		})
 		require.NoError(t, err)
 		require.NotNil(t, result)

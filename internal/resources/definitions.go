@@ -16,4 +16,5 @@ type ResourceDefinition struct {
 	MIMEType    string
 	FilePath    string
 	Keywords    []string // Optional keywords for search boosting
+	Source      string   // Content location name
 }

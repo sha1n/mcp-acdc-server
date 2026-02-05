@@ -223,9 +223,15 @@ func TestDiscoverResources(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cp := content.NewContentProvider(tmp)
+	locations := []domain.ContentLocation{
+		{Name: "docs", Description: "Documentation", Path: tmp},
+	}
+	cp, err := content.NewContentProvider(locations, tmp)
+	if err != nil {
+		t.Fatalf("NewContentProvider error = %v", err)
+	}
 
-	defs, err := DiscoverResources(cp)
+	defs, err := DiscoverResources(cp.ResourceLocations(), cp)
 	if err != nil {
 		t.Fatalf("DiscoverResources error = %v", err)
 	}
@@ -235,17 +241,17 @@ func TestDiscoverResources(t *testing.T) {
 		t.Errorf("DiscoverResources found %d items, want 2", len(defs))
 	}
 
-	// Check URIs (should use forward slashes)
-	// "valid" and "sub/sub"
+	// Check URIs (should use forward slashes with source prefix)
+	// "docs/valid" and "docs/sub/sub"
 	uris := make(map[string]bool)
 	for _, d := range defs {
 		uris[d.URI] = true
 	}
 
-	if !uris["acdc://valid"] {
-		t.Error("Missing acdc://valid")
+	if !uris["acdc://docs/valid"] {
+		t.Errorf("Missing acdc://docs/valid, got %v", uris)
 	}
-	if !uris["acdc://sub/sub"] {
-		t.Error("Missing acdc://sub/sub")
+	if !uris["acdc://docs/sub/sub"] {
+		t.Errorf("Missing acdc://docs/sub/sub, got %v", uris)
 	}
 }

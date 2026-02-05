@@ -117,18 +117,22 @@ type ContentDirOptions struct {
 	Prompts   map[string]string // filename -> content (no prompts if nil)
 }
 
-// DefaultMetadata returns the default test metadata YAML
+// DefaultMetadata returns the default test metadata YAML with content location
 func DefaultMetadata() string {
 	return `server:
   name: test
   version: "1.0"
   instructions: test instructions
 tools: []
+content:
+  - name: docs
+    description: Test documentation
+    path: content
 `
 }
 
 // CreateTestContentDir creates a temp content directory with metadata and optional resources.
-// Returns the content directory path.
+// Returns the config file path (mcp-metadata.yaml).
 func CreateTestContentDir(t testing.TB, opts *ContentDirOptions) string {
 	t.Helper()
 
@@ -145,7 +149,8 @@ func CreateTestContentDir(t testing.TB, opts *ContentDirOptions) string {
 		metadata = opts.Metadata
 	}
 
-	if err := os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadata), 0644); err != nil {
+	configPath := filepath.Join(tempDir, "mcp-metadata.yaml")
+	if err := os.WriteFile(configPath, []byte(metadata), 0644); err != nil {
 		t.Fatalf("Failed to write metadata: %v", err)
 	}
 
@@ -177,7 +182,7 @@ func CreateTestContentDir(t testing.TB, opts *ContentDirOptions) string {
 		}
 	}
 
-	return contentDir
+	return configPath
 }
 
 // FlagOptions configures NewTestFlags
@@ -189,7 +194,7 @@ type FlagOptions struct {
 }
 
 // NewTestFlags creates a configured pflag.FlagSet for testing
-func NewTestFlags(t testing.TB, contentDir string, opts *FlagOptions) *pflag.FlagSet {
+func NewTestFlags(t testing.TB, configPath string, opts *FlagOptions) *pflag.FlagSet {
 	t.Helper()
 
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
@@ -220,7 +225,7 @@ func NewTestFlags(t testing.TB, contentDir string, opts *FlagOptions) *pflag.Fla
 	}
 
 	_ = flags.Set("port", fmt.Sprintf("%d", port))
-	_ = flags.Set("content-dir", contentDir)
+	_ = flags.Set("config", configPath)
 	_ = flags.Set("transport", transport)
 	_ = flags.Set("auth-type", authType)
 	_ = flags.Set("host", host)

@@ -8,7 +8,6 @@ import (
 	"text/template"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/sha1n/mcp-acdc-server/internal/content"
 	"github.com/sha1n/mcp-acdc-server/internal/prompts"
 	"github.com/sha1n/mcp-acdc-server/internal/resources"
 	"github.com/stretchr/testify/assert"
@@ -74,9 +73,6 @@ func TestMakeResourceHandler_Error_NotFound(t *testing.T) {
 }
 
 func TestMakePromptHandler_Success(t *testing.T) {
-	tempDir := t.TempDir()
-	contentProvider := content.NewContentProvider(tempDir)
-
 	tmpl, err := template.New("test-prompt").Parse("Hello {{.name}}!")
 	require.NoError(t, err)
 
@@ -93,7 +89,7 @@ func TestMakePromptHandler_Success(t *testing.T) {
 			},
 			Template: tmpl,
 		},
-	}, contentProvider)
+	})
 
 	handler := makePromptHandler(promptProvider, "test-prompt")
 	require.NotNil(t, handler)
@@ -122,10 +118,7 @@ func TestMakePromptHandler_Success(t *testing.T) {
 }
 
 func TestMakePromptHandler_Error_PromptNotFound(t *testing.T) {
-	tempDir := t.TempDir()
-	contentProvider := content.NewContentProvider(tempDir)
-
-	promptProvider := prompts.NewPromptProvider([]prompts.PromptDefinition{}, contentProvider)
+	promptProvider := prompts.NewPromptProvider([]prompts.PromptDefinition{})
 
 	handler := makePromptHandler(promptProvider, "nonexistent-prompt")
 	require.NotNil(t, handler)
@@ -146,9 +139,6 @@ func TestMakePromptHandler_Error_PromptNotFound(t *testing.T) {
 }
 
 func TestMakePromptHandler_Error_MissingRequiredArgument(t *testing.T) {
-	tempDir := t.TempDir()
-	contentProvider := content.NewContentProvider(tempDir)
-
 	tmpl, err := template.New("test-prompt").Parse("Value: {{.required_arg}}")
 	require.NoError(t, err)
 
@@ -165,7 +155,7 @@ func TestMakePromptHandler_Error_MissingRequiredArgument(t *testing.T) {
 			},
 			Template: tmpl,
 		},
-	}, contentProvider)
+	})
 
 	handler := makePromptHandler(promptProvider, "test-prompt")
 	require.NotNil(t, handler)

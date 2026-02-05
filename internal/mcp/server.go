@@ -20,10 +20,13 @@ const (
 // CreateServer creates and configures the MCP server
 func CreateServer(
 	metadata domain.McpMetadata,
+	instructions string,
 	resourceProvider *resources.ResourceProvider,
 	promptProvider *prompts.PromptProvider,
 	searchService search.Searcher,
 ) *mcp.Server {
+	// Use provided instructions (which may be enhanced with content sources)
+	_ = instructions // Instructions stored for future SDK support
 	// Create server with official SDK
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    metadata.Server.Name,

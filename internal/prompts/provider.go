@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"text/template"
 
@@ -17,11 +16,10 @@ import (
 type PromptProvider struct {
 	definitions []PromptDefinition
 	nameMap     map[string]PromptDefinition
-	cp          *content.ContentProvider
 }
 
 // NewPromptProvider creates a new prompt provider
-func NewPromptProvider(definitions []PromptDefinition, cp *content.ContentProvider) *PromptProvider {
+func NewPromptProvider(definitions []PromptDefinition) *PromptProvider {
 	nameMap := make(map[string]PromptDefinition)
 	for _, d := range definitions {
 		nameMap[d.Name] = d
@@ -29,7 +27,6 @@ func NewPromptProvider(definitions []PromptDefinition, cp *content.ContentProvid
 	return &PromptProvider{
 		definitions: definitions,
 		nameMap:     nameMap,
-		cp:          cp,
 	}
 }
 
@@ -87,22 +84,26 @@ func (p *PromptProvider) GetPrompt(name string, arguments map[string]string) ([]
 	}, nil
 }
 
-// DiscoverPrompts discovers prompts from markdown files
-func DiscoverPrompts(cp *content.ContentProvider) ([]PromptDefinition, error) {
+// DiscoverPrompts discovers prompts from markdown files in multiple locations
+func DiscoverPrompts(locations []content.PromptLocation, cp *content.ContentProvider) ([]PromptDefinition, error) {
 	var definitions []PromptDefinition
-	promptsDir := cp.PromptsDir
 
-	// Ensure directory exists, if not just return empty
-	if _, err := os.Stat(promptsDir); err != nil {
-		if os.IsNotExist(err) {
-			slog.Debug("Prompts directory does not exist", "path", promptsDir)
-			return nil, nil
+	for _, loc := range locations {
+		locDefs, err := discoverPromptsInLocation(loc, cp)
+		if err != nil {
+			return nil, fmt.Errorf("error discovering prompts in %s: %w", loc.Name, err)
 		}
-		slog.Error("Failed to access prompts directory", "path", promptsDir, "error", err)
-		return nil, err
+		definitions = append(definitions, locDefs...)
 	}
 
-	err := filepath.WalkDir(promptsDir, func(path string, d fs.DirEntry, err error) error {
+	return definitions, nil
+}
+
+// discoverPromptsInLocation discovers prompts in a single location
+func discoverPromptsInLocation(loc content.PromptLocation, cp *content.ContentProvider) ([]PromptDefinition, error) {
+	var definitions []PromptDefinition
+
+	err := filepath.WalkDir(loc.Path, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			slog.Error("Error walking prompts directory", "path", path, "error", err)
 			return nil // continue walking
@@ -122,13 +123,16 @@ func DiscoverPrompts(cp *content.ContentProvider) ([]PromptDefinition, error) {
 		}
 
 		// Extract metadata
-		name, _ := md.Metadata["name"].(string)
+		baseName, _ := md.Metadata["name"].(string)
 		description, _ := md.Metadata["description"].(string)
 
-		if name == "" || description == "" {
+		if baseName == "" || description == "" {
 			slog.Warn("Skipping prompt with missing metadata", "file", d.Name())
 			return nil
 		}
+
+		// Create namespaced name
+		namespacedName := fmt.Sprintf("%s:%s", loc.Name, baseName)
 
 		// Extract arguments
 		var arguments []PromptArgument
@@ -153,21 +157,22 @@ func DiscoverPrompts(cp *content.ContentProvider) ([]PromptDefinition, error) {
 		}
 
 		// Parse and cache template
-		tmpl, err := template.New(name).Option("missingkey=zero").Parse(md.Content)
+		tmpl, err := template.New(namespacedName).Option("missingkey=zero").Parse(md.Content)
 		if err != nil {
 			slog.Warn("Skipping prompt with invalid template", "file", d.Name(), "error", err)
 			return nil
 		}
 
 		definitions = append(definitions, PromptDefinition{
-			Name:        name,
+			Name:        namespacedName,
 			Description: description,
 			Arguments:   arguments,
 			FilePath:    path,
 			Template:    tmpl,
+			Source:      loc.Name,
 		})
 
-		slog.Info("Loaded prompt", "name", name)
+		slog.Info("Loaded prompt", "name", namespacedName, "source", loc.Name)
 
 		return nil
 	})

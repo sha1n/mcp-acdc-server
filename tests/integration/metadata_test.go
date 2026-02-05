@@ -18,6 +18,10 @@ func TestInitializeReturnsServerInfo(t *testing.T) {
   version: 2.5.0
   instructions: Custom server instructions for testing
 tools: []
+content:
+  - name: docs
+    description: Test documentation
+    path: content
 `
 	client := testkit.NewStdioTestClient(t, &testkit.ContentDirOptions{
 		Metadata: metadata,
@@ -72,6 +76,10 @@ tools:
     description: "%s"
   - name: read
     description: "%s"
+content:
+  - name: docs
+    description: Test documentation
+    path: content
 `, customSearchDesc, customReadDesc)
 
 	client := testkit.NewStdioTestClient(t, &testkit.ContentDirOptions{
@@ -107,6 +115,10 @@ func TestDefaultToolDescriptions(t *testing.T) {
   version: 1.0.0
   instructions: Test server
 tools: []
+content:
+  - name: docs
+    description: Test documentation
+    path: content
 `
 	client := testkit.NewStdioTestClient(t, &testkit.ContentDirOptions{
 		Metadata: metadata,

@@ -26,10 +26,10 @@ func TestCreateServer(t *testing.T) {
 	}
 
 	resourceProvider := resources.NewResourceProvider([]resources.ResourceDefinition{})
-	promptProvider := prompts.NewPromptProvider([]prompts.PromptDefinition{}, nil)
+	promptProvider := prompts.NewPromptProvider([]prompts.PromptDefinition{})
 	searchService := &mockSearcher{}
 
-	server := CreateServer(metadata, resourceProvider, promptProvider, searchService)
+	server := CreateServer(metadata, "test instructions", resourceProvider, promptProvider, searchService)
 	if server == nil {
 		t.Fatal("Server should not be nil")
 	}

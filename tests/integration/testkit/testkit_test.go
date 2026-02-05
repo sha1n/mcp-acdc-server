@@ -137,14 +137,20 @@ func TestACDCService_Discovery(t *testing.T) {
 	resourcesDir := filepath.Join(contentDir, "mcp-resources")
 	_ = os.MkdirAll(resourcesDir, 0755)
 
-	metadataContent := `server: { name: test, version: 1.0, instructions: inst }`
-	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
+	metadataContent := `server: { name: test, version: 1.0, instructions: inst }
+content:
+  - name: docs
+    description: Test documentation
+    path: content
+`
+	configPath := filepath.Join(tempDir, "mcp-metadata.yaml")
+	_ = os.WriteFile(configPath, []byte(metadataContent), 0644)
 
 	port, _ := GetFreePort()
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	app.RegisterFlags(flags)
 	_ = flags.Set("port", fmt.Sprintf("%d", port))
-	_ = flags.Set("content-dir", contentDir)
+	_ = flags.Set("config", configPath)
 	_ = flags.Set("transport", "sse")
 	_ = flags.Set("auth-type", "none")
 
@@ -261,23 +267,32 @@ func TestMustGetFreePort(t *testing.T) {
 }
 
 func TestCreateTestContentDir_Defaults(t *testing.T) {
-	contentDir := CreateTestContentDir(t, nil)
+	configPath := CreateTestContentDir(t, nil)
 
-	// Verify directory structure
+	// Verify config file exists
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		t.Error("Config file not created")
+	}
+
+	// Verify directory structure (config is in parent dir, content dir is sibling)
+	configDir := filepath.Dir(configPath)
+	contentDir := filepath.Join(configDir, "content")
 	if _, err := os.Stat(contentDir); os.IsNotExist(err) {
 		t.Error("Content dir not created")
 	}
 	if _, err := os.Stat(filepath.Join(contentDir, "mcp-resources")); os.IsNotExist(err) {
 		t.Error("Resources dir not created")
 	}
-	if _, err := os.Stat(filepath.Join(contentDir, "mcp-metadata.yaml")); os.IsNotExist(err) {
-		t.Error("Metadata file not created")
-	}
 }
 
 func TestCreateTestContentDir_WithOptions(t *testing.T) {
 	opts := &ContentDirOptions{
-		Metadata: `server: { name: custom, version: 2.0, instructions: custom }`,
+		Metadata: `server: { name: custom, version: 2.0, instructions: custom }
+content:
+  - name: docs
+    description: Custom documentation
+    path: content
+`,
 		Resources: map[string]string{
 			"test.md": "---\nname: Test\ndescription: Test resource\n---\nContent",
 		},
@@ -285,10 +300,10 @@ func TestCreateTestContentDir_WithOptions(t *testing.T) {
 			"test-prompt.md": "---\nname: TestPrompt\ndescription: Test prompt\n---\nContent",
 		},
 	}
-	contentDir := CreateTestContentDir(t, opts)
+	configPath := CreateTestContentDir(t, opts)
 
 	// Verify custom metadata
-	data, err := os.ReadFile(filepath.Join(contentDir, "mcp-metadata.yaml"))
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatalf("Failed to read metadata: %v", err)
 	}
@@ -296,7 +311,9 @@ func TestCreateTestContentDir_WithOptions(t *testing.T) {
 		t.Errorf("Unexpected metadata: %s", data)
 	}
 
-	// Verify resource file
+	// Verify resource file (content dir is sibling to config file)
+	configDir := filepath.Dir(configPath)
+	contentDir := filepath.Join(configDir, "content")
 	if _, err := os.Stat(filepath.Join(contentDir, "mcp-resources", "test.md")); os.IsNotExist(err) {
 		t.Error("Resource file not created")
 	}
@@ -308,14 +325,14 @@ func TestCreateTestContentDir_WithOptions(t *testing.T) {
 }
 
 func TestNewTestFlags_Defaults(t *testing.T) {
-	contentDir := CreateTestContentDir(t, nil)
-	flags := NewTestFlags(t, contentDir, nil)
+	configPath := CreateTestContentDir(t, nil)
+	flags := NewTestFlags(t, configPath, nil)
 
 	transport, _ := flags.GetString("transport")
 	authType, _ := flags.GetString("auth-type")
 	host, _ := flags.GetString("host")
 	port, _ := flags.GetInt("port")
-	flagContentDir, _ := flags.GetString("content-dir")
+	flagConfig, _ := flags.GetString("config")
 
 	if transport != "sse" {
 		t.Errorf("Expected transport 'sse', got '%s'", transport)
@@ -329,20 +346,20 @@ func TestNewTestFlags_Defaults(t *testing.T) {
 	if port <= 0 {
 		t.Errorf("Expected positive port, got %d", port)
 	}
-	if flagContentDir != contentDir {
-		t.Errorf("Expected content-dir '%s', got '%s'", contentDir, flagContentDir)
+	if flagConfig != configPath {
+		t.Errorf("Expected config '%s', got '%s'", configPath, flagConfig)
 	}
 }
 
 func TestNewTestFlags_WithOptions(t *testing.T) {
-	contentDir := CreateTestContentDir(t, nil)
+	configPath := CreateTestContentDir(t, nil)
 	opts := &FlagOptions{
 		Port:      9999,
 		Transport: "stdio",
 		AuthType:  "apikey",
 		Host:      "127.0.0.1",
 	}
-	flags := NewTestFlags(t, contentDir, opts)
+	flags := NewTestFlags(t, configPath, opts)
 
 	transport, _ := flags.GetString("transport")
 	authType, _ := flags.GetString("auth-type")
@@ -379,14 +396,14 @@ func (m *mockTB) TempDir() string {
 
 func TestCreateTestContentDir_PromptsMkdirError(t *testing.T) {
 	tempDir := t.TempDir()
-	contentDir := filepath.Join(tempDir, "mkdir-err")
-	_ = os.MkdirAll(filepath.Join(contentDir, "content"), 0755)
+	baseDir := filepath.Join(tempDir, "mkdir-err")
+	_ = os.MkdirAll(filepath.Join(baseDir, "content"), 0755)
 
 	// Create a file where a directory is expected to cause MkdirAll failure
-	promptsDir := filepath.Join(contentDir, "content", "mcp-prompts")
+	promptsDir := filepath.Join(baseDir, "content", "mcp-prompts")
 	_ = os.WriteFile(promptsDir, []byte("not a directory"), 0644)
 
-	mt := &mockTB{T: t, tempDir: contentDir}
+	mt := &mockTB{T: t, tempDir: baseDir}
 	opts := &ContentDirOptions{
 		Prompts: map[string]string{"test.md": "content"},
 	}
@@ -400,17 +417,17 @@ func TestCreateTestContentDir_PromptsMkdirError(t *testing.T) {
 
 func TestCreateTestContentDir_PromptsWriteError(t *testing.T) {
 	tempDir := t.TempDir()
-	contentDir := filepath.Join(tempDir, "write-err")
-	_ = os.MkdirAll(filepath.Join(contentDir, "content"), 0755)
+	baseDir := filepath.Join(tempDir, "write-err")
+	_ = os.MkdirAll(filepath.Join(baseDir, "content"), 0755)
 
-	mt := &mockTB{T: t, tempDir: contentDir}
+	mt := &mockTB{T: t, tempDir: baseDir}
 
 	opts := &ContentDirOptions{
 		Prompts: map[string]string{"test.md": "content"},
 	}
 
 	// Create a directory where a file is expected to cause WriteFile failure
-	promptsDir := filepath.Join(contentDir, "content", "mcp-prompts")
+	promptsDir := filepath.Join(baseDir, "content", "mcp-prompts")
 	_ = os.MkdirAll(filepath.Join(promptsDir, "test.md"), 0755)
 
 	CreateTestContentDir(mt, opts)

@@ -7,8 +7,26 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/content"
+	"github.com/sha1n/mcp-acdc-server/internal/domain"
 	"github.com/stretchr/testify/assert"
 )
+
+func createTestContentProvider(t *testing.T, tempDir string) *content.ContentProvider {
+	t.Helper()
+	// Ensure mcp-resources directory exists (required by content provider)
+	resourcesDir := filepath.Join(tempDir, "mcp-resources")
+	if err := os.MkdirAll(resourcesDir, 0755); err != nil {
+		t.Fatalf("Failed to create mcp-resources directory: %v", err)
+	}
+	locations := []domain.ContentLocation{
+		{Name: "test", Description: "Test location", Path: tempDir},
+	}
+	cp, err := content.NewContentProvider(locations, tempDir)
+	if err != nil {
+		t.Fatalf("Failed to create content provider: %v", err)
+	}
+	return cp
+}
 
 func TestDiscoverPrompts(t *testing.T) {
 	t.Run("ValidPrompt", func(t *testing.T) {
@@ -27,11 +45,11 @@ Hello {{.arg1}}`
 		err := os.WriteFile(filepath.Join(promptsDir, "test.md"), []byte(mdContent), 0644)
 		assert.NoError(t, err)
 
-		cp := content.NewContentProvider(tempDir)
-		defs, err := DiscoverPrompts(cp)
+		cp := createTestContentProvider(t, tempDir)
+		defs, err := DiscoverPrompts(cp.PromptLocations(), cp)
 		assert.NoError(t, err)
 		assert.Len(t, defs, 1)
-		assert.Equal(t, "test-prompt", defs[0].Name)
+		assert.Equal(t, "test:test-prompt", defs[0].Name)
 		assert.NotNil(t, defs[0].Template)
 	})
 
@@ -47,16 +65,16 @@ Hello {{.unclosed`
 		err := os.WriteFile(filepath.Join(promptsDir, "bad_tmpl.md"), []byte(mdContent), 0644)
 		assert.NoError(t, err)
 
-		cp := content.NewContentProvider(tempDir)
-		defs, err := DiscoverPrompts(cp)
+		cp := createTestContentProvider(t, tempDir)
+		defs, err := DiscoverPrompts(cp.PromptLocations(), cp)
 		assert.NoError(t, err)
 		assert.Empty(t, defs)
 	})
 
 	t.Run("ResilientWalking", func(t *testing.T) {
 		tempDir := t.TempDir()
-		cp := content.NewContentProvider(tempDir)
-		_, err := DiscoverPrompts(cp)
+		cp := createTestContentProvider(t, tempDir)
+		_, err := DiscoverPrompts(cp.PromptLocations(), cp)
 		assert.NoError(t, err)
 	})
 
@@ -69,11 +87,11 @@ Hello {{.unclosed`
 		_ = os.WriteFile(filepath.Join(subDir, "sub.md"), []byte("---\nname: sub\ndescription: d\n---\nHello"), 0644)
 		_ = os.WriteFile(filepath.Join(promptsDir, "ignore.txt"), []byte("ignore"), 0644)
 
-		cp := content.NewContentProvider(tempDir)
-		defs, err := DiscoverPrompts(cp)
+		cp := createTestContentProvider(t, tempDir)
+		defs, err := DiscoverPrompts(cp.PromptLocations(), cp)
 		assert.NoError(t, err)
 		assert.Len(t, defs, 1)
-		assert.Equal(t, "sub", defs[0].Name)
+		assert.Equal(t, "test:sub", defs[0].Name)
 	})
 
 	t.Run("MissingMetadata", func(t *testing.T) {
@@ -85,8 +103,8 @@ Hello {{.unclosed`
 		// Missing description
 		_ = os.WriteFile(filepath.Join(promptsDir, "no_desc.md"), []byte("---\nname: n\n---\nHello"), 0644)
 
-		cp := content.NewContentProvider(tempDir)
-		defs, err := DiscoverPrompts(cp)
+		cp := createTestContentProvider(t, tempDir)
+		defs, err := DiscoverPrompts(cp.PromptLocations(), cp)
 		assert.NoError(t, err)
 		assert.Empty(t, defs)
 	})
@@ -104,16 +122,16 @@ Hello {{.unclosed`
 		// Arg required explicit false
 		_ = os.WriteFile(filepath.Join(promptsDir, "bad_args4.md"), []byte("---\nname: n4\ndescription: d4\narguments:\n  - name: a4\n    required: false\n---\nHello"), 0644)
 
-		cp := content.NewContentProvider(tempDir)
-		defs, err := DiscoverPrompts(cp)
+		cp := createTestContentProvider(t, tempDir)
+		defs, err := DiscoverPrompts(cp.PromptLocations(), cp)
 		assert.NoError(t, err)
 		assert.Len(t, defs, 4)
 
 		for _, d := range defs {
 			switch d.Name {
-			case "n1", "n2", "n3":
+			case "test:n1", "test:n2", "test:n3":
 				assert.Empty(t, d.Arguments, "Should have no arguments for %s", d.Name)
-			case "n4":
+			case "test:n4":
 				assert.Len(t, d.Arguments, 1)
 				assert.False(t, d.Arguments[0].Required)
 			}
@@ -126,8 +144,8 @@ Hello {{.unclosed`
 		_ = os.MkdirAll(promptsDir, 0755)
 		_ = os.WriteFile(filepath.Join(promptsDir, "invalid_fm.md"), []byte("---\n: broken\n---\nHello"), 0644)
 
-		cp := content.NewContentProvider(tempDir)
-		defs, err := DiscoverPrompts(cp)
+		cp := createTestContentProvider(t, tempDir)
+		defs, err := DiscoverPrompts(cp.PromptLocations(), cp)
 		assert.NoError(t, err)
 		assert.Empty(t, defs)
 	})
@@ -142,39 +160,34 @@ Hello {{.unclosed`
 		_ = os.MkdirAll(subDir, 0000)
 		defer func() { _ = os.Chmod(subDir, 0755) }() // cleanup so TempDir can delete it
 
-		cp := content.NewContentProvider(tempDir)
-		_, err := DiscoverPrompts(cp)
+		cp := createTestContentProvider(t, tempDir)
+		_, err := DiscoverPrompts(cp.PromptLocations(), cp)
 		assert.NoError(t, err) // Should continue walking and not return error
 	})
 
-	t.Run("StatError", func(t *testing.T) {
+	t.Run("EmptyLocations", func(t *testing.T) {
 		tempDir := t.TempDir()
-		cp := content.NewContentProvider(tempDir)
-		// Use a path that is a file to trigger Stat error? No, Stat works on files.
-		// Use a path that is inside a non-existent directory with no permissions?
-		badPath := filepath.Join(tempDir, "unreadable_dir", "prompts")
-		_ = os.MkdirAll(filepath.Join(tempDir, "unreadable_dir"), 0000)
-		defer func() { _ = os.Chmod(filepath.Join(tempDir, "unreadable_dir"), 0755) }()
-
-		cp.PromptsDir = badPath
-		_, err := DiscoverPrompts(cp)
+		locations := []domain.ContentLocation{}
+		_, err := content.NewContentProvider(locations, tempDir)
+		// Empty locations should return an error
 		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "at least one content location is required")
 	})
 }
 
 func TestPromptProvider_GetPrompt(t *testing.T) {
 	tempDir := t.TempDir()
-	cp := content.NewContentProvider(tempDir)
 	promptsDir := filepath.Join(tempDir, "mcp-prompts")
 	_ = os.MkdirAll(promptsDir, 0755)
+	cp := createTestContentProvider(t, tempDir)
 
 	t.Run("Success", func(t *testing.T) {
 		md := "---\nname: test\ndescription: d\n---\nHello {{.name}}"
 		_ = os.WriteFile(filepath.Join(promptsDir, "s.md"), []byte(md), 0644)
-		defs, _ := DiscoverPrompts(cp)
-		p := NewPromptProvider(defs, cp)
+		defs, _ := DiscoverPrompts(cp.PromptLocations(), cp)
+		p := NewPromptProvider(defs)
 
-		messages, err := p.GetPrompt("test", map[string]string{"name": "World"})
+		messages, err := p.GetPrompt("test:test", map[string]string{"name": "World"})
 		assert.NoError(t, err)
 		assert.Len(t, messages, 1)
 		assert.Equal(t, "Hello World", messages[0].Content.(*mcp.TextContent).Text)
@@ -190,10 +203,10 @@ arguments:
 ---
 Hello`
 		_ = os.WriteFile(filepath.Join(promptsDir, "req.md"), []byte(md), 0644)
-		defs, _ := DiscoverPrompts(cp)
-		p := NewPromptProvider(defs, cp)
+		defs, _ := DiscoverPrompts(cp.PromptLocations(), cp)
+		p := NewPromptProvider(defs)
 
-		_, err := p.GetPrompt("req", map[string]string{})
+		_, err := p.GetPrompt("test:req", map[string]string{})
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "missing required argument: arg1")
 	})
@@ -208,10 +221,10 @@ arguments:
 ---
 Hello`
 		_ = os.WriteFile(filepath.Join(promptsDir, "req_empty.md"), []byte(md), 0644)
-		defs, _ := DiscoverPrompts(cp)
-		p := NewPromptProvider(defs, cp)
+		defs, _ := DiscoverPrompts(cp.PromptLocations(), cp)
+		p := NewPromptProvider(defs)
 
-		_, err := p.GetPrompt("req-empty", map[string]string{"arg1": ""})
+		_, err := p.GetPrompt("test:req-empty", map[string]string{"arg1": ""})
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "missing required argument: arg1")
 	})
@@ -219,10 +232,10 @@ Hello`
 	t.Run("OptionalArgumentMissing", func(t *testing.T) {
 		md := "---\nname: optional-arg\ndescription: d\n---\nHello {{.missing}}"
 		_ = os.WriteFile(filepath.Join(promptsDir, "opt.md"), []byte(md), 0644)
-		defs, _ := DiscoverPrompts(cp)
-		p := NewPromptProvider(defs, cp)
+		defs, _ := DiscoverPrompts(cp.PromptLocations(), cp)
+		p := NewPromptProvider(defs)
 
-		messages, err := p.GetPrompt("optional-arg", map[string]string{})
+		messages, err := p.GetPrompt("test:optional-arg", map[string]string{})
 		assert.NoError(t, err)
 		assert.Len(t, messages, 1)
 		// "missing" key resolves to empty string, so "Hello "
@@ -230,7 +243,7 @@ Hello`
 	})
 
 	t.Run("UnknownPrompt", func(t *testing.T) {
-		p := NewPromptProvider(nil, cp)
+		p := NewPromptProvider(nil)
 		_, err := p.GetPrompt("unknown", nil)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "unknown prompt")
@@ -247,7 +260,7 @@ func TestPromptProvider_ListPrompts(t *testing.T) {
 			},
 		},
 	}
-	p := NewPromptProvider(defs, nil)
+	p := NewPromptProvider(defs)
 	list := p.ListPrompts()
 	assert.Len(t, list, 1)
 	assert.Equal(t, "p1", list[0].Name)
