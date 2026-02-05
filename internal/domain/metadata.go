@@ -22,6 +22,7 @@ type ContentLocation struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
 	Path        string `yaml:"path"`
+	Type        string `yaml:"type,omitempty"` // Optional adapter type (e.g., "acdc-mcp", "legacy")
 }
 
 // McpMetadata represents the root of mcp-metadata.yaml

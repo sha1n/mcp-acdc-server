@@ -468,4 +468,30 @@ func TestMcpMetadata_ValidateWithContent(t *testing.T) {
 			t.Errorf("error should mention duplicate name: %v", err)
 		}
 	})
+
+	t.Run("Valid - content with optional adapter type", func(t *testing.T) {
+		meta := McpMetadata{
+			Server: ServerMetadata{Name: "s", Version: "1", Instructions: "i"},
+			Content: []ContentLocation{
+				{Name: "docs", Description: "Documentation", Path: "/path", Type: "acdc-mcp"},
+			},
+		}
+		err := meta.Validate()
+		if err != nil {
+			t.Errorf("unexpected error for valid content with adapter type: %v", err)
+		}
+	})
+
+	t.Run("Valid - content without adapter type (auto-detect)", func(t *testing.T) {
+		meta := McpMetadata{
+			Server: ServerMetadata{Name: "s", Version: "1", Instructions: "i"},
+			Content: []ContentLocation{
+				{Name: "docs", Description: "Documentation", Path: "/path"},
+			},
+		}
+		err := meta.Validate()
+		if err != nil {
+			t.Errorf("unexpected error for valid content without adapter type: %v", err)
+		}
+	})
 }
