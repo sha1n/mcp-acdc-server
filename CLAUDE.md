@@ -39,9 +39,10 @@ make mcp-add-claude-dev
 - `cmd/acdc-mcp/` - CLI entrypoint using Cobra
 - `internal/app/` - Application wiring: CLI flags, server factory, SSE/stdio runners
 - `internal/mcp/` - MCP server creation and tool registration (search, read)
-- `internal/content/` - Content provider for multiple locations
-- `internal/resources/` - Resource discovery and provider (scans `mcp-resources/`)
-- `internal/prompts/` - Prompt discovery and provider (scans `mcp-prompts/`)
+- `internal/adapters/` - **Adapter system for flexible content structures**
+- `internal/content/` - Content provider for multiple locations (structure-agnostic)
+- `internal/resources/` - Resource discovery and provider
+- `internal/prompts/` - Prompt discovery and provider
 - `internal/search/` - Bleve-based search service with source filtering
 - `internal/config/` - Settings loading (viper-based, supports env vars and flags)
 - `internal/auth/` - Authentication middleware (basic, apikey)
@@ -52,7 +53,9 @@ make mcp-add-claude-dev
 1. `cmd/acdc-mcp/main.go` → `app.RunWithDeps()` handles CLI and starts server
 2. `app.CreateMCPServer()` initializes all components:
    - Loads config file (`--config` flag) for server identity and content locations
-   - Discovers resources and prompts from all content locations
+   - Creates adapter registry with ACDC and Legacy adapters
+   - For each content location: resolves adapter (explicit or auto-detect)
+   - Discovers resources and prompts using adapter-based discovery
    - Indexes resources into Bleve search (with source tagging)
    - Creates MCP server with tools and resources
 3. Server runs in either `stdio` mode (default) or `sse` mode (HTTP)
@@ -70,16 +73,40 @@ content:
   - name: docs           # Source identifier (used in URIs)
     description: "Docs"  # Human-readable description
     path: ./docs         # Relative to config file, or absolute
+    type: acdc-mcp       # Optional: adapter type (acdc-mcp, legacy). Omit for auto-detect.
 ```
 
 ### Content Location Structure
 
-Each content location should have:
+ACDC supports two directory structures through an **adapter system**:
+
+**ACDC Native (Preferred):**
+```
+location-path/
+├── resources/           # Markdown resources with YAML frontmatter
+└── prompts/            # Prompt templates (optional)
+```
+
+**Legacy (Backward Compatibility):**
 ```
 location-path/
 ├── mcp-resources/       # Markdown resources with YAML frontmatter
 └── mcp-prompts/         # Prompt templates (optional)
 ```
+
+The server **auto-detects** the structure (checks `resources/` first, falls back to `mcp-resources/`).
+You can explicitly specify the adapter with `type: acdc-mcp` or `type: legacy` in the config.
+
+### Adapter System
+
+The adapter pattern enables flexible content structure support:
+
+- **`acdc-mcp` adapter**: Native structure (`resources/`, `prompts/`)
+- **`legacy` adapter**: Backward compatibility (`mcp-resources/`, `mcp-prompts/`)
+- **Auto-detection**: Inspects directory structure if no type specified
+- **Extensible**: Foundation for future adapters (e.g., Claude Code plugins)
+
+See `internal/adapters/` for adapter implementations.
 
 ### URI Scheme and Namespacing
 
