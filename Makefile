@@ -189,7 +189,7 @@ build-docker:
 .PHONY: mcp-add-claude-dev
 mcp-add-claude-dev: go-build-current
 	@echo "  >  Adding acdc-dev to Claude Code..."
-	claude mcp add --transport stdio acdc-dev $(GOBIN)/$(PROGRAMNAME) -- --content-dir $(GOBASE)/examples/sample-content
+	claude mcp add --transport stdio acdc-dev $(GOBIN)/$(PROGRAMNAME) -- --content-dir $(GOBASE)/examples/sample-content --uri-scheme sha1n
 
 ## mcp-remove-claude-dev: Removes acdc-dev from Claude Code
 .PHONY: mcp-remove-claude-dev
@@ -201,7 +201,7 @@ mcp-remove-claude-dev:
 .PHONY: mcp-add-gemini-dev
 mcp-add-gemini-dev: go-build-current
 	@echo "  >  Adding acdc-dev to Gemini CLI..."
-	gemini mcp add acdc-dev $(GOBIN)/$(PROGRAMNAME) -- --content-dir $(GOBASE)/examples/sample-content
+	gemini mcp add acdc-dev $(GOBIN)/$(PROGRAMNAME) -- --content-dir $(GOBASE)/examples/sample-content --uri-scheme sha1n
 
 ## mcp-remove-gemini-dev: Removes acdc-dev from Gemini CLI
 .PHONY: mcp-remove-gemini-dev

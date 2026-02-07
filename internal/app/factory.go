@@ -39,7 +39,7 @@ func CreateMCPServer(settings *config.Settings) (*mcpsdk.Server, func(), error) 
 	}
 
 	// Discover resources
-	resourceDefinitions, err := resources.DiscoverResources(cp)
+	resourceDefinitions, err := resources.DiscoverResources(cp, settings.Scheme)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to discover resources: %w", err)
 	}

@@ -90,8 +90,9 @@ func (p *ResourceProvider) StreamResources(ctx context.Context, ch chan<- domain
 	return nil
 }
 
-// DiscoverResources discovers resources from markdown files
-func DiscoverResources(cp *content.ContentProvider) ([]ResourceDefinition, error) {
+// DiscoverResources discovers resources from markdown files.
+// The scheme parameter specifies the URI scheme (e.g. "acdc" produces "acdc://...").
+func DiscoverResources(cp *content.ContentProvider, scheme string) ([]ResourceDefinition, error) {
 	var definitions []ResourceDefinition
 	resourcesDir := cp.ResourcesDir
 
@@ -141,7 +142,7 @@ func DiscoverResources(cp *content.ContentProvider) ([]ResourceDefinition, error
 		relPathNoExt := strings.TrimSuffix(relPath, filepath.Ext(relPath))
 		// normalized for URI (slashes)
 		uriPath := filepath.ToSlash(relPathNoExt)
-		uri := fmt.Sprintf("acdc://%s", uriPath)
+		uri := fmt.Sprintf("%s://%s", scheme, uriPath)
 
 		definitions = append(definitions, ResourceDefinition{
 			URI:         uri,

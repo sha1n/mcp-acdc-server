@@ -363,6 +363,29 @@ func TestNewTestFlags_WithOptions(t *testing.T) {
 	}
 }
 
+func TestNewTestFlags_WithScheme(t *testing.T) {
+	contentDir := CreateTestContentDir(t, nil)
+	opts := &FlagOptions{
+		Scheme: "myorg",
+	}
+	flags := NewTestFlags(t, contentDir, opts)
+
+	scheme, _ := flags.GetString("uri-scheme")
+	if scheme != "myorg" {
+		t.Errorf("Expected scheme 'myorg', got '%s'", scheme)
+	}
+}
+
+func TestNewTestFlags_WithoutScheme(t *testing.T) {
+	contentDir := CreateTestContentDir(t, nil)
+	flags := NewTestFlags(t, contentDir, nil)
+
+	scheme, _ := flags.GetString("uri-scheme")
+	if scheme != "" {
+		t.Errorf("Expected empty scheme (use config default), got '%s'", scheme)
+	}
+}
+
 type mockTB struct {
 	*testing.T
 	failed  bool

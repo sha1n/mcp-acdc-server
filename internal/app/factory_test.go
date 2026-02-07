@@ -34,6 +34,7 @@ tools: []
 
 	settings := &config.Settings{
 		ContentDir: contentDir,
+		Scheme:     "acdc",
 		Search: config.SearchSettings{
 			InMemory:   true,
 			MaxResults: 10,
@@ -149,6 +150,7 @@ tools: []
 
 	settings := &config.Settings{
 		ContentDir: contentDir,
+		Scheme:     "acdc",
 		Search: config.SearchSettings{
 			InMemory:   true,
 			MaxResults: 10,
@@ -183,6 +185,7 @@ func TestCreateMCPServer_ResourceWithKeywords(t *testing.T) {
 
 	settings := &config.Settings{
 		ContentDir: contentDir,
+		Scheme:     "acdc",
 		Search:     config.SearchSettings{InMemory: true, MaxResults: 10},
 	}
 
@@ -214,6 +217,7 @@ tools: []
 
 	settings := &config.Settings{
 		ContentDir: contentDir,
+		Scheme:     "acdc",
 		Search: config.SearchSettings{
 			InMemory:   true,
 			MaxResults: 10,
@@ -310,6 +314,7 @@ func TestCreateMCPServer_PromptDiscoveryError(t *testing.T) {
 
 	settings := &config.Settings{
 		ContentDir: contentDir,
+		Scheme:     "acdc",
 		Search:     config.SearchSettings{InMemory: true},
 	}
 

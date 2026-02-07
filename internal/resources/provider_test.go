@@ -225,7 +225,7 @@ func TestDiscoverResources(t *testing.T) {
 
 	cp := content.NewContentProvider(tmp)
 
-	defs, err := DiscoverResources(cp)
+	defs, err := DiscoverResources(cp, "acdc")
 	if err != nil {
 		t.Fatalf("DiscoverResources error = %v", err)
 	}
@@ -247,5 +247,33 @@ func TestDiscoverResources(t *testing.T) {
 	}
 	if !uris["acdc://sub/sub"] {
 		t.Error("Missing acdc://sub/sub")
+	}
+}
+
+func TestDiscoverResources_CustomScheme(t *testing.T) {
+	tmp := t.TempDir()
+	resDir := filepath.Join(tmp, "mcp-resources")
+	if err := os.MkdirAll(resDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	validRes := filepath.Join(resDir, "doc.md")
+	if err := os.WriteFile(validRes, []byte("---\nname: Doc\ndescription: D\n---\nContent"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cp := content.NewContentProvider(tmp)
+
+	defs, err := DiscoverResources(cp, "my-custom")
+	if err != nil {
+		t.Fatalf("DiscoverResources error = %v", err)
+	}
+
+	if len(defs) != 1 {
+		t.Fatalf("DiscoverResources found %d items, want 1", len(defs))
+	}
+
+	if defs[0].URI != "my-custom://doc" {
+		t.Errorf("Expected URI 'my-custom://doc', got '%s'", defs[0].URI)
 	}
 }

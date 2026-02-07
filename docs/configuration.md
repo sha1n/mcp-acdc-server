@@ -19,6 +19,7 @@ When the same setting is specified in multiple places, the following priority ap
 | `--transport` | `-t` | `ACDC_MCP_TRANSPORT` | Transport type: `stdio` or `sse` | `stdio` |
 | `--host` | `-H` | `ACDC_MCP_HOST` | Host for SSE server (SSE mode only) | `0.0.0.0` |
 | `--port` | `-p` | `ACDC_MCP_PORT` | Port for SSE server (SSE mode only) | `8080` |
+| `--uri-scheme` | `-s` | `ACDC_MCP_URI_SCHEME` | URI scheme for resources (e.g. `acdc`, `myorg`) | `acdc` |
 | `--search-max-results` | `-m` | `ACDC_MCP_SEARCH_MAX_RESULTS` | Maximum search results | `10` |
 | `--search-keywords-boost` | — | `ACDC_MCP_SEARCH_KEYWORDS_BOOST` | Boost for keywords matches | `3.0` |
 | `--search-name-boost` | — | `ACDC_MCP_SEARCH_NAME_BOOST` | Boost for name matches | `2.0` |
@@ -50,6 +51,13 @@ When the same setting is specified in multiple places, the following priority ap
 ./bin/acdc-mcp -t sse --port 9000 --auth-type basic -u admin -P secret
 ```
 
+**CLI flags (custom URI scheme):**
+```bash
+./bin/acdc-mcp -c /path/to/content --uri-scheme myorg
+```
+
+This produces resource URIs like `myorg://guides/getting-started` instead of the default `acdc://guides/getting-started`.
+
 **Environment variables:**
 ```bash
 ACDC_MCP_TRANSPORT=sse ACDC_MCP_CONTENT_DIR=/data ./bin/acdc-mcp
@@ -68,6 +76,7 @@ auth.basic.password=secret
 
 The server validates configuration at startup and will fail with a clear error if:
 
+- `--uri-scheme` is empty or doesn't match RFC 3986 (must start with a letter, then letters/digits/`+`/`-`/`.`)
 - `--auth-type=basic` is set without username/password
 - `--auth-type=apikey` is set without API keys
 - `--auth-type=none` is set with auth credentials (conflicting intent)

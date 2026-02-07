@@ -29,6 +29,7 @@ The server is configured via environment variables, command-line flags, or a `.e
 | `ACDC_MCP_AUTH_TYPE` | `--auth-type`, `-a` | Authentication mode for SSE: `none`, `basic`, `apikey`. | `none` |
 | `ACDC_MCP_AUTH_BASIC_USERNAME` | `--auth-basic-username`, `-u` | Username for Basic Auth. | - |
 | `ACDC_MCP_AUTH_BASIC_PASSWORD` | `--auth-basic-password`, `-P` | Password for Basic Auth. | - |
+| `ACDC_MCP_URI_SCHEME` | `--uri-scheme`, `-s` | URI scheme for resource URIs (RFC 3986 compliant). | `acdc` |
 | `ACDC_MCP_AUTH_API_KEYS` | `--auth-api-keys`, `-k` | Comma-separated list of valid API keys for `apikey` auth. | - |
 
 ---
@@ -68,8 +69,10 @@ tools:                  # Optional: Override default tool descriptions
 ### 2. Resources (`mcp-resources/`)
 
 -   **Discovery**: The server recursively scans `mcp-resources/` for `.md` files.
--   **URI Scheme**: `acdc://<relative_path_without_extension>`
+-   **URI Scheme**: `<scheme>://<relative_path_without_extension>` (default scheme: `acdc`)
     -   Example: `mcp-resources/docs/guide.md` -> `acdc://docs/guide`
+    -   With `--uri-scheme myorg`: `mcp-resources/docs/guide.md` -> `myorg://docs/guide`
+    -   The scheme must be RFC 3986 compliant (starts with a letter, followed by letters/digits/`+`/`-`/`.`).
     -   Windows backslashes are normalized to forward slashes.
 -   **File Format**: Must be Markdown with YAML Frontmatter.
 
@@ -120,7 +123,7 @@ Retrieves the full raw content of a resource.
 *   **Input Schema:**
     ```json
     {
-      "uri": "string (Required) - The acdc:// URI of the resource"
+      "uri": "string (Required) - The resource URI (e.g. acdc://path)"
     }
     ```
 *   **Behavior:**
@@ -135,7 +138,7 @@ Retrieves the full raw content of a resource.
 
 In addition to tools, the server exposes resources directly via the MCP `resources/list` capability.
 
-*   **URI**: Same as the `acdc://` URI used in tools.
+*   **URI**: Same as the `<scheme>://` URI used in tools (default scheme: `acdc`).
 *   **Name**: From frontmatter `name`.
 *   **Description**: From frontmatter `description`.
 *   **MIME Type**: `text/markdown`.

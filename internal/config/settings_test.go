@@ -13,6 +13,7 @@ func TestLoadSettings_Defaults(t *testing.T) {
 	// Note: Can't use t.Setenv to clear, so we still need os.Unsetenv here
 	_ = os.Unsetenv("ACDC_MCP_PORT")
 	_ = os.Unsetenv("ACDC_MCP_AUTH_TYPE")
+	_ = os.Unsetenv("ACDC_MCP_URI_SCHEME")
 
 	settings, err := LoadSettings()
 	if err != nil {
@@ -21,6 +22,9 @@ func TestLoadSettings_Defaults(t *testing.T) {
 
 	if settings.Port != 8080 {
 		t.Errorf("Expected default port 8080, got %d", settings.Port)
+	}
+	if settings.Scheme != "acdc" {
+		t.Errorf("Expected default scheme 'acdc', got '%s'", settings.Scheme)
 	}
 	if settings.Auth.Type != AuthTypeNone {
 		t.Errorf("Expected default auth type '%s', got '%s'", AuthTypeNone, settings.Auth.Type)
@@ -264,14 +268,14 @@ func TestLoadSettingsWithFlags_AllFlagTypes(t *testing.T) {
 // --- ValidateSettings Tests ---
 
 func TestValidateSettings_ValidNone(t *testing.T) {
-	s := &Settings{Transport: "stdio", Auth: AuthSettings{Type: AuthTypeNone}}
+	s := &Settings{Transport: "stdio", Scheme: "acdc", Auth: AuthSettings{Type: AuthTypeNone}}
 	if err := ValidateSettings(s); err != nil {
 		t.Errorf("Expected no error for valid none auth, got: %v", err)
 	}
 }
 
 func TestValidateSettings_ValidNone_EmptyType(t *testing.T) {
-	s := &Settings{Transport: "stdio", Auth: AuthSettings{Type: ""}}
+	s := &Settings{Transport: "stdio", Scheme: "acdc", Auth: AuthSettings{Type: ""}}
 	if err := ValidateSettings(s); err != nil {
 		t.Errorf("Expected no error for empty auth type, got: %v", err)
 	}
@@ -280,6 +284,7 @@ func TestValidateSettings_ValidNone_EmptyType(t *testing.T) {
 func TestValidateSettings_ValidBasic(t *testing.T) {
 	s := &Settings{
 		Transport: "stdio",
+		Scheme:    "acdc",
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
 			Basic: BasicAuthSettings{
@@ -296,6 +301,7 @@ func TestValidateSettings_ValidBasic(t *testing.T) {
 func TestValidateSettings_ValidAPIKey(t *testing.T) {
 	s := &Settings{
 		Transport: "stdio",
+		Scheme:    "acdc",
 		Auth: AuthSettings{
 			Type:    AuthTypeAPIKey,
 			APIKeys: []string{"key1", "key2"},
@@ -315,6 +321,7 @@ func TestValidateSettings_NoneWithCredentials(t *testing.T) {
 			name: "none with username",
 			settings: Settings{
 				Transport: "stdio",
+				Scheme:    "acdc",
 				Auth: AuthSettings{
 					Type:  AuthTypeNone,
 					Basic: BasicAuthSettings{Username: "admin"},
@@ -325,6 +332,7 @@ func TestValidateSettings_NoneWithCredentials(t *testing.T) {
 			name: "none with password",
 			settings: Settings{
 				Transport: "stdio",
+				Scheme:    "acdc",
 				Auth: AuthSettings{
 					Type:  AuthTypeNone,
 					Basic: BasicAuthSettings{Password: "secret"},
@@ -335,6 +343,7 @@ func TestValidateSettings_NoneWithCredentials(t *testing.T) {
 			name: "none with api keys",
 			settings: Settings{
 				Transport: "stdio",
+				Scheme:    "acdc",
 				Auth: AuthSettings{
 					Type:    AuthTypeNone,
 					APIKeys: []string{"key1"},
@@ -359,6 +368,7 @@ func TestValidateSettings_NoneWithCredentials(t *testing.T) {
 func TestValidateSettings_BasicAuthMissingUsername(t *testing.T) {
 	s := &Settings{
 		Transport: "stdio",
+		Scheme:    "acdc",
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
 			Basic: BasicAuthSettings{
@@ -378,6 +388,7 @@ func TestValidateSettings_BasicAuthMissingUsername(t *testing.T) {
 func TestValidateSettings_BasicAuthMissingPassword(t *testing.T) {
 	s := &Settings{
 		Transport: "stdio",
+		Scheme:    "acdc",
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
 			Basic: BasicAuthSettings{
@@ -394,6 +405,7 @@ func TestValidateSettings_BasicAuthMissingPassword(t *testing.T) {
 func TestValidateSettings_BasicAuthWithAPIKeys(t *testing.T) {
 	s := &Settings{
 		Transport: "stdio",
+		Scheme:    "acdc",
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
 			Basic: BasicAuthSettings{
@@ -415,6 +427,7 @@ func TestValidateSettings_BasicAuthWithAPIKeys(t *testing.T) {
 func TestValidateSettings_APIKeyMissingKeys(t *testing.T) {
 	s := &Settings{
 		Transport: "stdio",
+		Scheme:    "acdc",
 		Auth: AuthSettings{
 			Type: AuthTypeAPIKey,
 		},
@@ -431,6 +444,7 @@ func TestValidateSettings_APIKeyMissingKeys(t *testing.T) {
 func TestValidateSettings_APIKeyWithBasicCreds(t *testing.T) {
 	s := &Settings{
 		Transport: "stdio",
+		Scheme:    "acdc",
 		Auth: AuthSettings{
 			Type:    AuthTypeAPIKey,
 			APIKeys: []string{"key1"},
@@ -451,6 +465,7 @@ func TestValidateSettings_APIKeyWithBasicCreds(t *testing.T) {
 func TestValidateSettings_UnknownAuthType(t *testing.T) {
 	s := &Settings{
 		Transport: "stdio",
+		Scheme:    "acdc",
 		Auth: AuthSettings{
 			Type: "oauth",
 		},
@@ -467,14 +482,14 @@ func TestValidateSettings_UnknownAuthType(t *testing.T) {
 // --- Transport Validation Tests ---
 
 func TestValidateSettings_ValidTransportStdio(t *testing.T) {
-	s := &Settings{Transport: "stdio", Auth: AuthSettings{Type: AuthTypeNone}}
+	s := &Settings{Transport: "stdio", Scheme: "acdc", Auth: AuthSettings{Type: AuthTypeNone}}
 	if err := ValidateSettings(s); err != nil {
 		t.Errorf("Expected no error for valid stdio transport, got: %v", err)
 	}
 }
 
 func TestValidateSettings_ValidTransportSSE(t *testing.T) {
-	s := &Settings{Transport: "sse", Auth: AuthSettings{Type: AuthTypeNone}}
+	s := &Settings{Transport: "sse", Scheme: "acdc", Auth: AuthSettings{Type: AuthTypeNone}}
 	if err := ValidateSettings(s); err != nil {
 		t.Errorf("Expected no error for valid sse transport, got: %v", err)
 	}
@@ -495,6 +510,7 @@ func TestValidateSettings_InvalidTransport(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &Settings{
 				Transport: tt.transport,
+				Scheme:    "acdc",
 				Auth:      AuthSettings{Type: AuthTypeNone},
 			}
 			err := ValidateSettings(s)
@@ -503,6 +519,87 @@ func TestValidateSettings_InvalidTransport(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "transport must be") {
 				t.Errorf("Expected 'transport must be' in error, got: %v", err)
+			}
+		})
+	}
+}
+
+// --- Scheme Tests ---
+
+func TestLoadSettings_SchemeEnvVar(t *testing.T) {
+	t.Setenv("ACDC_MCP_URI_SCHEME", "custom")
+
+	settings, err := LoadSettings()
+	if err != nil {
+		t.Fatalf("Failed to load settings: %v", err)
+	}
+
+	if settings.Scheme != "custom" {
+		t.Errorf("Expected scheme 'custom', got '%s'", settings.Scheme)
+	}
+}
+
+func TestLoadSettingsWithFlags_SchemeCLIOverridesEnv(t *testing.T) {
+	t.Setenv("ACDC_MCP_URI_SCHEME", "from-env")
+
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	flags.String("uri-scheme", "", "")
+	_ = flags.Set("uri-scheme", "from-cli")
+
+	settings, err := LoadSettingsWithFlags(flags)
+	if err != nil {
+		t.Fatalf("Failed to load settings: %v", err)
+	}
+
+	if settings.Scheme != "from-cli" {
+		t.Errorf("Expected scheme 'from-cli', got '%s'", settings.Scheme)
+	}
+}
+
+func TestValidateSettings_ValidSchemes(t *testing.T) {
+	tests := []struct {
+		name   string
+		scheme string
+	}{
+		{"default acdc", "acdc"},
+		{"with hyphen", "my-scheme"},
+		{"with dot and plus", "x.y+z"},
+		{"uppercase start", "A1"},
+		{"single letter", "x"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &Settings{Transport: "stdio", Scheme: tt.scheme, Auth: AuthSettings{Type: AuthTypeNone}}
+			if err := ValidateSettings(s); err != nil {
+				t.Errorf("Expected no error for scheme %q, got: %v", tt.scheme, err)
+			}
+		})
+	}
+}
+
+func TestValidateSettings_InvalidSchemes(t *testing.T) {
+	tests := []struct {
+		name   string
+		scheme string
+	}{
+		{"empty", ""},
+		{"starts with digit", "123"},
+		{"contains space", "a b"},
+		{"colon-slash-slash", "://"},
+		{"contains colon-slash", "a://b"},
+		{"contains bang", "a!b"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &Settings{Transport: "stdio", Scheme: tt.scheme, Auth: AuthSettings{Type: AuthTypeNone}}
+			err := ValidateSettings(s)
+			if err == nil {
+				t.Fatalf("Expected error for scheme %q", tt.scheme)
+			}
+			if !strings.Contains(err.Error(), "scheme must match") {
+				t.Errorf("Expected 'scheme must match' in error, got: %v", err)
 			}
 		})
 	}

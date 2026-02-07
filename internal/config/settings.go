@@ -4,11 +4,15 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
+
+// schemeRegexp validates URI schemes per RFC 3986: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
+var schemeRegexp = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+\-.]*$`)
 
 // SearchSettings configuration for search service
 type SearchSettings struct {
@@ -45,6 +49,7 @@ type Settings struct {
 	Transport  string         `mapstructure:"transport"`
 	Host       string         `mapstructure:"host"`
 	Port       int            `mapstructure:"port"`
+	Scheme     string         `mapstructure:"uri_scheme"`
 	Search     SearchSettings `mapstructure:"search"`
 	Auth       AuthSettings   `mapstructure:"auth"`
 }
@@ -68,6 +73,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	v.SetDefault("transport", "stdio")
 	v.SetDefault("host", "0.0.0.0")
 	v.SetDefault("port", 8080)
+	v.SetDefault("uri_scheme", "acdc")
 	v.SetDefault("search.max_results", 10)
 	v.SetDefault("search.keywords_boost", 3.0)
 	v.SetDefault("search.name_boost", 2.0)
@@ -87,6 +93,8 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	_ = v.BindEnv("search.name_boost", "ACDC_MCP_SEARCH_NAME_BOOST")
 	_ = v.BindEnv("search.content_boost", "ACDC_MCP_SEARCH_CONTENT_BOOST")
 
+	_ = v.BindEnv("uri_scheme", "ACDC_MCP_URI_SCHEME")
+
 	_ = v.BindEnv("auth.type", "ACDC_MCP_AUTH_TYPE")
 	_ = v.BindEnv("auth.basic.username", "ACDC_MCP_AUTH_BASIC_USERNAME")
 	_ = v.BindEnv("auth.basic.password", "ACDC_MCP_AUTH_BASIC_PASSWORD")
@@ -98,6 +106,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 		_ = v.BindPFlag("transport", flags.Lookup("transport"))
 		_ = v.BindPFlag("host", flags.Lookup("host"))
 		_ = v.BindPFlag("port", flags.Lookup("port"))
+		_ = v.BindPFlag("uri_scheme", flags.Lookup("uri-scheme"))
 		_ = v.BindPFlag("search.max_results", flags.Lookup("search-max-results"))
 		_ = v.BindPFlag("search.keywords_boost", flags.Lookup("search-keywords-boost"))
 		_ = v.BindPFlag("search.name_boost", flags.Lookup("search-name-boost"))
@@ -147,6 +156,11 @@ func ValidateSettings(s *Settings) error {
 		// valid
 	default:
 		return errors.New("transport must be 'stdio' or 'sse', got: " + s.Transport)
+	}
+
+	// Validate URI scheme (RFC 3986: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ))
+	if !schemeRegexp.MatchString(s.Scheme) {
+		return errors.New("scheme must match RFC 3986 (start with a letter, contain only letters, digits, +, -, .), got: " + s.Scheme)
 	}
 
 	hasBasicCreds := s.Auth.Basic.Username != "" || s.Auth.Basic.Password != ""
