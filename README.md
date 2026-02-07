@@ -106,6 +106,7 @@ readinessProbe:
 | `--transport` | `-t` | `ACDC_MCP_TRANSPORT` | `stdio` |
 | `--port` | `-p` | `ACDC_MCP_PORT` | `8080` |
 | `--uri-scheme` | `-s` | `ACDC_MCP_URI_SCHEME` | `acdc` |
+| `--cross-ref` | — | `ACDC_MCP_CROSS_REF` | `false` |
 | `--search-max-results` | `-m` | `ACDC_MCP_SEARCH_MAX_RESULTS` | `10` |
 | `--search-keywords-boost` | — | `ACDC_MCP_SEARCH_KEYWORDS_BOOST` | `3.0` |
 | `--auth-type` | `-a` | `ACDC_MCP_AUTH_TYPE` | `none` |

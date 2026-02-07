@@ -28,9 +28,10 @@ This example demonstrates how to use a pre-built content image (`sha1n/mcp-acdc-
 
 ## 📂 Sample Content
 
-Both examples use the sample resources found in the [**`sample-content/`**](sample-content/) directory:
-- `mcp-metadata.yaml`: Server and tool identity.
-- `mcp-resources/`: Markdown files that the agent can search and read.
+Both examples use the sample content found in the [**`sample-content/`**](sample-content/) directory:
+- `mcp-metadata.yaml`: Server identity, instructions, and tool-description overrides.
+- `mcp-resources/`: Markdown files (with frontmatter and keywords) that the agent can search and read.
+- `mcp-prompts/`: Parameterised prompt templates the agent can invoke.
 
 ## 📖 Related Guides
 

@@ -38,6 +38,9 @@ func TestLoadSettings_Defaults(t *testing.T) {
 	if settings.Search.ContentBoost != 1.0 {
 		t.Errorf("Expected default content boost 1.0, got %f", settings.Search.ContentBoost)
 	}
+	if settings.CrossRef != false {
+		t.Errorf("Expected default cross_ref false, got %v", settings.CrossRef)
+	}
 }
 
 func TestLoadSettings_EnvVars(t *testing.T) {
@@ -521,6 +524,38 @@ func TestValidateSettings_InvalidTransport(t *testing.T) {
 				t.Errorf("Expected 'transport must be' in error, got: %v", err)
 			}
 		})
+	}
+}
+
+// --- Cross-Ref Tests ---
+
+func TestLoadSettings_CrossRefEnvVar(t *testing.T) {
+	t.Setenv("ACDC_MCP_CROSS_REF", "true")
+
+	settings, err := LoadSettings()
+	if err != nil {
+		t.Fatalf("Failed to load settings: %v", err)
+	}
+
+	if !settings.CrossRef {
+		t.Errorf("Expected cross_ref true, got %v", settings.CrossRef)
+	}
+}
+
+func TestLoadSettingsWithFlags_CrossRefCLIOverridesEnv(t *testing.T) {
+	t.Setenv("ACDC_MCP_CROSS_REF", "false")
+
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	flags.Bool("cross-ref", false, "")
+	_ = flags.Set("cross-ref", "true")
+
+	settings, err := LoadSettingsWithFlags(flags)
+	if err != nil {
+		t.Fatalf("Failed to load settings: %v", err)
+	}
+
+	if !settings.CrossRef {
+		t.Errorf("Expected cross_ref true from CLI flag, got %v", settings.CrossRef)
 	}
 }
 

@@ -13,22 +13,42 @@ import (
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
 )
 
+// ContentTransformer transforms resource content before it is returned.
+// It receives the raw content and the definition of the resource being read.
+type ContentTransformer func(content string, def ResourceDefinition) string
+
+// Option configures a ResourceProvider.
+type Option func(*ResourceProvider)
+
+// WithTransformer adds a content transformer to the provider.
+// Multiple transformers are applied in the order they are added.
+func WithTransformer(t ContentTransformer) Option {
+	return func(p *ResourceProvider) {
+		p.transformers = append(p.transformers, t)
+	}
+}
+
 // ResourceProvider provides access to resources
 type ResourceProvider struct {
-	definitions []ResourceDefinition
-	uriMap      map[string]ResourceDefinition
+	definitions  []ResourceDefinition
+	uriMap       map[string]ResourceDefinition
+	transformers []ContentTransformer
 }
 
 // NewResourceProvider creates a new resource provider
-func NewResourceProvider(definitions []ResourceDefinition) *ResourceProvider {
+func NewResourceProvider(definitions []ResourceDefinition, opts ...Option) *ResourceProvider {
 	uriMap := make(map[string]ResourceDefinition)
 	for _, d := range definitions {
 		uriMap[d.URI] = d
 	}
-	return &ResourceProvider{
+	p := &ResourceProvider{
 		definitions: definitions,
 		uriMap:      uriMap,
 	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
 }
 
 // ListResources lists all available resources
@@ -56,7 +76,12 @@ func (p *ResourceProvider) ReadResource(uri string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return c.Content, nil
+
+	result := c.Content
+	for _, t := range p.transformers {
+		result = t(result, defn)
+	}
+	return result, nil
 }
 
 // StreamResources streams all resource contents to a channel
