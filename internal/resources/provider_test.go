@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -183,6 +184,131 @@ func TestResourceProvider_StreamResources_ContextCancellation_Blocked(t *testing
 		}
 	case <-time.After(1 * time.Second):
 		t.Fatal("Timeout waiting for StreamResources to return")
+	}
+}
+
+func TestResourceProvider_NoTransformer(t *testing.T) {
+	tmp := t.TempDir()
+	f := filepath.Join(tmp, "test.md")
+	_ = os.WriteFile(f, []byte("---\nname: N\ndescription: D\n---\nOriginal content"), 0644)
+
+	defs := []ResourceDefinition{
+		{URI: "acdc://test", Name: "Test", FilePath: f},
+	}
+
+	p := NewResourceProvider(defs)
+	got, err := p.ReadResource("acdc://test")
+	if err != nil {
+		t.Fatalf("ReadResource error = %v", err)
+	}
+	if got != "Original content" {
+		t.Errorf("ReadResource = %q, want %q", got, "Original content")
+	}
+}
+
+func TestResourceProvider_SingleTransformer(t *testing.T) {
+	tmp := t.TempDir()
+	f := filepath.Join(tmp, "test.md")
+	_ = os.WriteFile(f, []byte("---\nname: N\ndescription: D\n---\nhello"), 0644)
+
+	defs := []ResourceDefinition{
+		{URI: "acdc://test", Name: "Test", FilePath: f},
+	}
+
+	upper := func(content string, _ ResourceDefinition) string {
+		return strings.ToUpper(content)
+	}
+
+	p := NewResourceProvider(defs, WithTransformer(upper))
+	got, err := p.ReadResource("acdc://test")
+	if err != nil {
+		t.Fatalf("ReadResource error = %v", err)
+	}
+	if got != "HELLO" {
+		t.Errorf("ReadResource = %q, want %q", got, "HELLO")
+	}
+}
+
+func TestResourceProvider_MultipleTransformers(t *testing.T) {
+	tmp := t.TempDir()
+	f := filepath.Join(tmp, "test.md")
+	_ = os.WriteFile(f, []byte("---\nname: N\ndescription: D\n---\nhello"), 0644)
+
+	defs := []ResourceDefinition{
+		{URI: "acdc://test", Name: "Test", FilePath: f},
+	}
+
+	addPrefix := func(content string, _ ResourceDefinition) string {
+		return "prefix:" + content
+	}
+	addSuffix := func(content string, _ ResourceDefinition) string {
+		return content + ":suffix"
+	}
+
+	p := NewResourceProvider(defs, WithTransformer(addPrefix), WithTransformer(addSuffix))
+	got, err := p.ReadResource("acdc://test")
+	if err != nil {
+		t.Fatalf("ReadResource error = %v", err)
+	}
+	if got != "prefix:hello:suffix" {
+		t.Errorf("ReadResource = %q, want %q", got, "prefix:hello:suffix")
+	}
+}
+
+func TestResourceProvider_TransformerReceivesDefinition(t *testing.T) {
+	tmp := t.TempDir()
+	f := filepath.Join(tmp, "test.md")
+	_ = os.WriteFile(f, []byte("---\nname: N\ndescription: D\n---\ncontent"), 0644)
+
+	defs := []ResourceDefinition{
+		{URI: "acdc://test", Name: "TestName", FilePath: f},
+	}
+
+	echoName := func(content string, def ResourceDefinition) string {
+		return content + " from " + def.Name
+	}
+
+	p := NewResourceProvider(defs, WithTransformer(echoName))
+	got, err := p.ReadResource("acdc://test")
+	if err != nil {
+		t.Fatalf("ReadResource error = %v", err)
+	}
+	if got != "content from TestName" {
+		t.Errorf("ReadResource = %q, want %q", got, "content from TestName")
+	}
+}
+
+func TestResourceProvider_StreamResourcesWithTransformer(t *testing.T) {
+	tmp := t.TempDir()
+	f := filepath.Join(tmp, "test.md")
+	_ = os.WriteFile(f, []byte("---\nname: N\ndescription: D\n---\nhello"), 0644)
+
+	defs := []ResourceDefinition{
+		{URI: "acdc://test", Name: "Test", FilePath: f},
+	}
+
+	upper := func(content string, _ ResourceDefinition) string {
+		return strings.ToUpper(content)
+	}
+
+	p := NewResourceProvider(defs, WithTransformer(upper))
+
+	ch := make(chan domain.Document, 10)
+	go func() {
+		defer close(ch)
+		_ = p.StreamResources(context.Background(), ch)
+	}()
+
+	var docs []domain.Document
+	for d := range ch {
+		docs = append(docs, d)
+	}
+
+	if len(docs) != 1 {
+		t.Fatalf("StreamResources returned %d items, want 1", len(docs))
+	}
+	if docs[0].Content != "HELLO" {
+		t.Errorf("StreamResources content = %q, want %q", docs[0].Content, "HELLO")
 	}
 }
 

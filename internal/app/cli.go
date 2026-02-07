@@ -13,6 +13,7 @@ func RegisterFlags(flags *pflag.FlagSet) {
 	flags.Float64("search-name-boost", 0, "Boost for name matches (default: 2.0)")
 	flags.Float64("search-content-boost", 0, "Boost for content matches (default: 1.0)")
 	flags.StringP("uri-scheme", "s", "", "URI scheme for resources (default: acdc)")
+	flags.Bool("cross-ref", false, "Transform relative markdown links to resource URIs (default: false)")
 	flags.StringP("auth-type", "a", "", "Authentication type: none, basic, or apikey (default: none)")
 	flags.StringP("auth-basic-username", "u", "", "Basic auth username")
 	flags.StringP("auth-basic-password", "P", "", "Basic auth password")

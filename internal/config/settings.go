@@ -50,6 +50,7 @@ type Settings struct {
 	Host       string         `mapstructure:"host"`
 	Port       int            `mapstructure:"port"`
 	Scheme     string         `mapstructure:"uri_scheme"`
+	CrossRef   bool           `mapstructure:"cross_ref"`
 	Search     SearchSettings `mapstructure:"search"`
 	Auth       AuthSettings   `mapstructure:"auth"`
 }
@@ -78,6 +79,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	v.SetDefault("search.keywords_boost", 3.0)
 	v.SetDefault("search.name_boost", 2.0)
 	v.SetDefault("search.content_boost", 1.0)
+	v.SetDefault("cross_ref", false)
 	v.SetDefault("auth.type", AuthTypeNone)
 
 	// Environment variables
@@ -94,6 +96,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	_ = v.BindEnv("search.content_boost", "ACDC_MCP_SEARCH_CONTENT_BOOST")
 
 	_ = v.BindEnv("uri_scheme", "ACDC_MCP_URI_SCHEME")
+	_ = v.BindEnv("cross_ref", "ACDC_MCP_CROSS_REF")
 
 	_ = v.BindEnv("auth.type", "ACDC_MCP_AUTH_TYPE")
 	_ = v.BindEnv("auth.basic.username", "ACDC_MCP_AUTH_BASIC_USERNAME")
@@ -107,6 +110,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 		_ = v.BindPFlag("host", flags.Lookup("host"))
 		_ = v.BindPFlag("port", flags.Lookup("port"))
 		_ = v.BindPFlag("uri_scheme", flags.Lookup("uri-scheme"))
+		_ = v.BindPFlag("cross_ref", flags.Lookup("cross-ref"))
 		_ = v.BindPFlag("search.max_results", flags.Lookup("search-max-results"))
 		_ = v.BindPFlag("search.keywords_boost", flags.Lookup("search-keywords-boost"))
 		_ = v.BindPFlag("search.name_boost", flags.Lookup("search-name-boost"))
