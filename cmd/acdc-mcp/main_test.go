@@ -12,6 +12,20 @@ func TestExecute_Help(t *testing.T) {
 	}
 }
 
+func TestExecute_Version(t *testing.T) {
+	err := Execute("v1.2.3", "abc", "acdc-mcp", []string{"--version"})
+	if err != nil {
+		t.Errorf("Execute --version failed: %v", err)
+	}
+}
+
+func TestExecute_VersionShort(t *testing.T) {
+	err := Execute("v1.2.3", "abc", "acdc-mcp", []string{"-v"})
+	if err != nil {
+		t.Errorf("Execute -v failed: %v", err)
+	}
+}
+
 func TestExecute_UnknownFlag(t *testing.T) {
 	// Test unknown flag returns error
 	err := Execute("test", "test", "test", []string{"--unknown-flag"})
@@ -19,6 +33,7 @@ func TestExecute_UnknownFlag(t *testing.T) {
 		t.Error("Expected error for unknown flag")
 	}
 }
+
 func TestExecute_Run(t *testing.T) {
 	// Trigger runWithFlags by providing a valid transport but invalid settings that cause early exit
 	err := Execute("test", "test", "test", []string{"--transport", "sse", "--content-dir", "/non-existent"})

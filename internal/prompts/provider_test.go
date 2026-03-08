@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/content"
 	"github.com/stretchr/testify/assert"
 )
@@ -177,7 +177,7 @@ func TestPromptProvider_GetPrompt(t *testing.T) {
 		messages, err := p.GetPrompt("test", map[string]string{"name": "World"})
 		assert.NoError(t, err)
 		assert.Len(t, messages, 1)
-		assert.Equal(t, "Hello World", messages[0].Content.(mcp.TextContent).Text)
+		assert.Equal(t, "Hello World", messages[0].Content.(*mcp.TextContent).Text)
 	})
 
 	t.Run("RequiredArgumentMissing", func(t *testing.T) {
@@ -216,16 +216,17 @@ Hello`
 		assert.Contains(t, err.Error(), "missing required argument: arg1")
 	})
 
-	t.Run("MissingKeyInTemplate", func(t *testing.T) {
-		md := "---\nname: missing-key\ndescription: d\n---\nHello {{.missing}}"
-		_ = os.WriteFile(filepath.Join(promptsDir, "mk.md"), []byte(md), 0644)
+	t.Run("OptionalArgumentMissing", func(t *testing.T) {
+		md := "---\nname: optional-arg\ndescription: d\n---\nHello {{.missing}}"
+		_ = os.WriteFile(filepath.Join(promptsDir, "opt.md"), []byte(md), 0644)
 		defs, _ := DiscoverPrompts(cp)
 		p := NewPromptProvider(defs, cp)
 
-		_, err := p.GetPrompt("missing-key", map[string]string{})
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to execute prompt template")
-		assert.Contains(t, err.Error(), "map has no entry for key \"missing\"")
+		messages, err := p.GetPrompt("optional-arg", map[string]string{})
+		assert.NoError(t, err)
+		assert.Len(t, messages, 1)
+		// "missing" key resolves to empty string, so "Hello "
+		assert.Equal(t, "Hello ", messages[0].Content.(*mcp.TextContent).Text)
 	})
 
 	t.Run("UnknownPrompt", func(t *testing.T) {

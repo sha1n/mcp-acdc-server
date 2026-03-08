@@ -4,7 +4,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 )
 
@@ -65,7 +65,7 @@ func TestNewSSEServer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mcpSrv := server.NewMCPServer("test", "1.0")
+			mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil)
 			srv, err := NewSSEServer(mcpSrv, tt.settings)
 
 			if tt.wantErr {
@@ -89,7 +89,7 @@ func TestNewSSEServer(t *testing.T) {
 }
 
 func TestStartSSEServer_NewSSEServerError(t *testing.T) {
-	mcpSrv := server.NewMCPServer("test", "1.0")
+	mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil)
 	settings := &config.Settings{
 		Auth: config.AuthSettings{Type: "invalid"},
 	}
@@ -100,7 +100,7 @@ func TestStartSSEServer_NewSSEServerError(t *testing.T) {
 }
 
 func TestStartSSEServer_PortCollision(t *testing.T) {
-	mcpSrv := server.NewMCPServer("test", "1.0")
+	mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil)
 
 	// Bind to a port
 	l, err := net.Listen("tcp", "localhost:0")

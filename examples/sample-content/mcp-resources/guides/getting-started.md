@@ -7,16 +7,23 @@ description: "A quick guide to getting started with MCP ACDC"
 
 Welcome to the **Agent Content Discovery Companion (ACDC)** server!
 
-ACDC is designed to help AI agents discover and search through your local documentation and resources.
+ACDC turns a directory of Markdown files into a fully searchable MCP resource server that any AI agent can query.
 
 ## Key Concepts
 
-- **Resources**: Markdown files organized in your content directory.
-- **Metadata**: An `mcp-metadata.yaml` file that defines your server and tools.
-- **Search**: Full-text search capabilities powered by Bleve.
+- **Resources** — Markdown files with YAML frontmatter. They live under `mcp-resources/` and are exposed via the `resources/list` MCP method.
+- **Prompts** — Template files under `mcp-prompts/` that provide reusable, parameterised instructions an agent can invoke.
+- **Search** — Full-text search powered by Bleve. Every resource is indexed automatically; add `keywords` in frontmatter to boost discoverability.
+- **Metadata** — The `mcp-metadata.yaml` file at the content root defines server identity, instructions, and optional tool-description overrides.
 
-## How to use this example
+## Your First Steps
 
-1. Explore the files in the `mcp-resources` directory.
-2. Observe how YAML frontmatter is used to provide resource metadata.
-3. Use the `search` tool to find content across these files.
+1. Browse the resources in this sample content directory to see how frontmatter and Markdown work together.
+2. Use the `search` tool to find content — try searching for *"configuration"* or *"keywords"*.
+3. Invoke one of the sample prompts (e.g., `explain-topic` with `topic: resources`) to see templated prompts in action.
+
+## Learn More
+
+- [Authoring Content](authoring-content.md) — How to write resources and prompts.
+- [Configuration Reference](../reference/configuration.md) — CLI flags, environment variables, and authentication.
+- [Search Features](../reference/search-features.md) — How the search engine works and how to optimise for it.

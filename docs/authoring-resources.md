@@ -193,13 +193,22 @@ keywords:
 
 ## URI Generation
 
-Resource URIs are automatically generated from the file path:
+Resource URIs are automatically generated from the file path using the configured URI scheme (default: `acdc`):
 
 | File Path                           | Generated URI              |
 | ----------------------------------- | -------------------------- |
 | `mcp-resources/guide.md`            | `acdc://guide`             |
 | `mcp-resources/api/endpoints.md`    | `acdc://api/endpoints`     |
 | `mcp-resources/docs/setup/intro.md` | `acdc://docs/setup/intro`  |
+
+The URI scheme can be customized via the `--uri-scheme` flag or `ACDC_MCP_URI_SCHEME` environment variable. For example, with `--uri-scheme myorg`:
+
+| File Path                           | Generated URI              |
+| ----------------------------------- | -------------------------- |
+| `mcp-resources/guide.md`            | `myorg://guide`            |
+| `mcp-resources/api/endpoints.md`    | `myorg://api/endpoints`    |
+
+See [Configuration Reference](configuration.md) for details.
 
 ## Complete Example
 

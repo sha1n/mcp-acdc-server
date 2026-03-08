@@ -1,12 +1,11 @@
 package app
 
 import (
+	"context"
 	"fmt"
-	"log/slog"
 	"os"
-	"strings"
 
-	"github.com/mark3labs/mcp-go/server"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/content"
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
@@ -18,7 +17,7 @@ import (
 )
 
 // CreateMCPServer initializes the core MCP server components
-func CreateMCPServer(settings *config.Settings) (*server.MCPServer, func(), error) {
+func CreateMCPServer(settings *config.Settings) (*mcpsdk.Server, func(), error) {
 	// Initialize content provider
 	cp := content.NewContentProvider(settings.ContentDir)
 
@@ -40,12 +39,18 @@ func CreateMCPServer(settings *config.Settings) (*server.MCPServer, func(), erro
 	}
 
 	// Discover resources
-	resourceDefinitions, err := resources.DiscoverResources(cp)
+	resourceDefinitions, err := resources.DiscoverResources(cp, settings.Scheme)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to discover resources: %w", err)
 	}
 
-	resourceProvider := resources.NewResourceProvider(resourceDefinitions)
+	var resourceOpts []resources.Option
+	if settings.CrossRef {
+		resourceOpts = append(resourceOpts, resources.WithTransformer(
+			resources.NewCrossRefTransformer(resourceDefinitions, settings.Scheme),
+		))
+	}
+	resourceProvider := resources.NewResourceProvider(resourceDefinitions, resourceOpts...)
 
 	// Discover prompts
 	promptDefinitions, err := prompts.DiscoverPrompts(cp)
@@ -62,26 +67,7 @@ func CreateMCPServer(settings *config.Settings) (*server.MCPServer, func(), erro
 	}
 
 	// Index resources
-	docsToIndex := resourceProvider.GetAllResourceContents()
-	var docs []search.Document
-	for _, d := range docsToIndex {
-		var keywords []string
-		if kw := d[resources.FieldKeywords]; kw != "" {
-			keywords = strings.Split(kw, ",")
-		}
-		docs = append(docs, search.Document{
-			URI:      d[resources.FieldURI],
-			Name:     d[resources.FieldName],
-			Content:  d[resources.FieldContent],
-			Keywords: keywords,
-		})
-	}
-
-	if err := searchService.IndexDocuments(docs); err != nil {
-		slog.Error("Failed to index documents", "error", err)
-	} else if len(docs) > 0 {
-		slog.Info("Indexed documents", "count", len(docs))
-	}
+	IndexResources(context.Background(), resourceProvider, searchService)
 
 	// Create MCP server
 	mcpServer := mcp.CreateServer(metadata, resourceProvider, promptProvider, searchService)

@@ -186,6 +186,7 @@ type FlagOptions struct {
 	Transport string // Defaults to "sse"
 	AuthType  string // Defaults to "none"
 	Host      string // Defaults to "localhost"
+	Scheme    string // Defaults to "" (uses config default "acdc")
 }
 
 // NewTestFlags creates a configured pflag.FlagSet for testing
@@ -215,6 +216,11 @@ func NewTestFlags(t testing.TB, contentDir string, opts *FlagOptions) *pflag.Fla
 		}
 	}
 
+	scheme := ""
+	if opts != nil && opts.Scheme != "" {
+		scheme = opts.Scheme
+	}
+
 	if port == 0 {
 		port = MustGetFreePort(t)
 	}
@@ -224,6 +230,9 @@ func NewTestFlags(t testing.TB, contentDir string, opts *FlagOptions) *pflag.Fla
 	_ = flags.Set("transport", transport)
 	_ = flags.Set("auth-type", authType)
 	_ = flags.Set("host", host)
+	if scheme != "" {
+		_ = flags.Set("uri-scheme", scheme)
+	}
 
 	return flags
 }

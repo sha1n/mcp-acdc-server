@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -9,7 +10,7 @@ import (
 	"github.com/blevesearch/bleve/v2/mapping"
 	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
-	"github.com/sha1n/mcp-acdc-server/internal/resources"
+	"github.com/sha1n/mcp-acdc-server/internal/domain"
 )
 
 // SearchResult represents a search result
@@ -19,19 +20,17 @@ type SearchResult struct {
 	Snippet string
 }
 
-// Document represents a document to index
-type Document struct {
-	URI      string   `json:"uri"`
-	Name     string   `json:"name"`
-	Content  string   `json:"content"`
-	Keywords []string `json:"keywords,omitempty"`
-}
-
 // Searcher interface in search package
 type Searcher interface {
 	Search(queryStr string, limit *int) ([]SearchResult, error)
-	IndexDocuments(documents []Document) error
+	Index(ctx context.Context, documents <-chan domain.Document) error
 	Close()
+}
+
+// BatchIndexer is a subset of bleve.Index needed for batch indexing
+type BatchIndexer interface {
+	NewBatch() *bleve.Batch
+	Batch(b *bleve.Batch) error
 }
 
 // Service search service using Bleve
@@ -51,8 +50,8 @@ func NewService(settings config.SearchSettings) *Service {
 	}
 }
 
-// IndexDocuments indexes a list of documents
-func (s *Service) IndexDocuments(documents []Document) error {
+// Index indexes a stream of documents
+func (s *Service) Index(ctx context.Context, documents <-chan domain.Document) error {
 	// Close existing index if any
 	if s.index != nil {
 		_ = s.index.Close()
@@ -91,19 +90,44 @@ func (s *Service) IndexDocuments(documents []Document) error {
 	}
 	s.index = index
 
+	return s.batchIndex(ctx, s.index, documents)
+}
+
+func (s *Service) batchIndex(ctx context.Context, index BatchIndexer, documents <-chan domain.Document) error {
 	// Batch index
 	batch := index.NewBatch()
-	for _, doc := range documents {
-		if err := batch.Index(doc.URI, doc); err != nil {
-			return fmt.Errorf("failed to add document to batch: %w", err)
+	batchSize := 100 // configurable?
+	count := 0
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case doc, ok := <-documents:
+			if !ok {
+				// Channel closed, flush remaining
+				if count > 0 {
+					if err := index.Batch(batch); err != nil {
+						return fmt.Errorf("failed to execute final batch index: %w", err)
+					}
+				}
+				return nil
+			}
+
+			if err := batch.Index(doc.URI, doc); err != nil {
+				return fmt.Errorf("failed to add document to batch: %w", err)
+			}
+			count++
+
+			if count >= batchSize {
+				if err := index.Batch(batch); err != nil {
+					return fmt.Errorf("failed to execute batch index: %w", err)
+				}
+				batch = index.NewBatch()
+				count = 0
+			}
 		}
 	}
-
-	if err := index.Batch(batch); err != nil {
-		return fmt.Errorf("failed to execute batch index: %w", err)
-	}
-
-	return nil
 }
 
 func buildMapping() mapping.IndexMapping {
@@ -132,10 +156,10 @@ func buildMapping() mapping.IndexMapping {
 	keywordsMapping.Analyzer = "en"
 
 	docMapping := bleve.NewDocumentMapping()
-	docMapping.AddFieldMappingsAt(resources.FieldURI, uriMapping)
-	docMapping.AddFieldMappingsAt(resources.FieldName, nameMapping)
-	docMapping.AddFieldMappingsAt(resources.FieldContent, contentMapping)
-	docMapping.AddFieldMappingsAt(resources.FieldKeywords, keywordsMapping)
+	docMapping.AddFieldMappingsAt(domain.FieldURI, uriMapping)
+	docMapping.AddFieldMappingsAt(domain.FieldName, nameMapping)
+	docMapping.AddFieldMappingsAt(domain.FieldContent, contentMapping)
+	docMapping.AddFieldMappingsAt(domain.FieldKeywords, keywordsMapping)
 
 	mapping := bleve.NewIndexMapping()
 	mapping.DefaultMapping = docMapping
@@ -161,17 +185,17 @@ func (s *Service) Search(queryStr string, limit *int) ([]SearchResult, error) {
 	} else {
 		// Create field-specific queries with boosting and fuzziness
 		nameQuery := bleve.NewMatchQuery(queryStr)
-		nameQuery.SetField(resources.FieldName)
+		nameQuery.SetField(domain.FieldName)
 		nameQuery.SetFuzziness(1)
 		nameQuery.SetBoost(s.settings.NameBoost)
 
 		contentQuery := bleve.NewMatchQuery(queryStr)
-		contentQuery.SetField(resources.FieldContent)
+		contentQuery.SetField(domain.FieldContent)
 		contentQuery.SetFuzziness(1)
 		contentQuery.SetBoost(s.settings.ContentBoost)
 
 		keywordsQuery := bleve.NewMatchQuery(queryStr)
-		keywordsQuery.SetField(resources.FieldKeywords)
+		keywordsQuery.SetField(domain.FieldKeywords)
 		keywordsQuery.SetFuzziness(1)
 		keywordsQuery.SetBoost(s.settings.KeywordsBoost)
 
@@ -181,7 +205,7 @@ func (s *Service) Search(queryStr string, limit *int) ([]SearchResult, error) {
 
 	searchRequest := bleve.NewSearchRequest(q)
 	searchRequest.Size = maxResults
-	searchRequest.Fields = []string{resources.FieldURI, resources.FieldName, resources.FieldContent}
+	searchRequest.Fields = []string{domain.FieldURI, domain.FieldName, domain.FieldContent}
 	searchRequest.Highlight = bleve.NewHighlight()
 
 	searchResult, err := s.index.Search(searchRequest)
@@ -191,20 +215,20 @@ func (s *Service) Search(queryStr string, limit *int) ([]SearchResult, error) {
 
 	results := make([]SearchResult, 0, len(searchResult.Hits))
 	for _, hit := range searchResult.Hits {
-		uri, ok := hit.Fields[resources.FieldURI].(string)
+		uri, ok := hit.Fields[domain.FieldURI].(string)
 		if !ok {
 			slog.Warn("Search hit missing URI field", "id", hit.ID)
 			continue
 		}
 
-		name, ok := hit.Fields[resources.FieldName].(string)
+		name, ok := hit.Fields[domain.FieldName].(string)
 		if !ok || name == "" {
 			name = "Unknown" // Fallback
 		}
 
 		// Improved snippet generation with highlighting
 		snippet := fmt.Sprintf("%s (relevance: %.2f)", name, hit.Score)
-		if fragments, ok := hit.Fragments[resources.FieldContent]; ok && len(fragments) > 0 {
+		if fragments, ok := hit.Fragments[domain.FieldContent]; ok && len(fragments) > 0 {
 			snippet = fmt.Sprintf("%s... (relevance: %.2f)", fragments[0], hit.Score)
 		}
 
