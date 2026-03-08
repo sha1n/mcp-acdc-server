@@ -1,0 +1,34 @@
+{
+	"name": "Go",
+	"image": "mcr.microsoft.com/devcontainers/go:1",
+	"features": {
+		"ghcr.io/devcontainers/features/docker-in-docker:2": {},
+		"ghcr.io/devcontainers/features/github-cli:1": {},
+		"ghcr.io/devcontainers-contrib/features/golangci-lint:1": {},
+		"ghcr.io/devcontainers-contrib/features/goreleaser:1": {}
+	},
+	"customizations": {
+		"vscode": {
+			"settings": {
+				"go.toolsManagement.checkForUpdates": "local",
+				"go.useLanguageServer": true,
+				"go.lintTool": "golangci-lint",
+				"go.lintFlags": [
+					"--fast"
+				],
+				"editor.formatOnSave": true,
+				"editor.codeActionsOnSave": {
+					"source.organizeImports": "explicit"
+				}
+			},
+			"extensions": [
+				"golang.Go",
+				"eamodio.gitlens",
+				"usernamehw.errorlens",
+				"editorconfig.editorconfig"
+			]
+		}
+	},
+	"postCreateCommand": "make install",
+	"remoteUser": "vscode"
+}
