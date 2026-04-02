@@ -60,11 +60,11 @@ func NewSearchToolHandler(searchService search.Searcher) mcp.ToolHandlerFor[Sear
 
 		var sb strings.Builder
 		if len(results) == 0 {
-			sb.WriteString(fmt.Sprintf("No results found for '%s'", args.Query))
+			fmt.Fprintf(&sb, "No results found for '%s'", args.Query)
 		} else {
-			sb.WriteString(fmt.Sprintf("Search results for '%s':\n\n", args.Query))
+			fmt.Fprintf(&sb, "Search results for '%s':\n\n", args.Query)
 			for _, r := range results {
-				sb.WriteString(fmt.Sprintf("- [%s](%s): %s\n\n", r.Name, r.URI, r.Snippet))
+				fmt.Fprintf(&sb, "- [%s](%s): %s\n\n", r.Name, r.URI, r.Snippet)
 			}
 		}
 
