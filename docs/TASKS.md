@@ -19,7 +19,7 @@
 - [x] [CLI] Implement version flags (`--version` / `-v`)
 - [ ] [CONTENT] Support Git repositories as content sources
   - [ ] [CONTENT] Implement scheduled synchronization and re-indexing (Note: Server metadata updates require reconnection)
-- [ ] [SEARCH] Support keyword boosting in the search API, so that agents can improve search quality based on context
+- [x] [SEARCH] Support keyword boosting in the search API, so that agents can improve search quality based on context
 - [ ] [CONTENT] Support additional content file types (e.g. PDF, DOCX, etc.) as MD resource attachments. MD provides context and metadata, attachments provide content.
 - [ ] [AUTH] Add Okta/OAuth2 authentication support
 - [ ] [API] Generate OpenAPI Spec: Auto-generate OpenAPI/Swagger documentation for the SSE HTTP endpoints.
@@ -30,14 +30,14 @@
 
 - [x] Stream Search Indexing: Refactor search indexing to use streaming and batching to prevent OOM on large content repositories.
 - [ ] Stream File Processing: Refactor ContentProvider to stream files instead of reading them entirely into memory (os.ReadFile), improving large file handling.
-- [ ] Define a hard limit on the number of resources that can return from a search query
+- [x] Define a hard limit on the number of resources that can return from a search query
 
 ### Observability
 
 - [ ] [LOGGING] Add more detailed logging
 - [ ] [LOGGING] Research stdio MCPs logging best practices
 - [ ] [LOGGING] Add log level configuration
-- [x] [HEALTH] Consider adding a health check endpoint
+- [x] [HEALTH] Add a health check endpoint (`/health`)
 - [ ] [METRICS] Consider adding a metrics endpoint
   - [ ] [METRICS] Consider OTel based metrics
 
