@@ -33,8 +33,8 @@ func TestLoadSettings_Defaults(t *testing.T) {
 	if settings.Search.KeywordsBoost != 3.0 {
 		t.Errorf("Expected default keywords boost 3.0, got %f", settings.Search.KeywordsBoost)
 	}
-	if settings.Search.NameBoost != 2.0 {
-		t.Errorf("Expected default name boost 2.0, got %f", settings.Search.NameBoost)
+	if settings.Search.TitleBoost != 2.0 {
+		t.Errorf("Expected default title boost 2.0, got %f", settings.Search.TitleBoost)
 	}
 	if settings.Search.ContentBoost != 1.0 {
 		t.Errorf("Expected default content boost 1.0, got %f", settings.Search.ContentBoost)
@@ -217,7 +217,7 @@ func TestLoadSettingsWithFlags_AllFlagTypes(t *testing.T) {
 	flags.Int("port", 0, "")
 	flags.Int("search-max-results", 0, "")
 	flags.Float64("search-keywords-boost", 0, "")
-	flags.Float64("search-name-boost", 0, "")
+	flags.Float64("search-title-boost", 0, "")
 	flags.Float64("search-content-boost", 0, "")
 	flags.String("auth-type", "", "")
 	flags.String("auth-basic-username", "", "")
@@ -230,7 +230,7 @@ func TestLoadSettingsWithFlags_AllFlagTypes(t *testing.T) {
 	_ = flags.Set("port", "3000")
 	_ = flags.Set("search-max-results", "50")
 	_ = flags.Set("search-keywords-boost", "10.0")
-	_ = flags.Set("search-name-boost", "5.0")
+	_ = flags.Set("search-title-boost", "5.0")
 	_ = flags.Set("search-content-boost", "2.0")
 	_ = flags.Set("auth-type", "basic")
 	_ = flags.Set("auth-basic-username", "testuser")
@@ -259,8 +259,8 @@ func TestLoadSettingsWithFlags_AllFlagTypes(t *testing.T) {
 	if settings.Search.KeywordsBoost != 10.0 {
 		t.Errorf("Expected keywords boost 10.0, got %f", settings.Search.KeywordsBoost)
 	}
-	if settings.Search.NameBoost != 5.0 {
-		t.Errorf("Expected name boost 5.0, got %f", settings.Search.NameBoost)
+	if settings.Search.TitleBoost != 5.0 {
+		t.Errorf("Expected title boost 5.0, got %f", settings.Search.TitleBoost)
 	}
 	if settings.Search.ContentBoost != 2.0 {
 		t.Errorf("Expected content boost 2.0, got %f", settings.Search.ContentBoost)
@@ -685,4 +685,34 @@ func TestValidateSettings_InvalidSchemes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoadSettingsWithFlags_SearchTitleBoostFlag(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	flags.Float64("search-title-boost", 0, "")
+	require.NoError(t, flags.Set("search-title-boost", "5.0"))
+
+	settings, err := LoadSettingsWithFlags(flags)
+
+	require.NoError(t, err)
+	require.Equal(t, 5.0, settings.Search.TitleBoost)
+}
+
+func TestLoadSettings_SearchTitleBoostEnvVar(t *testing.T) {
+	t.Setenv("ACDC_MCP_SEARCH_TITLE_BOOST", "4.5")
+
+	settings, err := LoadSettings()
+
+	require.NoError(t, err)
+	require.Equal(t, 4.5, settings.Search.TitleBoost)
+}
+
+// The pre-rename env var is no longer a supported input.
+func TestLoadSettings_SearchTitleBoostIgnoresRetiredNameEnvVar(t *testing.T) {
+	t.Setenv("ACDC_MCP_SEARCH_NAME_BOOST", "9.0")
+
+	settings, err := LoadSettings()
+
+	require.NoError(t, err)
+	require.Equal(t, 2.0, settings.Search.TitleBoost)
 }

@@ -23,7 +23,7 @@ func TestLog(t *testing.T) {
 					MaxResults:    10,
 					InMemory:      true,
 					KeywordsBoost: 1.0,
-					NameBoost:     1.0,
+					TitleBoost:    1.0,
 					ContentBoost:  1.0,
 					ResultMode:    SearchResultModeReferences,
 				},

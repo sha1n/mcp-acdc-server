@@ -66,7 +66,7 @@ func testSettings() config.SearchSettings {
 		InMemory:      true,
 		MaxResults:    10,
 		KeywordsBoost: 3,
-		NameBoost:     2,
+		TitleBoost:    2,
 		ContentBoost:  1,
 	}
 }

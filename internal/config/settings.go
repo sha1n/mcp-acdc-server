@@ -27,7 +27,7 @@ type SearchSettings struct {
 	MaxResults    int              `mapstructure:"max_results"`
 	InMemory      bool             `mapstructure:"in_memory"`
 	KeywordsBoost float64          `mapstructure:"keywords_boost"`
-	NameBoost     float64          `mapstructure:"name_boost"`
+	TitleBoost    float64          `mapstructure:"title_boost"`
 	ContentBoost  float64          `mapstructure:"content_boost"`
 	ResultMode    SearchResultMode `mapstructure:"result_mode"`
 }
@@ -86,7 +86,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	v.SetDefault("uri_scheme", "acdc")
 	v.SetDefault("search.max_results", 10)
 	v.SetDefault("search.keywords_boost", 3.0)
-	v.SetDefault("search.name_boost", 2.0)
+	v.SetDefault("search.title_boost", 2.0)
 	v.SetDefault("search.content_boost", 1.0)
 	v.SetDefault("search.result_mode", SearchResultModeReferences)
 	v.SetDefault("cross_ref", false)
@@ -102,7 +102,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	// with hardcoded keys. Errors are intentionally discarded here.
 	_ = v.BindEnv("search.max_results", "ACDC_MCP_SEARCH_MAX_RESULTS")
 	_ = v.BindEnv("search.keywords_boost", "ACDC_MCP_SEARCH_KEYWORDS_BOOST")
-	_ = v.BindEnv("search.name_boost", "ACDC_MCP_SEARCH_NAME_BOOST")
+	_ = v.BindEnv("search.title_boost", "ACDC_MCP_SEARCH_TITLE_BOOST")
 	_ = v.BindEnv("search.content_boost", "ACDC_MCP_SEARCH_CONTENT_BOOST")
 	_ = v.BindEnv("search.result_mode", "ACDC_MCP_SEARCH_RESULT_MODE")
 
@@ -124,7 +124,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 		_ = v.BindPFlag("cross_ref", flags.Lookup("cross-ref"))
 		_ = v.BindPFlag("search.max_results", flags.Lookup("search-max-results"))
 		_ = v.BindPFlag("search.keywords_boost", flags.Lookup("search-keywords-boost"))
-		_ = v.BindPFlag("search.name_boost", flags.Lookup("search-name-boost"))
+		_ = v.BindPFlag("search.title_boost", flags.Lookup("search-title-boost"))
 		_ = v.BindPFlag("search.content_boost", flags.Lookup("search-content-boost"))
 		_ = v.BindPFlag("search.result_mode", flags.Lookup("search-result-mode"))
 		_ = v.BindPFlag("auth.type", flags.Lookup("auth-type"))
