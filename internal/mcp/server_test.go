@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
 	"github.com/sha1n/mcp-acdc-server/internal/prompts"
 	"github.com/sha1n/mcp-acdc-server/internal/resources"
@@ -32,7 +33,7 @@ func TestCreateServer(t *testing.T) {
 	promptProvider := prompts.NewPromptProvider([]prompts.PromptDefinition{}, nil)
 	searchService := &mockSearcher{}
 
-	server := CreateServer(metadata, resourceProvider, promptProvider, searchService)
+	server := CreateServer(metadata, resourceProvider, promptProvider, searchService, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences})
 	if server == nil {
 		t.Fatal("Server should not be nil")
 	}

@@ -2,11 +2,10 @@ package mcp
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
 	"github.com/sha1n/mcp-acdc-server/internal/resources"
 	"github.com/sha1n/mcp-acdc-server/internal/search"
@@ -23,14 +22,14 @@ type ReadToolArgument struct {
 }
 
 // RegisterSearchTool registers the search tool with the server
-func RegisterSearchTool(s *mcp.Server, searchService search.Searcher, metadata domain.ToolMetadata) {
+func RegisterSearchTool(s *mcp.Server, searchService search.Searcher, settings config.SearchSettings, metadata domain.ToolMetadata) {
 	mcp.AddTool(s,
 		&mcp.Tool{
 			Name:        metadata.Name,
 			Description: metadata.Description,
 			// InputSchema auto-generated from SearchToolArgument
 		},
-		NewSearchToolHandler(searchService),
+		NewSearchToolHandler(searchService, settings),
 	)
 }
 
@@ -47,30 +46,22 @@ func RegisterReadTool(s *mcp.Server, resourceProvider *resources.ResourceProvide
 }
 
 // NewSearchToolHandler creates the handler for the search tool
-func NewSearchToolHandler(searchService search.Searcher) mcp.ToolHandlerFor[SearchToolArgument, any] {
+func NewSearchToolHandler(searchService search.Searcher, settings config.SearchSettings) mcp.ToolHandlerFor[SearchToolArgument, any] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, args SearchToolArgument) (*mcp.CallToolResult, any, error) {
 		// Args are already validated and unmarshaled by SDK via jsonschema tags
 		slog.Info("Search request", "query", args.Query)
 
-		results, err := searchService.Search(args.Query, 0)
+		results, err := searchService.Search(args.Query, settings.MaxResults*candidateMultiplier)
 		if err != nil {
 			slog.Error("Search failed", "query", args.Query, "error", err)
 			return nil, nil, err
 		}
 
-		var sb strings.Builder
-		if len(results) == 0 {
-			fmt.Fprintf(&sb, "No results found for '%s'", args.Query)
-		} else {
-			fmt.Fprintf(&sb, "Search results for '%s':\n\n", args.Query)
-			for _, r := range results {
-				fmt.Fprintf(&sb, "- [%s](%s): %s\n\n", r.SourceTitle, r.SourceURI, r.Snippet)
-			}
-		}
+		selected := selectSearchResults(results, settings.ResultMode, settings.MaxResults)
 
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
-				&mcp.TextContent{Text: sb.String()},
+				&mcp.TextContent{Text: formatSearchResults(args.Query, selected, settings.ResultMode)},
 			},
 		}, nil, nil
 	}

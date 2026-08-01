@@ -4,6 +4,7 @@ import (
 	"log/slog"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
 	"github.com/sha1n/mcp-acdc-server/internal/prompts"
 	"github.com/sha1n/mcp-acdc-server/internal/resources"
@@ -23,6 +24,7 @@ func CreateServer(
 	resourceProvider *resources.ResourceProvider,
 	promptProvider *prompts.PromptProvider,
 	searchService search.Searcher,
+	searchSettings config.SearchSettings,
 ) *mcp.Server {
 	// Create server with official SDK
 	s := mcp.NewServer(&mcp.Implementation{
@@ -59,7 +61,7 @@ func CreateServer(
 	}
 
 	// Register Tools
-	RegisterSearchTool(s, searchService, metadata.GetToolMetadata(ToolNameSearch))
+	RegisterSearchTool(s, searchService, searchSettings, metadata.GetToolMetadata(ToolNameSearch))
 	slog.Info("Registered tool", "name", ToolNameSearch)
 
 	RegisterReadTool(s, resourceProvider, metadata.GetToolMetadata(ToolNameRead))
