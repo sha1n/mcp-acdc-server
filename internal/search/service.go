@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
@@ -50,6 +51,7 @@ type BatchIndexer interface {
 
 // Service search service using Bleve
 type Service struct {
+	mu           sync.RWMutex
 	settings     config.SearchSettings
 	index        bleve.Index
 	indexDir     string
@@ -69,49 +71,65 @@ func NewService(settings config.SearchSettings) *Service {
 
 // Index rebuilds the index from a stream of chunks.
 func (s *Service) Index(ctx context.Context, chunks <-chan domain.Chunk) error {
-	// Close existing index if any
-	if s.index != nil {
-		_ = s.index.Close()
-		s.index = nil
-	}
-	if s.indexDir != "" {
-		_ = os.RemoveAll(s.indexDir)
-	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	// Define mapping
-	indexMapping := buildMapping()
-
-	var index bleve.Index
-	var err error
-
-	if s.settings.InMemory {
-		index, err = bleve.NewMemOnly(indexMapping)
-	} else {
-		// Create temp dir
-		var mkErr error
-		tempDir, mkErr := os.MkdirTemp("", "acdc_search_")
-		if mkErr != nil {
-			return fmt.Errorf("failed to create temp dir: %w", mkErr)
-		}
-		// bleve.New requires the directory to not exist
-		if rmErr := os.RemoveAll(tempDir); rmErr != nil {
-			return fmt.Errorf("failed to remove temp dir: %w", rmErr)
-		}
-		s.indexDir = tempDir
-
-		index, err = bleve.New(s.indexDir, indexMapping)
-	}
-
+	index, indexDir, err := s.newIndex()
 	if err != nil {
-		return fmt.Errorf("failed to create index: %w", err)
+		return err
 	}
-	s.index = index
-	s.sourceChunks = make(map[string][]string)
+	newSourceChunks := make(map[string][]string)
+	if err := batchIndex(ctx, index, chunks, newSourceChunks); err != nil {
+		_ = index.Close()
+		if indexDir != "" {
+			_ = os.RemoveAll(indexDir)
+		}
+		return err
+	}
 
-	return s.batchIndex(ctx, s.index, chunks)
+	oldIndex, oldIndexDir := s.index, s.indexDir
+	s.index = index
+	s.indexDir = indexDir
+	s.sourceChunks = newSourceChunks
+	if oldIndex != nil {
+		_ = oldIndex.Close()
+	}
+	if oldIndexDir != "" && oldIndexDir != indexDir {
+		_ = os.RemoveAll(oldIndexDir)
+	}
+	return nil
+}
+
+func (s *Service) newIndex() (bleve.Index, string, error) {
+	indexMapping := buildMapping()
+	if s.settings.InMemory {
+		index, err := bleve.NewMemOnly(indexMapping)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to create index: %w", err)
+		}
+		return index, "", nil
+	}
+
+	indexDir, err := os.MkdirTemp("", "acdc_search_")
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	if err := os.RemoveAll(indexDir); err != nil {
+		return nil, "", fmt.Errorf("failed to remove temp dir: %w", err)
+	}
+	index, err := bleve.New(indexDir, indexMapping)
+	if err != nil {
+		_ = os.RemoveAll(indexDir)
+		return nil, "", fmt.Errorf("failed to create index: %w", err)
+	}
+	return index, indexDir, nil
 }
 
 func (s *Service) batchIndex(ctx context.Context, index BatchIndexer, chunks <-chan domain.Chunk) error {
+	return batchIndex(ctx, index, chunks, s.sourceChunks)
+}
+
+func batchIndex(ctx context.Context, index BatchIndexer, chunks <-chan domain.Chunk, sourceChunks map[string][]string) error {
 	batch := index.NewBatch()
 	batchSize := 100
 	count := 0
@@ -127,7 +145,7 @@ func (s *Service) batchIndex(ctx context.Context, index BatchIndexer, chunks <-c
 					if err := index.Batch(batch); err != nil {
 						return fmt.Errorf("failed to execute final batch index: %w", err)
 					}
-					s.addSourceChunks(pendingSources)
+					addSourceChunks(sourceChunks, pendingSources)
 				}
 				return nil
 			}
@@ -142,7 +160,7 @@ func (s *Service) batchIndex(ctx context.Context, index BatchIndexer, chunks <-c
 				if err := index.Batch(batch); err != nil {
 					return fmt.Errorf("failed to execute batch index: %w", err)
 				}
-				s.addSourceChunks(pendingSources)
+				addSourceChunks(sourceChunks, pendingSources)
 				batch = index.NewBatch()
 				count = 0
 				pendingSources = make(map[string][]string)
@@ -151,9 +169,9 @@ func (s *Service) batchIndex(ctx context.Context, index BatchIndexer, chunks <-c
 	}
 }
 
-func (s *Service) addSourceChunks(sourceChunks map[string][]string) {
+func addSourceChunks(destination, sourceChunks map[string][]string) {
 	for sourceID, chunkIDs := range sourceChunks {
-		s.sourceChunks[sourceID] = append(s.sourceChunks[sourceID], chunkIDs...)
+		destination[sourceID] = append(destination[sourceID], chunkIDs...)
 	}
 }
 
@@ -200,6 +218,9 @@ func buildMapping() mapping.IndexMapping {
 
 // Search finds chunks matching query.
 func (s *Service) Search(queryStr string, candidateLimit int) ([]SearchResult, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	if s.index == nil {
 		return []SearchResult{}, nil
 	}
@@ -320,6 +341,9 @@ func fieldInt(fields map[string]interface{}, field string) int {
 
 // ReplaceSource atomically removes a source's known chunks and indexes its replacements.
 func (s *Service) ReplaceSource(ctx context.Context, sourceID string, chunks []domain.Chunk) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -350,6 +374,9 @@ func (s *Service) ReplaceSource(ctx context.Context, sourceID string, chunks []d
 
 // DeleteSource atomically removes all known chunks for sourceID.
 func (s *Service) DeleteSource(ctx context.Context, sourceID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -374,16 +401,24 @@ func (s *Service) DeleteSource(ctx context.Context, sourceID string) error {
 
 // Close cleans up resources
 func (s *Service) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.index != nil {
 		_ = s.index.Close()
+		s.index = nil
 	}
 	if s.indexDir != "" {
 		_ = os.RemoveAll(s.indexDir)
+		s.indexDir = ""
 	}
 }
 
 // DocCount returns number of docs in index
 func (s *Service) DocCount() (uint64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	if s.index == nil {
 		return 0, nil
 	}

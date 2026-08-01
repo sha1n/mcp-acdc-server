@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/blevesearch/bleve/v2"
@@ -193,6 +194,48 @@ func TestService_Index_ContextCancellation(t *testing.T) {
 	require.ErrorIs(t, service.Index(ctx, make(chan domain.Chunk)), context.Canceled)
 }
 
+func TestService_Index_FailedRebuildPreservesExistingIndex(t *testing.T) {
+	tests := []struct {
+		name   string
+		stream func(t *testing.T) (context.Context, <-chan domain.Chunk)
+	}{
+		{
+			name: "cancellation",
+			stream: func(t *testing.T) (context.Context, <-chan domain.Chunk) {
+				t.Helper()
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				return ctx, make(chan domain.Chunk)
+			},
+		},
+		{
+			name: "batch failure",
+			stream: func(t *testing.T) (context.Context, <-chan domain.Chunk) {
+				t.Helper()
+				chunks := make(chan domain.Chunk, 1)
+				chunks <- domain.Chunk{Content: "invalid"}
+				close(chunks)
+				return context.Background(), chunks
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := NewService(testSettings())
+			defer service.Close()
+			indexChunks(t, service, []domain.Chunk{{ID: "stable", SourceID: "source", SourceURI: "acdc://source", ChunkURI: "acdc://source#stable", Content: "stable content"}})
+
+			ctx, chunks := tt.stream(t)
+			require.Error(t, service.Index(ctx, chunks))
+			results, err := service.Search("stable", 10)
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			require.Equal(t, "stable", results[0].ChunkID)
+		})
+	}
+}
+
 func TestService_BatchIndexFailures(t *testing.T) {
 	service := NewService(testSettings())
 	defer service.Close()
@@ -270,6 +313,42 @@ func TestService_ReplaceSource_InvalidChunkPreservesExistingSource(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	require.Equal(t, "old", results[0].ChunkID)
+}
+
+func TestService_ReplaceSource_SerializesConcurrentMutations(t *testing.T) {
+	service := NewService(testSettings())
+	defer service.Close()
+	indexChunks(t, service, []domain.Chunk{{ID: "old", SourceID: "source", SourceURI: "acdc://source", ChunkURI: "acdc://source#old", Content: "legacy"}})
+
+	const replacements = 32
+	start := make(chan struct{})
+	errs := make(chan error, replacements)
+	var wait sync.WaitGroup
+	for i := 0; i < replacements; i++ {
+		wait.Add(1)
+		go func(i int) {
+			defer wait.Done()
+			<-start
+			errs <- service.ReplaceSource(context.Background(), "source", []domain.Chunk{{
+				ID:        fmt.Sprintf("replacement-%d", i),
+				SourceID:  "source",
+				SourceURI: "acdc://source",
+				ChunkURI:  fmt.Sprintf("acdc://source#replacement-%d", i),
+				Content:   "replacement",
+			}})
+		}(i)
+	}
+	close(start)
+	wait.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	results, err := service.Search("replacement", replacements)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, "source", results[0].SourceID)
 }
 
 func chunkIDs(results []SearchResult) []string {
