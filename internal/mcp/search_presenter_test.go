@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/sha1n/mcp-acdc-server/internal/config"
@@ -20,17 +21,30 @@ func TestSelectSearchResults_ReferencesOnePerSource(t *testing.T) {
 	require.Equal(t, []string{"a1", "b1"}, selectedIDs(selected))
 }
 
-func TestSelectSearchResults_ContentCapsPerSourceAndGlobal(t *testing.T) {
+func TestSelectSearchResults_ContentCapsPerSourceAndGlobalLimit(t *testing.T) {
 	results := []search.SearchResult{
 		{ChunkID: "a1", SourceID: "a"},
 		{ChunkID: "a2", SourceID: "a"},
 		{ChunkID: "a3", SourceID: "a"},
 		{ChunkID: "b1", SourceID: "b"},
+		{ChunkID: "c1", SourceID: "c"},
 	}
 
 	selected := selectSearchResults(results, config.SearchResultModeContent, 3)
 
 	require.Equal(t, []string{"a1", "a2", "b1"}, selectedIDs(selected))
+}
+
+func TestSelectSearchResults_NonPositiveLimitReturnsNoResults(t *testing.T) {
+	results := []search.SearchResult{{ChunkID: "a1", SourceID: "a"}}
+
+	for _, limit := range []int{0, -1} {
+		t.Run(fmt.Sprintf("limit=%d", limit), func(t *testing.T) {
+			selected := selectSearchResults(results, config.SearchResultModeContent, limit)
+
+			require.Empty(t, selected)
+		})
+	}
 }
 
 func TestFormatSearchResults_Provenance(t *testing.T) {
