@@ -276,16 +276,28 @@ func TestChunkMarkdown_DocumentChunksUseSourceTitleOutsideHeadingPath(t *testing
 }
 
 func TestChunkMarkdown_NormalizesStablePublicFragments(t *testing.T) {
-	raw := []byte("# API_Key\nOne.\n\n# *Résumé* Guide\nTwo.\n\n# API--Key\nThree.\n\n# API\nFour.\n\n# API-1\nFive.\n\n# API\nSix.\n")
+	raw := []byte("# API_Key\nOne.\n\n# *Résumé* Guide\nTwo.\n\n# API--Key\nThree.\n\n# API - Key\nFour.\n\n# API\nFive.\n\n# API-1\nSix.\n\n# API\nSeven.\n")
 
 	chunks := chunkMarkdownForTest(t, raw)
 
-	wantFragments := []string{"api_key", "résumé-guide", "api--key", "api", "api-1", "api-2"}
+	wantFragments := []string{"api_key", "résumé-guide", "api--key", "api---key", "api", "api-1", "api-2"}
 	require.Equal(t, wantFragments, chunkFragments(chunks))
 	for index, fragment := range wantFragments {
 		require.Equal(t, "acdc://stable#"+fragment, chunks[index].ID)
 		require.Equal(t, "acdc://stable#"+fragment, chunks[index].ChunkURI)
 	}
+}
+
+func TestChunkMarkdown_PreservesIndentedCommonMarkSyntax(t *testing.T) {
+	raw := []byte("  # Heading\n\n  ~~~text\ncontent\n  ~~~\n")
+
+	chunks := chunkMarkdownForTest(t, raw)
+
+	require.Len(t, chunks, 1)
+	require.Equal(t, "heading", chunks[0].Fragment)
+	require.Equal(t, string(raw), chunks[0].Content)
+	require.Equal(t, 1, chunks[0].StartLine)
+	require.Equal(t, 5, chunks[0].EndLine)
 }
 
 func TestChunkMarkdown_UsesUnicodeCodePointSoftLimit(t *testing.T) {

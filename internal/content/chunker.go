@@ -46,10 +46,6 @@ func ChunkMarkdown(source domain.SourceDocument, parsed *ParsedMarkdown) ([]doma
 		heading, isHeading := node.(*ast.Heading)
 		if isHeading {
 			level := heading.Level
-			if level < 1 || level > len(headingStack) {
-				continue
-			}
-
 			headingStack[level-1] = strings.TrimSpace(nodeText(heading, parsed.Body))
 			for index := level; index < len(headingStack); index++ {
 				headingStack[index] = ""
@@ -64,17 +60,13 @@ func ChunkMarkdown(source domain.SourceDocument, parsed *ParsedMarkdown) ([]doma
 				headings: path,
 				base:     allocateFragment(slugifyHeading(headingStack[level-1]), usedFragments, fragmentCounts),
 			}
-			if block, ok := sourceBlock(node, parsed.Body, parsed.BodyStartLine); ok {
-				section.blocks = append(section.blocks, block)
-			}
+			section.blocks = append(section.blocks, sourceBlock(node, parsed.Body, parsed.BodyStartLine))
 			sections = append(sections, section)
 			current = len(sections) - 1
 			continue
 		}
 
-		if block, ok := sourceBlock(node, parsed.Body, parsed.BodyStartLine); ok {
-			sections[current].blocks = append(sections[current].blocks, block)
-		}
+		sections[current].blocks = append(sections[current].blocks, sourceBlock(node, parsed.Body, parsed.BodyStartLine))
 	}
 
 	var chunks []domain.Chunk
@@ -136,9 +128,6 @@ func headingPath(stack [6]string) []string {
 }
 
 func allocateFragment(base string, used map[string]bool, counts map[string]int) string {
-	if base == "" {
-		base = "section"
-	}
 	if !used[base] {
 		used[base] = true
 		counts[base] = 1
@@ -156,10 +145,6 @@ func allocateFragment(base string, used map[string]bool, counts map[string]int) 
 }
 
 func splitSection(section markdownSection, source []byte) [][]markdownBlock {
-	if len(section.blocks) == 0 {
-		return nil
-	}
-
 	parts := make([][]markdownBlock, 0, 1)
 	current := make([]markdownBlock, 0, len(section.blocks))
 	for _, block := range section.blocks {
@@ -184,13 +169,10 @@ func splitSection(section markdownSection, source []byte) [][]markdownBlock {
 	return parts
 }
 
-func sourceBlock(node ast.Node, source []byte, bodyStartLine int) (markdownBlock, bool) {
+func sourceBlock(node ast.Node, source []byte, bodyStartLine int) markdownBlock {
 	start, stop, ok := nodeSourceRange(node)
 	if !ok {
 		start = node.Pos()
-		if start < 0 {
-			return markdownBlock{}, false
-		}
 		stop = start
 	}
 
@@ -204,7 +186,7 @@ func sourceBlock(node ast.Node, source []byte, bodyStartLine int) (markdownBlock
 			stop = lineStop(source, stop)
 		}
 	}
-	if _, isHeading := node.(*ast.Heading); isHeading && !isATXHeadingLine(source, start) && isSetextUnderline(source, stop) {
+	if _, isHeading := node.(*ast.Heading); isHeading && !isATXHeadingLine(source, start) {
 		stop = lineStop(source, stop)
 	}
 
@@ -214,7 +196,7 @@ func sourceBlock(node ast.Node, source []byte, bodyStartLine int) (markdownBlock
 		line:  sourceLine(source, start) + bodyStartLine - 1,
 		end:   sourceLine(source, stop-1) + bodyStartLine - 1,
 		kind:  node.Kind(),
-	}, true
+	}
 }
 
 func nodeSourceRange(node ast.Node) (int, int, bool) {
@@ -260,9 +242,6 @@ func lineStart(source []byte, offset int) int {
 
 func previousLineStart(source []byte, offset int) int {
 	start := lineStart(source, offset)
-	if start == 0 {
-		return 0
-	}
 	return lineStart(source, start-1)
 }
 
@@ -277,12 +256,6 @@ func lineStop(source []byte, offset int) int {
 }
 
 func sourceLine(source []byte, offset int) int {
-	if offset < 0 {
-		return 1
-	}
-	if offset > len(source) {
-		offset = len(source)
-	}
 	return bytes.Count(source[:offset], []byte("\n")) + 1
 }
 
@@ -307,20 +280,6 @@ func isATXHeadingLine(source []byte, offset int) bool {
 		offset++
 	}
 	return offset < len(source) && source[offset] == '#'
-}
-
-func isSetextUnderline(source []byte, offset int) bool {
-	lineEnd := lineStop(source, offset)
-	line := strings.TrimSpace(string(source[offset:lineEnd]))
-	if line == "" || (line[0] != '=' && line[0] != '-') {
-		return false
-	}
-	for index := 1; index < len(line); index++ {
-		if line[index] != line[0] {
-			return false
-		}
-	}
-	return true
 }
 
 func slugifyHeading(value string) string {
