@@ -2,19 +2,21 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"io/fs"
-	"log/slog"
-	"path/filepath"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/sha1n/mcp-acdc-server/internal/content"
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
 )
 
+var (
+	ErrUnknownResource = errors.New("unknown resource")
+	ErrUnknownFragment = errors.New("unknown resource fragment")
+)
+
 // ContentTransformer transforms resource content before it is returned.
-// It receives the raw content and the definition of the resource being read.
+// It receives the raw content and the source containing the resource.
 type ContentTransformer func(content string, def ResourceDefinition) string
 
 // Option configures a ResourceProvider.
@@ -22,170 +24,162 @@ type Option func(*ResourceProvider)
 
 // WithTransformer adds a content transformer to the provider.
 // Multiple transformers are applied in the order they are added.
-func WithTransformer(t ContentTransformer) Option {
-	return func(p *ResourceProvider) {
-		p.transformers = append(p.transformers, t)
+func WithTransformer(transformer ContentTransformer) Option {
+	return func(provider *ResourceProvider) {
+		provider.transformers = append(provider.transformers, transformer)
 	}
 }
 
-// ResourceProvider provides access to resources
+// ResourceProvider is an immutable catalog of discovered sources and chunks.
 type ResourceProvider struct {
-	definitions  []ResourceDefinition
-	uriMap       map[string]ResourceDefinition
+	sources      []domain.SourceDocument
+	chunks       []domain.Chunk
+	sourceByURI  map[string]domain.SourceDocument
+	chunkByURI   map[string]domain.Chunk
+	sectionByURI map[string][]domain.Chunk
 	transformers []ContentTransformer
 }
 
-// NewResourceProvider creates a new resource provider
-func NewResourceProvider(definitions []ResourceDefinition, opts ...Option) *ResourceProvider {
-	uriMap := make(map[string]ResourceDefinition)
-	for _, d := range definitions {
-		uriMap[d.URI] = d
+// NewResourceProvider creates an immutable source and chunk catalog.
+func NewResourceProvider(sources []domain.SourceDocument, chunks []domain.Chunk, opts ...Option) (*ResourceProvider, error) {
+	provider := &ResourceProvider{
+		sources:      make([]domain.SourceDocument, 0, len(sources)),
+		chunks:       make([]domain.Chunk, 0, len(chunks)),
+		sourceByURI:  make(map[string]domain.SourceDocument, len(sources)),
+		chunkByURI:   make(map[string]domain.Chunk, len(chunks)),
+		sectionByURI: make(map[string][]domain.Chunk),
 	}
-	p := &ResourceProvider{
-		definitions: definitions,
-		uriMap:      uriMap,
+
+	for _, source := range sources {
+		if _, exists := provider.sourceByURI[source.URI]; exists {
+			return nil, fmt.Errorf("duplicate source URI: %s", source.URI)
+		}
+		copy := cloneSource(source)
+		provider.sources = append(provider.sources, copy)
+		provider.sourceByURI[copy.URI] = copy
 	}
-	for _, opt := range opts {
-		opt(p)
+
+	chunkIDs := make(map[string]struct{}, len(chunks))
+	for _, chunk := range chunks {
+		if _, exists := chunkIDs[chunk.ID]; exists {
+			return nil, fmt.Errorf("duplicate chunk ID: %s", chunk.ID)
+		}
+		if _, exists := provider.chunkByURI[chunk.ChunkURI]; exists {
+			return nil, fmt.Errorf("duplicate chunk URI: %s", chunk.ChunkURI)
+		}
+		chunkIDs[chunk.ID] = struct{}{}
+		copy := cloneChunk(chunk)
+		provider.chunks = append(provider.chunks, copy)
+		provider.chunkByURI[copy.ChunkURI] = copy
+		sectionURI := copy.SourceURI + "#" + copy.SectionFragment
+		provider.sectionByURI[sectionURI] = append(provider.sectionByURI[sectionURI], copy)
 	}
-	return p
+
+	for _, option := range opts {
+		option(provider)
+	}
+	return provider, nil
 }
 
-// ListResources lists all available resources
+// ListResources lists all available source resources.
 func (p *ResourceProvider) ListResources() []mcp.Resource {
-	resources := make([]mcp.Resource, len(p.definitions))
-	for i, d := range p.definitions {
+	resources := make([]mcp.Resource, len(p.sources))
+	for i, source := range p.sources {
 		resources[i] = mcp.Resource{
-			URI:         d.URI,
-			Name:        d.Name,
-			Description: d.Description,
-			MIMEType:    d.MIMEType,
+			URI:         source.URI,
+			Name:        source.Name,
+			Description: source.Description,
+			MIMEType:    source.MIMEType,
 		}
 	}
 	return resources
 }
 
-// ReadResource reads a resource by URI
+// ReadResource reads a source, exact chunk, or logical section URI.
 func (p *ResourceProvider) ReadResource(uri string) (string, error) {
-	defn, ok := p.uriMap[uri]
-	if !ok {
-		return "", fmt.Errorf("unknown resource: %s", uri)
+	if source, ok := p.sourceByURI[uri]; ok {
+		return p.transform(source.Content, source), nil
+	}
+	if chunk, ok := p.chunkByURI[uri]; ok {
+		return p.transform(chunk.Content, p.chunkSource(chunk)), nil
+	}
+	if chunks, ok := p.sectionByURI[uri]; ok {
+		parts := make([]string, len(chunks))
+		for i, chunk := range chunks {
+			parts[i] = chunk.Content
+		}
+		return p.transform(strings.Join(parts, "\n\n"), p.chunkSource(chunks[0])), nil
 	}
 
-	c, err := content.NewContentProvider("").LoadMarkdownWithFrontmatter(defn.FilePath)
-	if err != nil {
-		return "", err
+	base, _, hasFragment := strings.Cut(uri, "#")
+	if _, exists := p.sourceByURI[base]; hasFragment && exists {
+		return "", fmt.Errorf("%w: %s", ErrUnknownFragment, uri)
 	}
-
-	result := c.Content
-	for _, t := range p.transformers {
-		result = t(result, defn)
-	}
-	return result, nil
+	return "", fmt.Errorf("%w: %s", ErrUnknownResource, uri)
 }
 
-// StreamResources streams all resource contents to a channel
-func (p *ResourceProvider) StreamResources(ctx context.Context, ch chan<- domain.Document) error {
-	for _, defn := range p.definitions {
+// StreamChunks streams transformed copies in deterministic discovery order.
+func (p *ResourceProvider) StreamChunks(ctx context.Context, ch chan<- domain.Chunk) error {
+	for _, catalogChunk := range p.chunks {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		chunk := cloneChunk(catalogChunk)
+		chunk.Content = p.transform(chunk.Content, p.chunkSource(chunk))
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
-		}
-
-		content, err := p.ReadResource(defn.URI)
-		if err != nil {
-			slog.Error("Error reading resource for indexing", "uri", defn.URI, "error", err)
-			continue
-		}
-
-		doc := domain.Document{
-			URI:      defn.URI,
-			Name:     defn.Name,
-			Content:  content,
-			Keywords: defn.Keywords,
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case ch <- doc:
+		case ch <- chunk:
 		}
 	}
 	return nil
 }
 
-// DiscoverResources discovers resources from markdown files.
-// The scheme parameter specifies the URI scheme (e.g. "acdc" produces "acdc://...").
-func DiscoverResources(cp *content.ContentProvider, scheme string) ([]ResourceDefinition, error) {
-	var definitions []ResourceDefinition
-	resourcesDir := cp.ResourcesDir
-
-	err := filepath.WalkDir(resourcesDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
+// StreamResources preserves the legacy source-document stream until indexing
+// migrates to StreamChunks. New callers should use StreamChunks.
+func (p *ResourceProvider) StreamResources(ctx context.Context, ch chan<- domain.Document) error {
+	for _, source := range p.sources {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if d.IsDir() {
-			return nil
+		document := domain.Document{
+			URI:      source.URI,
+			Name:     source.Name,
+			Content:  p.transform(source.Content, source),
+			Keywords: append([]string(nil), source.Keywords...),
 		}
-		if filepath.Ext(path) != ".md" {
-			return nil
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case ch <- document:
 		}
-
-		// Parse frontmatter
-		md, err := cp.LoadMarkdownWithFrontmatter(path)
-		if err != nil {
-			slog.Warn("Skipping invalid resource file", "file", d.Name(), "error", err)
-			return nil
-		}
-
-		// Extract metadata
-		name, _ := md.Metadata["name"].(string)
-		description, _ := md.Metadata["description"].(string)
-
-		if name == "" || description == "" {
-			slog.Warn("Skipping resource with missing metadata", "file", d.Name())
-			return nil
-		}
-
-		// Extract optional keywords
-		var keywords []string
-		if kw, ok := md.Metadata["keywords"].([]interface{}); ok {
-			for _, k := range kw {
-				if s, ok := k.(string); ok {
-					keywords = append(keywords, s)
-				}
-			}
-		}
-
-		// Derive URI
-		relPath, err := filepath.Rel(resourcesDir, path)
-		if err != nil {
-			return err
-		}
-
-		relPathNoExt := strings.TrimSuffix(relPath, filepath.Ext(relPath))
-		// normalized for URI (slashes)
-		uriPath := filepath.ToSlash(relPathNoExt)
-		uri := fmt.Sprintf("%s://%s", scheme, uriPath)
-
-		definitions = append(definitions, ResourceDefinition{
-			URI:         uri,
-			Name:        name,
-			Description: description,
-			MIMEType:    "text/markdown",
-			FilePath:    path,
-			Keywords:    keywords,
-		})
-
-		slog.Info("Loaded resource", "uri", uri, "name", name)
-
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
 	}
+	return nil
+}
 
-	return definitions, nil
+func (p *ResourceProvider) transform(body string, source domain.SourceDocument) string {
+	for _, transformer := range p.transformers {
+		body = transformer(body, source)
+	}
+	return body
+}
+
+func (p *ResourceProvider) chunkSource(chunk domain.Chunk) domain.SourceDocument {
+	if source, ok := p.sourceByURI[chunk.SourceURI]; ok {
+		return source
+	}
+	return domain.SourceDocument{ID: chunk.SourceID, URI: chunk.SourceURI}
+}
+
+func cloneSource(source domain.SourceDocument) domain.SourceDocument {
+	source.Keywords = append([]string(nil), source.Keywords...)
+	source.PathLabels = append([]string(nil), source.PathLabels...)
+	return source
+}
+
+func cloneChunk(chunk domain.Chunk) domain.Chunk {
+	chunk.PathLabels = append([]string(nil), chunk.PathLabels...)
+	chunk.HeadingPath = append([]string(nil), chunk.HeadingPath...)
+	chunk.Keywords = append([]string(nil), chunk.Keywords...)
+	return chunk
 }

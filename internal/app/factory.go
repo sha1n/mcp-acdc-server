@@ -39,7 +39,7 @@ func CreateMCPServer(settings *config.Settings) (*mcpsdk.Server, func(), error) 
 	}
 
 	// Discover resources
-	resourceDefinitions, err := resources.DiscoverResources(cp, settings.Scheme)
+	discovery, err := resources.Discover(context.Background(), cp, metadata.Index, settings.Scheme)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to discover resources: %w", err)
 	}
@@ -47,10 +47,13 @@ func CreateMCPServer(settings *config.Settings) (*mcpsdk.Server, func(), error) 
 	var resourceOpts []resources.Option
 	if settings.CrossRef {
 		resourceOpts = append(resourceOpts, resources.WithTransformer(
-			resources.NewCrossRefTransformer(resourceDefinitions, settings.Scheme),
+			resources.NewCrossRefTransformer(discovery.Sources, settings.Scheme),
 		))
 	}
-	resourceProvider := resources.NewResourceProvider(resourceDefinitions, resourceOpts...)
+	resourceProvider, err := resources.NewResourceProvider(discovery.Sources, discovery.Chunks, resourceOpts...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create resource provider: %w", err)
+	}
 
 	// Discover prompts
 	promptDefinitions, err := prompts.DiscoverPrompts(cp)

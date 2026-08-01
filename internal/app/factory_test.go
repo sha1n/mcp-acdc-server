@@ -9,6 +9,7 @@ import (
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/content"
 	"github.com/sha1n/mcp-acdc-server/internal/resources"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCreateMCPServer_Success(t *testing.T) {
@@ -239,6 +240,41 @@ tools: []
 	}
 }
 
+func TestCreateMCPServer_FailsWhenConfiguredDiscoveryFails(t *testing.T) {
+	contentDir := t.TempDir()
+	metadata := `
+server: { name: test, version: 1.0, instructions: inst }
+tools: []
+index:
+  include: ["docs/**"]
+`
+	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadata), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(contentDir, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "data.txt"), []byte("not markdown"), 0o644))
+
+	_, _, err := CreateMCPServer(&config.Settings{ContentDir: contentDir, Scheme: "acdc", Search: config.SearchSettings{InMemory: true}})
+	require.ErrorContains(t, err, "failed to discover resources")
+	require.ErrorContains(t, err, "configured index selected non-Markdown file")
+}
+
+func TestCreateMCPServer_FailsWhenDiscoveredSourcesShareURI(t *testing.T) {
+	contentDir := t.TempDir()
+	metadata := `
+server: { name: test, version: 1.0, instructions: inst }
+tools: []
+index:
+  include: ["docs/*"]
+`
+	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadata), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(contentDir, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "guide.md"), []byte("# Guide"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "guide.markdown"), []byte("# Guide duplicate"), 0o644))
+
+	_, _, err := CreateMCPServer(&config.Settings{ContentDir: contentDir, Scheme: "acdc", Search: config.SearchSettings{InMemory: true}})
+	require.ErrorContains(t, err, "failed to create resource provider")
+	require.ErrorContains(t, err, "duplicate source URI: acdc://docs/guide")
+}
+
 func TestCreateMCPServer_InvalidToolMetadata_MissingName(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
@@ -389,7 +425,10 @@ func TestCreateMCPServer_CrossRefTransformation_ContentVerification(t *testing.T
 	}
 
 	transformer := resources.NewCrossRefTransformer(defs, "acdc")
-	provider := resources.NewResourceProvider(defs, resources.WithTransformer(transformer))
+	provider, err := resources.NewResourceProvider(defs, nil, resources.WithTransformer(transformer))
+	if err != nil {
+		t.Fatalf("NewResourceProvider error: %v", err)
+	}
 
 	// Read Doc A - should have transformed link to Doc B
 	contentA, err := provider.ReadResource("acdc://doc-a")
@@ -437,7 +476,10 @@ func TestCreateMCPServer_CrossRefDisabledByDefault(t *testing.T) {
 		t.Fatalf("DiscoverResources error: %v", err)
 	}
 
-	provider := resources.NewResourceProvider(defs)
+	provider, err := resources.NewResourceProvider(defs, nil)
+	if err != nil {
+		t.Fatalf("NewResourceProvider error: %v", err)
+	}
 
 	contentA, err := provider.ReadResource("acdc://doc-a")
 	if err != nil {
@@ -475,7 +517,10 @@ func TestCreateMCPServer_CrossRefTransformation_CustomScheme(t *testing.T) {
 	}
 
 	transformer := resources.NewCrossRefTransformer(defs, "myco")
-	provider := resources.NewResourceProvider(defs, resources.WithTransformer(transformer))
+	provider, err := resources.NewResourceProvider(defs, nil, resources.WithTransformer(transformer))
+	if err != nil {
+		t.Fatalf("NewResourceProvider error: %v", err)
+	}
 
 	contentA, err := provider.ReadResource("myco://a")
 	if err != nil {

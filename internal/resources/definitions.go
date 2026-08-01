@@ -1,5 +1,7 @@
 package resources
 
+import "github.com/sha1n/mcp-acdc-server/internal/domain"
+
 // Field name constants for resource metadata
 const (
 	FieldURI      = "uri"
@@ -8,12 +10,5 @@ const (
 	FieldKeywords = "keywords"
 )
 
-// ResourceDefinition definition of an MCP resource
-type ResourceDefinition struct {
-	URI         string
-	Name        string
-	Description string
-	MIMEType    string
-	FilePath    string
-	Keywords    []string // Optional keywords for search boosting
-}
+// ResourceDefinition is retained as the legacy name for a source document.
+type ResourceDefinition = domain.SourceDocument
