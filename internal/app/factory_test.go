@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,9 +10,32 @@ import (
 
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/content"
+	"github.com/sha1n/mcp-acdc-server/internal/domain"
 	"github.com/sha1n/mcp-acdc-server/internal/resources"
+	"github.com/sha1n/mcp-acdc-server/internal/search"
 	"github.com/stretchr/testify/require"
 )
+
+func writeMetadataOnly(t *testing.T, metadata string) string {
+	t.Helper()
+	contentDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadata), 0o600))
+	return contentDir
+}
+
+func appTestSettings(contentDir string) *config.Settings {
+	return &config.Settings{
+		ContentDir: contentDir,
+		Scheme:     "acdc",
+		Search: config.SearchSettings{
+			InMemory:   true,
+			ResultMode: config.SearchResultModeReferences,
+			MaxResults: 10,
+		},
+	}
+}
+
+type factoryContextKey struct{}
 
 func TestCreateMCPServer_Success(t *testing.T) {
 	tempDir := t.TempDir()
@@ -44,7 +69,7 @@ tools: []
 		},
 	}
 
-	server, cleanup, err := CreateMCPServer(settings)
+	server, cleanup, err := CreateMCPServer(context.Background(), settings)
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
@@ -68,7 +93,7 @@ func TestCreateMCPServer_MissingMetadata(t *testing.T) {
 		},
 	}
 
-	_, _, err := CreateMCPServer(settings)
+	_, _, err := CreateMCPServer(context.Background(), settings)
 	if err == nil {
 		t.Fatal("Expected error when metadata is missing")
 	}
@@ -93,7 +118,7 @@ func TestCreateMCPServer_InvalidMetadataYAML(t *testing.T) {
 		},
 	}
 
-	_, _, err := CreateMCPServer(settings)
+	_, _, err := CreateMCPServer(context.Background(), settings)
 	if err == nil {
 		t.Fatal("Expected error for invalid YAML")
 	}
@@ -124,7 +149,7 @@ server:
 		},
 	}
 
-	_, _, err := CreateMCPServer(settings)
+	_, _, err := CreateMCPServer(context.Background(), settings)
 	if err == nil {
 		t.Fatal("Expected error for invalid metadata")
 	}
@@ -161,7 +186,7 @@ tools: []
 	}
 
 	// Invalid resources are skipped, not failed
-	server, cleanup, err := CreateMCPServer(settings)
+	server, cleanup, err := CreateMCPServer(context.Background(), settings)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -192,7 +217,7 @@ func TestCreateMCPServer_ResourceWithKeywords(t *testing.T) {
 		Search:     config.SearchSettings{InMemory: true, MaxResults: 10},
 	}
 
-	server, cleanup, err := CreateMCPServer(settings)
+	server, cleanup, err := CreateMCPServer(context.Background(), settings)
 	if err != nil {
 		t.Fatalf("Failed: %v", err)
 	}
@@ -228,7 +253,7 @@ tools: []
 	}
 
 	// Should succeed with no resources
-	server, cleanup, err := CreateMCPServer(settings)
+	server, cleanup, err := CreateMCPServer(context.Background(), settings)
 	if err != nil {
 		t.Fatalf("Failed to create server with no resources: %v", err)
 	}
@@ -238,6 +263,70 @@ tools: []
 	if server == nil {
 		t.Fatal("Server is nil")
 	}
+}
+
+func TestCreateMCPServer_ConfiguredDiscoveryFailure(t *testing.T) {
+	contentDir := writeMetadataOnly(t, `server:
+  name: test
+  version: "1"
+  instructions: test
+index:
+  include: ["docs/**/*.md"]
+`)
+
+	_, cleanup, err := CreateMCPServer(context.Background(), appTestSettings(contentDir))
+
+	require.ErrorContains(t, err, "configured index matched no files")
+	require.Nil(t, cleanup)
+}
+
+func TestCreateMCPServer_IndexFailureStopsConstruction(t *testing.T) {
+	contentDir := writeMetadataOnly(t, `server:
+  name: test
+  version: "1"
+  instructions: test
+`)
+	indexer := &fakeSearcher{indexErr: errors.New("index failed")}
+	deps := defaultFactoryDeps()
+	deps.discover = func(context.Context, *content.ContentProvider, *domain.IndexMetadata, string) (resources.DiscoveryResult, error) {
+		return resources.DiscoveryResult{}, nil
+	}
+	deps.newSearch = func(config.SearchSettings) search.Searcher {
+		return indexer
+	}
+
+	server, cleanup, err := createMCPServer(context.Background(), appTestSettings(contentDir), deps)
+
+	require.ErrorContains(t, err, "index chunks: index failed")
+	require.Nil(t, server)
+	require.Nil(t, cleanup)
+	require.Equal(t, 1, indexer.closeCalls)
+}
+
+func TestCreateMCPServer_PassesCallerContextToDiscovery(t *testing.T) {
+	contentDir := writeMetadataOnly(t, `server:
+  name: test
+  version: "1"
+  instructions: test
+`)
+	ctx := context.WithValue(context.Background(), factoryContextKey{}, "request-context")
+	deps := defaultFactoryDeps()
+	var discoveryCtx context.Context
+	deps.discover = func(gotCtx context.Context, _ *content.ContentProvider, _ *domain.IndexMetadata, _ string) (resources.DiscoveryResult, error) {
+		discoveryCtx = gotCtx
+		return resources.DiscoveryResult{}, nil
+	}
+	deps.newSearch = func(config.SearchSettings) search.Searcher {
+		return &fakeSearcher{drain: true}
+	}
+
+	server, cleanup, err := createMCPServer(ctx, appTestSettings(contentDir), deps)
+
+	require.NoError(t, err)
+	require.NotNil(t, server)
+	require.NotNil(t, cleanup)
+	require.Same(t, ctx, discoveryCtx)
+	cleanup()
 }
 
 func TestCreateMCPServer_FailsWhenConfiguredDiscoveryFails(t *testing.T) {
@@ -252,7 +341,7 @@ index:
 	require.NoError(t, os.MkdirAll(filepath.Join(contentDir, "docs"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "data.txt"), []byte("not markdown"), 0o644))
 
-	_, _, err := CreateMCPServer(&config.Settings{ContentDir: contentDir, Scheme: "acdc", Search: config.SearchSettings{InMemory: true}})
+	_, _, err := CreateMCPServer(context.Background(), &config.Settings{ContentDir: contentDir, Scheme: "acdc", Search: config.SearchSettings{InMemory: true}})
 	require.ErrorContains(t, err, "failed to discover resources")
 	require.ErrorContains(t, err, "configured index selected non-Markdown file")
 }
@@ -270,7 +359,7 @@ index:
 	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "guide.md"), []byte("# Guide"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "guide.markdown"), []byte("# Guide duplicate"), 0o644))
 
-	_, _, err := CreateMCPServer(&config.Settings{ContentDir: contentDir, Scheme: "acdc", Search: config.SearchSettings{InMemory: true}})
+	_, _, err := CreateMCPServer(context.Background(), &config.Settings{ContentDir: contentDir, Scheme: "acdc", Search: config.SearchSettings{InMemory: true}})
 	require.ErrorContains(t, err, "failed to create resource provider")
 	require.ErrorContains(t, err, "duplicate source URI: acdc://docs/guide")
 }
@@ -289,7 +378,7 @@ tools:
 	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
 
 	settings := &config.Settings{ContentDir: contentDir}
-	_, _, err := CreateMCPServer(settings)
+	_, _, err := CreateMCPServer(context.Background(), settings)
 	if err == nil || !strings.Contains(err.Error(), "metadata validation failed") {
 		t.Errorf("Expected metadata validation error, got: %v", err)
 	}
@@ -309,7 +398,7 @@ tools:
 	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
 
 	settings := &config.Settings{ContentDir: contentDir}
-	_, _, err := CreateMCPServer(settings)
+	_, _, err := CreateMCPServer(context.Background(), settings)
 	if err == nil || !strings.Contains(err.Error(), "metadata validation failed") {
 		t.Errorf("Expected metadata validation error, got: %v", err)
 	}
@@ -329,7 +418,7 @@ tools:
 	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
 
 	settings := &config.Settings{ContentDir: contentDir}
-	_, _, err := CreateMCPServer(settings)
+	_, _, err := CreateMCPServer(context.Background(), settings)
 	if err == nil || !strings.Contains(err.Error(), "duplicate tool name") {
 		t.Errorf("Expected duplicate tool name error, got: %v", err)
 	}
@@ -356,7 +445,7 @@ func TestCreateMCPServer_PromptDiscoveryError(t *testing.T) {
 		Search:     config.SearchSettings{InMemory: true},
 	}
 
-	_, _, err := CreateMCPServer(settings)
+	_, _, err := CreateMCPServer(context.Background(), settings)
 	if err == nil {
 		t.Fatal("Expected error for prompt discovery failure")
 	}
@@ -391,7 +480,7 @@ func TestCreateMCPServer_CrossRefTransformation(t *testing.T) {
 		Search:     config.SearchSettings{InMemory: true, MaxResults: 10},
 	}
 
-	server, cleanup, err := CreateMCPServer(settings)
+	server, cleanup, err := CreateMCPServer(context.Background(), settings)
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}

@@ -7,61 +7,116 @@ import (
 
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
 	"github.com/sha1n/mcp-acdc-server/internal/search"
+	"github.com/stretchr/testify/require"
 )
 
-type mockResourceStreamer struct {
-	err error
+type fakeChunkStreamer struct {
+	chunks              []domain.Chunk
+	err                 error
+	waitForCancellation bool
+	canceled            chan<- struct{}
 }
 
-func (m *mockResourceStreamer) StreamChunks(ctx context.Context, ch chan<- domain.Chunk) error {
-	if m.err != nil {
-		return m.err
+func (s *fakeChunkStreamer) StreamChunks(ctx context.Context, ch chan<- domain.Chunk) error {
+	for _, chunk := range s.chunks {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case ch <- chunk:
+		}
 	}
-	// Simulate one chunk.
-	ch <- domain.Chunk{ID: "1", SourceID: "source"}
+	if s.waitForCancellation {
+		<-ctx.Done()
+		if s.canceled != nil {
+			s.canceled <- struct{}{}
+		}
+		if s.err != nil {
+			return s.err
+		}
+		return ctx.Err()
+	}
+	return s.err
+}
+
+type fakeSearcher struct {
+	indexErr   error
+	drain      bool
+	indexed    []domain.Chunk
+	closeCalls int
+}
+
+func (s *fakeSearcher) Index(_ context.Context, chunks <-chan domain.Chunk) error {
+	if s.drain {
+		for chunk := range chunks {
+			s.indexed = append(s.indexed, chunk)
+		}
+	}
+	return s.indexErr
+}
+
+func (*fakeSearcher) Search(string, int) ([]search.SearchResult, error) { return nil, nil }
+func (*fakeSearcher) ReplaceSource(context.Context, string, []domain.Chunk) error {
 	return nil
 }
-
-type mockIndexer struct {
-	err error
-}
-
-func (m *mockIndexer) Index(ctx context.Context, chunks <-chan domain.Chunk) error {
-	if m.err != nil {
-		return m.err
-	}
-	for range chunks {
-		// drain
-	}
-	return nil
-}
-
-func (m *mockIndexer) Search(queryStr string, candidateLimit int) ([]search.SearchResult, error) {
-	return nil, nil
-}
-func (m *mockIndexer) Close()                                                      {}
-func (m *mockIndexer) ReplaceSource(context.Context, string, []domain.Chunk) error { return nil }
-func (m *mockIndexer) DeleteSource(context.Context, string) error                  { return nil }
+func (*fakeSearcher) DeleteSource(context.Context, string) error { return nil }
+func (s *fakeSearcher) Close()                                   { s.closeCalls++ }
 
 func TestIndexResources_Success(t *testing.T) {
-	rs := &mockResourceStreamer{}
-	idx := &mockIndexer{}
+	streamer := &fakeChunkStreamer{chunks: []domain.Chunk{{ID: "one"}}}
+	indexer := &fakeSearcher{drain: true}
 
-	IndexResources(context.Background(), rs, idx)
+	err := IndexResources(context.Background(), streamer, indexer)
+
+	require.NoError(t, err)
+	require.Equal(t, []domain.Chunk{{ID: "one"}}, indexer.indexed)
 }
 
-func TestIndexResources_StreamError(t *testing.T) {
-	rs := &mockResourceStreamer{err: errors.New("stream error")}
-	idx := &mockIndexer{}
+func TestIndexResources_ReturnsProducerError(t *testing.T) {
+	streamer := &fakeChunkStreamer{err: errors.New("stream failed")}
+	indexer := &fakeSearcher{drain: true}
 
-	// Should not panic, logs error
-	IndexResources(context.Background(), rs, idx)
+	err := IndexResources(context.Background(), streamer, indexer)
+
+	require.ErrorContains(t, err, "stream chunks: stream failed")
 }
 
-func TestIndexResources_IndexError(t *testing.T) {
-	rs := &mockResourceStreamer{}
-	idx := &mockIndexer{err: errors.New("index error")}
+func TestIndexResources_ReturnsIndexerError(t *testing.T) {
+	streamer := &fakeChunkStreamer{chunks: []domain.Chunk{{ID: "one"}}}
+	indexer := &fakeSearcher{indexErr: errors.New("index failed")}
 
-	// Should not panic, logs error
-	IndexResources(context.Background(), rs, idx)
+	err := IndexResources(context.Background(), streamer, indexer)
+
+	require.ErrorContains(t, err, "index chunks: index failed")
+}
+
+func TestIndexResources_PrefersProducerErrorWhenProducerFinishesFirst(t *testing.T) {
+	streamer := &fakeChunkStreamer{err: errors.New("stream failed")}
+	indexer := &fakeSearcher{drain: true, indexErr: errors.New("index failed")}
+
+	err := IndexResources(context.Background(), streamer, indexer)
+
+	require.ErrorContains(t, err, "stream chunks: stream failed")
+}
+
+func TestIndexResources_PrefersProducerErrorWhenIndexerFinishesFirst(t *testing.T) {
+	streamer := &fakeChunkStreamer{
+		err:                 errors.New("stream failed"),
+		waitForCancellation: true,
+	}
+	indexer := &fakeSearcher{indexErr: errors.New("index failed")}
+
+	err := IndexResources(context.Background(), streamer, indexer)
+
+	require.ErrorContains(t, err, "stream chunks: stream failed")
+}
+
+func TestIndexResources_CancelsProducerWhenIndexerFails(t *testing.T) {
+	canceled := make(chan struct{}, 1)
+	streamer := &fakeChunkStreamer{waitForCancellation: true, canceled: canceled}
+	indexer := &fakeSearcher{indexErr: errors.New("index failed")}
+
+	err := IndexResources(context.Background(), streamer, indexer)
+
+	require.ErrorContains(t, err, "index chunks: index failed")
+	require.Len(t, canceled, 1)
 }
