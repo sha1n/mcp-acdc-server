@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestContentProvider_LoadText(t *testing.T) {
@@ -40,6 +42,44 @@ func TestContentProvider_LoadYAML(t *testing.T) {
 	if data["key"] != "value" {
 		t.Errorf("Expected value 'value', got '%v'", data["key"])
 	}
+}
+
+func TestParseMarkdown_OptionalFrontmatterAndDerivedMetadata(t *testing.T) {
+	raw := []byte("# OAuth Setup\n\nUse client credentials securely.\n")
+	parsed, err := ParseMarkdown(raw, FrontmatterOptional)
+	require.NoError(t, err)
+
+	doc, err := BuildSourceDocument(parsed, SourceOptions{
+		URI:          "acdc://docs/platform/oauth",
+		FilePath:     "/repo/docs/platform/oauth.md",
+		RelativePath: "docs/platform/oauth.md",
+		Raw:          raw,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "OAuth Setup", doc.Name)
+	require.Equal(t, "Use client credentials securely.", doc.Description)
+	require.Equal(t, []string{"docs", "platform", "oauth"}, doc.PathLabels)
+	require.Equal(t, 1, doc.BodyStartLine)
+	require.Len(t, doc.Fingerprint, 64)
+}
+
+func TestParseMarkdown_AuthoredMetadataPrecedence(t *testing.T) {
+	raw := []byte("---\nname: Auth Guide\ntitle: Ignored\ndescription: Auth details\nkeywords: [oauth, tokens]\n---\n# Other Heading\nBody\n")
+	parsed, err := ParseMarkdown(raw, FrontmatterOptional)
+	require.NoError(t, err)
+	doc, err := BuildSourceDocument(parsed, SourceOptions{URI: "acdc://auth", RelativePath: "docs/auth.md", Raw: raw})
+	require.NoError(t, err)
+	require.Equal(t, "Auth Guide", doc.Name)
+	require.Equal(t, "Auth details", doc.Description)
+	require.Equal(t, []string{"oauth", "tokens"}, doc.Keywords)
+	require.Equal(t, 7, doc.BodyStartLine)
+}
+
+func TestParseMarkdown_FrontmatterModes(t *testing.T) {
+	_, err := ParseMarkdown([]byte("# Plain"), FrontmatterRequired)
+	require.ErrorContains(t, err, "file must start with YAML frontmatter")
+	_, err = ParseMarkdown([]byte("---\ninvalid: : yaml\n---\nBody"), FrontmatterOptional)
+	require.ErrorContains(t, err, "invalid YAML in frontmatter")
 }
 
 func TestContentProvider_LoadMarkdownWithFrontmatter(t *testing.T) {
