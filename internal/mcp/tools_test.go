@@ -17,24 +17,27 @@ import (
 
 // Mock searcher for testing
 type TestMockSearcher struct {
-	MockSearch func(queryStr string, limit *int) ([]search.SearchResult, error)
+	MockSearch func(queryStr string, candidateLimit int) ([]search.SearchResult, error)
 }
 
-func (m *TestMockSearcher) Search(query string, options *int) ([]search.SearchResult, error) {
+func (m *TestMockSearcher) Search(query string, candidateLimit int) ([]search.SearchResult, error) {
 	if m.MockSearch != nil {
-		return m.MockSearch(query, options)
+		return m.MockSearch(query, candidateLimit)
 	}
 	return nil, nil
 }
 
 func (m *TestMockSearcher) Close() {}
 
-func (m *TestMockSearcher) Index(ctx context.Context, docs <-chan domain.Document) error {
-	for range docs {
+func (m *TestMockSearcher) Index(ctx context.Context, chunks <-chan domain.Chunk) error {
+	for range chunks {
 		// drain
 	}
 	return nil
 }
+
+func (m *TestMockSearcher) ReplaceSource(context.Context, string, []domain.Chunk) error { return nil }
+func (m *TestMockSearcher) DeleteSource(context.Context, string) error                  { return nil }
 
 func TestToolRegistration(t *testing.T) {
 	// Just verify tools can be created without panic
@@ -54,18 +57,19 @@ func TestToolRegistration(t *testing.T) {
 
 func TestSearchToolHandler_Success_WithResults(t *testing.T) {
 	mockSearcher := &TestMockSearcher{
-		MockSearch: func(query string, limit *int) ([]search.SearchResult, error) {
+		MockSearch: func(query string, candidateLimit int) ([]search.SearchResult, error) {
 			assert.Equal(t, "test query", query)
+			assert.Equal(t, 0, candidateLimit)
 			return []search.SearchResult{
 				{
-					Name:    "Result 1",
-					URI:     "acdc://result1",
-					Snippet: "This is result 1",
+					SourceTitle: "Result 1",
+					SourceURI:   "acdc://result1",
+					Snippet:     "This is result 1",
 				},
 				{
-					Name:    "Result 2",
-					URI:     "acdc://result2",
-					Snippet: "This is result 2",
+					SourceTitle: "Result 2",
+					SourceURI:   "acdc://result2",
+					Snippet:     "This is result 2",
 				},
 			}, nil
 		},
@@ -96,7 +100,7 @@ func TestSearchToolHandler_Success_WithResults(t *testing.T) {
 
 func TestSearchToolHandler_Success_NoResults(t *testing.T) {
 	mockSearcher := &TestMockSearcher{
-		MockSearch: func(query string, limit *int) ([]search.SearchResult, error) {
+		MockSearch: func(query string, candidateLimit int) ([]search.SearchResult, error) {
 			return []search.SearchResult{}, nil
 		},
 	}
@@ -121,7 +125,7 @@ func TestSearchToolHandler_Success_NoResults(t *testing.T) {
 func TestSearchToolHandler_Error(t *testing.T) {
 	expectedErr := errors.New("search service error")
 	mockSearcher := &TestMockSearcher{
-		MockSearch: func(query string, limit *int) ([]search.SearchResult, error) {
+		MockSearch: func(query string, candidateLimit int) ([]search.SearchResult, error) {
 			return nil, expectedErr
 		},
 	}

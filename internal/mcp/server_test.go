@@ -40,15 +40,18 @@ func TestCreateServer(t *testing.T) {
 
 type mockSearcher struct{}
 
-func (m *mockSearcher) Search(query string, options *int) ([]search.SearchResult, error) {
+func (m *mockSearcher) Search(query string, candidateLimit int) ([]search.SearchResult, error) {
 	return nil, nil
 }
 
 func (m *mockSearcher) Close() {}
 
-func (m *mockSearcher) Index(ctx context.Context, docs <-chan domain.Document) error {
-	for range docs {
+func (m *mockSearcher) Index(ctx context.Context, chunks <-chan domain.Chunk) error {
+	for range chunks {
 		// drain
 	}
 	return nil
 }
+
+func (m *mockSearcher) ReplaceSource(context.Context, string, []domain.Chunk) error { return nil }
+func (m *mockSearcher) DeleteSource(context.Context, string) error                  { return nil }
