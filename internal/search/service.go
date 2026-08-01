@@ -18,6 +18,13 @@ const (
 	pathBoost    = 1.25
 )
 
+var (
+	newMemoryIndex = bleve.NewMemOnly
+	makeTempDir    = os.MkdirTemp
+	removeAll      = os.RemoveAll
+	newDiskIndex   = bleve.New
+)
+
 // SearchResult is a chunk returned by a search.
 type SearchResult struct {
 	ChunkID     string
@@ -49,11 +56,18 @@ type BatchIndexer interface {
 	Batch(b *bleve.Batch) error
 }
 
+type searchIndex interface {
+	BatchIndexer
+	Search(request *bleve.SearchRequest) (*bleve.SearchResult, error)
+	Close() error
+	DocCount() (uint64, error)
+}
+
 // Service search service using Bleve
 type Service struct {
 	mu           sync.RWMutex
 	settings     config.SearchSettings
-	index        bleve.Index
+	index        searchIndex
 	indexDir     string
 	sourceChunks map[string][]string
 }
@@ -82,7 +96,7 @@ func (s *Service) Index(ctx context.Context, chunks <-chan domain.Chunk) error {
 	if err := batchIndex(ctx, index, chunks, newSourceChunks); err != nil {
 		_ = index.Close()
 		if indexDir != "" {
-			_ = os.RemoveAll(indexDir)
+			_ = removeAll(indexDir)
 		}
 		return err
 	}
@@ -95,31 +109,31 @@ func (s *Service) Index(ctx context.Context, chunks <-chan domain.Chunk) error {
 		_ = oldIndex.Close()
 	}
 	if oldIndexDir != "" && oldIndexDir != indexDir {
-		_ = os.RemoveAll(oldIndexDir)
+		_ = removeAll(oldIndexDir)
 	}
 	return nil
 }
 
-func (s *Service) newIndex() (bleve.Index, string, error) {
+func (s *Service) newIndex() (searchIndex, string, error) {
 	indexMapping := buildMapping()
 	if s.settings.InMemory {
-		index, err := bleve.NewMemOnly(indexMapping)
+		index, err := newMemoryIndex(indexMapping)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create index: %w", err)
 		}
 		return index, "", nil
 	}
 
-	indexDir, err := os.MkdirTemp("", "acdc_search_")
+	indexDir, err := makeTempDir("", "acdc_search_")
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create temp dir: %w", err)
 	}
-	if err := os.RemoveAll(indexDir); err != nil {
+	if err := removeAll(indexDir); err != nil {
 		return nil, "", fmt.Errorf("failed to remove temp dir: %w", err)
 	}
-	index, err := bleve.New(indexDir, indexMapping)
+	index, err := newDiskIndex(indexDir, indexMapping)
 	if err != nil {
-		_ = os.RemoveAll(indexDir)
+		_ = removeAll(indexDir)
 		return nil, "", fmt.Errorf("failed to create index: %w", err)
 	}
 	return index, indexDir, nil
@@ -409,7 +423,7 @@ func (s *Service) Close() {
 		s.index = nil
 	}
 	if s.indexDir != "" {
-		_ = os.RemoveAll(s.indexDir)
+		_ = removeAll(s.indexDir)
 		s.indexDir = ""
 	}
 }

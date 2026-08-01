@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"testing"
 
 	"github.com/blevesearch/bleve/v2"
+	"github.com/blevesearch/bleve/v2/mapping"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
 	"github.com/stretchr/testify/require"
@@ -16,6 +18,38 @@ import (
 type mockBatchIndexer struct {
 	realIndex bleve.Index
 	batchErr  error
+}
+
+type failingSearchIndex struct {
+	backing     bleve.Index
+	batchErr    error
+	searchErr   error
+	docCountErr error
+}
+
+func (i *failingSearchIndex) NewBatch() *bleve.Batch { return i.backing.NewBatch() }
+
+func (i *failingSearchIndex) Batch(batch *bleve.Batch) error {
+	if i.batchErr != nil {
+		return i.batchErr
+	}
+	return i.backing.Batch(batch)
+}
+
+func (i *failingSearchIndex) Search(request *bleve.SearchRequest) (*bleve.SearchResult, error) {
+	if i.searchErr != nil {
+		return nil, i.searchErr
+	}
+	return i.backing.Search(request)
+}
+
+func (i *failingSearchIndex) Close() error { return i.backing.Close() }
+
+func (i *failingSearchIndex) DocCount() (uint64, error) {
+	if i.docCountErr != nil {
+		return 0, i.docCountErr
+	}
+	return i.backing.DocCount()
 }
 
 func (m *mockBatchIndexer) NewBatch() *bleve.Batch { return m.realIndex.NewBatch() }
@@ -184,6 +218,187 @@ func TestSearch_EmptyIndex(t *testing.T) {
 	results, err := service.Search("anything", 10)
 	require.NoError(t, err)
 	require.Empty(t, results)
+}
+
+func TestSearch_UsesSourceTitleWhenContentHasNoSnippet(t *testing.T) {
+	service := NewService(testSettings())
+	defer service.Close()
+	indexChunks(t, service, []domain.Chunk{{ID: "title", SourceID: "source", SourceURI: "acdc://source", ChunkURI: "acdc://source#title", SourceTitle: "Title fallback"}})
+
+	results, err := service.Search("title", 10)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, "Title fallback", results[0].Snippet)
+}
+
+func TestSearch_FieldConversions(t *testing.T) {
+	fields := map[string]interface{}{
+		"strings":     []string{"first", "second"},
+		"interfaces":  []interface{}{"first", 1, "second"},
+		"single":      "only",
+		"unsupported": []int{1},
+		"float64":     float64(1),
+		"float32":     float32(2),
+		"int":         3,
+		"int64":       int64(4),
+		"no-number":   "five",
+	}
+
+	require.Equal(t, []string{"first", "second"}, fieldStrings(fields, "strings"))
+	require.Equal(t, []string{"first", "second"}, fieldStrings(fields, "interfaces"))
+	require.Equal(t, []string{"only"}, fieldStrings(fields, "single"))
+	require.Nil(t, fieldStrings(fields, "unsupported"))
+	require.Equal(t, 1, fieldInt(fields, "float64"))
+	require.Equal(t, 2, fieldInt(fields, "float32"))
+	require.Equal(t, 3, fieldInt(fields, "int"))
+	require.Equal(t, 4, fieldInt(fields, "int64"))
+	require.Zero(t, fieldInt(fields, "no-number"))
+}
+
+func TestService_ReportsIndexOperationFailures(t *testing.T) {
+	backing, err := bleve.NewMemOnly(buildMapping())
+	require.NoError(t, err)
+	service := NewService(testSettings())
+	defer service.Close()
+	service.index = &failingSearchIndex{backing: backing, searchErr: errors.New("search failed")}
+
+	results, err := service.Search("query", 10)
+	require.ErrorContains(t, err, "search failed")
+	require.Nil(t, results)
+}
+
+func TestService_MutationFailureBoundaries(t *testing.T) {
+	t.Run("replace cancellation and uninitialized index", func(t *testing.T) {
+		service := NewService(testSettings())
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		require.ErrorIs(t, service.ReplaceSource(ctx, "source", nil), context.Canceled)
+		require.ErrorContains(t, service.ReplaceSource(context.Background(), "source", nil), "not initialized")
+	})
+
+	t.Run("replace and delete batch failures preserve source state", func(t *testing.T) {
+		backing, err := bleve.NewMemOnly(buildMapping())
+		require.NoError(t, err)
+		index := &failingSearchIndex{backing: backing, batchErr: errors.New("batch failed")}
+		service := NewService(testSettings())
+		defer service.Close()
+		service.index = index
+		service.sourceChunks = map[string][]string{"source": {"old"}}
+
+		require.ErrorContains(t, service.ReplaceSource(context.Background(), "source", []domain.Chunk{{ID: "new"}}), "failed to replace source chunks")
+		require.ErrorContains(t, service.DeleteSource(context.Background(), "source"), "failed to delete source chunks")
+		index.batchErr = nil
+		require.NoError(t, service.DeleteSource(context.Background(), "source"))
+		require.NotContains(t, service.sourceChunks, "source")
+	})
+
+	t.Run("delete cancellation, no index, and unknown source", func(t *testing.T) {
+		service := NewService(testSettings())
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		require.ErrorIs(t, service.DeleteSource(ctx, "source"), context.Canceled)
+		require.NoError(t, service.DeleteSource(context.Background(), "source"))
+		indexChunks(t, service, []domain.Chunk{{ID: "known", SourceID: "known", SourceURI: "acdc://known", ChunkURI: "acdc://known#chunk", Content: "known"}})
+		require.NoError(t, service.DeleteSource(context.Background(), "unknown"))
+		results, err := service.Search("known", 10)
+		require.NoError(t, err)
+		require.Len(t, results, 1)
+	})
+}
+
+func TestService_IndexCreationFailuresPreserveExistingState(t *testing.T) {
+	settings := testSettings()
+	settings.InMemory = false
+	service := NewService(settings)
+	defer service.Close()
+	indexChunks(t, service, []domain.Chunk{{ID: "stable", SourceID: "source", SourceURI: "acdc://source", ChunkURI: "acdc://source#stable", Content: "stable"}})
+
+	originalMakeTempDir := makeTempDir
+	makeTempDir = func(string, string) (string, error) { return "", errors.New("temp failure") }
+	t.Cleanup(func() { makeTempDir = originalMakeTempDir })
+	chunks := make(chan domain.Chunk)
+	close(chunks)
+	require.ErrorContains(t, service.Index(context.Background(), chunks), "temp failure")
+	results, err := service.Search("stable", 10)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+}
+
+func TestService_NewIndexReportsDependencyFailures(t *testing.T) {
+	t.Run("memory index", func(t *testing.T) {
+		service := NewService(testSettings())
+		originalNewMemoryIndex := newMemoryIndex
+		newMemoryIndex = func(mapping.IndexMapping) (bleve.Index, error) { return nil, errors.New("memory failure") }
+		t.Cleanup(func() { newMemoryIndex = originalNewMemoryIndex })
+		_, _, err := service.newIndex()
+		require.ErrorContains(t, err, "memory failure")
+	})
+
+	t.Run("remove temporary directory", func(t *testing.T) {
+		settings := testSettings()
+		settings.InMemory = false
+		service := NewService(settings)
+		originalMakeTempDir, originalRemoveAll := makeTempDir, removeAll
+		makeTempDir = func(string, string) (string, error) { return filepath.Join(t.TempDir(), "index"), nil }
+		removeAll = func(string) error { return errors.New("remove failure") }
+		t.Cleanup(func() {
+			makeTempDir = originalMakeTempDir
+			removeAll = originalRemoveAll
+		})
+		_, _, err := service.newIndex()
+		require.ErrorContains(t, err, "remove failure")
+	})
+
+	t.Run("create disk index", func(t *testing.T) {
+		settings := testSettings()
+		settings.InMemory = false
+		service := NewService(settings)
+		originalNewDiskIndex := newDiskIndex
+		newDiskIndex = func(string, mapping.IndexMapping) (bleve.Index, error) { return nil, errors.New("disk failure") }
+		t.Cleanup(func() { newDiskIndex = originalNewDiskIndex })
+		_, _, err := service.newIndex()
+		require.ErrorContains(t, err, "disk failure")
+	})
+}
+
+func TestService_CloseCleansUpDiskIndexAndDocCount(t *testing.T) {
+	settings := testSettings()
+	settings.InMemory = false
+	service := NewService(settings)
+	indexChunks(t, service, []domain.Chunk{{ID: "disk", SourceID: "source", SourceURI: "acdc://source", ChunkURI: "acdc://source#disk", Content: "disk"}})
+	indexDir := service.indexDir
+	require.DirExists(t, indexDir)
+
+	service.Close()
+	require.NoDirExists(t, indexDir)
+	count, err := service.DocCount()
+	require.NoError(t, err)
+	require.Zero(t, count)
+	service.Close()
+}
+
+func TestService_DiskRebuildCleansUpPrivateAndReplacedIndexes(t *testing.T) {
+	settings := testSettings()
+	settings.InMemory = false
+	service := NewService(settings)
+	defer service.Close()
+	indexChunks(t, service, []domain.Chunk{{ID: "old", SourceID: "source", SourceURI: "acdc://source", ChunkURI: "acdc://source#old", Content: "old"}})
+	oldIndexDir := service.indexDir
+
+	invalidChunks := make(chan domain.Chunk, 1)
+	invalidChunks <- domain.Chunk{Content: "invalid"}
+	close(invalidChunks)
+	require.Error(t, service.Index(context.Background(), invalidChunks))
+	require.DirExists(t, oldIndexDir)
+	results, err := service.Search("old", 10)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	indexChunks(t, service, []domain.Chunk{{ID: "new", SourceID: "source", SourceURI: "acdc://source", ChunkURI: "acdc://source#new", Content: "new"}})
+	require.NoDirExists(t, oldIndexDir)
+	results, err = service.Search("new", 10)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
 }
 
 func TestService_Index_ContextCancellation(t *testing.T) {
