@@ -108,6 +108,7 @@ readinessProbe:
 | `--cross-ref` | — | `ACDC_MCP_CROSS_REF` | `false` |
 | `--search-max-results` | `-m` | `ACDC_MCP_SEARCH_MAX_RESULTS` | `10` |
 | `--search-keywords-boost` | — | `ACDC_MCP_SEARCH_KEYWORDS_BOOST` | `3.0` |
+| `--search-result-mode` | — | `ACDC_MCP_SEARCH_RESULT_MODE` | `references` |
 | `--auth-type` | `-a` | `ACDC_MCP_AUTH_TYPE` | `none` |
 
 For full configuration options including authentication, see [Configuration Reference](docs/configuration.md).
@@ -145,6 +146,8 @@ claude mcp add --scope user --transport sse acdc http://<host>:<port>/sse
 
 The server requires an `mcp-metadata.yaml` file in your content directory to define server identity. Tool metadata is optional and the server provides high-quality default descriptions for `search` and `read` tools.
 
+By default, the server discovers markdown files under `mcp-resources/`. Adding an `index` block to `mcp-metadata.yaml` switches document discovery instead to any Markdown matched by glob patterns (e.g. `docs/**/*.md`), without needing frontmatter or a dedicated `mcp-resources/` layout. Either way, discovered documents are split into heading-aware chunks for search.
+
 For details on authoring resource files, including frontmatter format and search keyword boosting, see the [Authoring Resources Guide](docs/authoring-resources.md).
 
 ### Examples
@@ -152,6 +155,7 @@ For details on authoring resource files, including frontmatter format and search
 Check out the [examples/](examples/) directory for structured deployment patterns:
 - [Local Content Demo](examples/docker-local-content/) — Direct mount for rapid iteration.
 - [Remote Image Demo](examples/docker-image-content/) — Production-like init container pattern.
+- [Repository Docs Demo](examples/repository-docs/) — Configured chunk indexing over an existing repository's `docs/` directory.
 
 ## 🛠️ Development
 

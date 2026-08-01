@@ -18,7 +18,7 @@ The server is configured via environment variables, command-line flags, or a `.e
 
 | Environment Variable | CLI Flag | Description | Default |
 | :--- | :--- | :--- | :--- |
-| `ACDC_MCP_CONTENT_DIR` | `--content-dir`, `-c` | Root directory containing `mcp-metadata.yaml` and `mcp-resources/`. | `./content` |
+| `ACDC_MCP_CONTENT_DIR` | `--content-dir`, `-c` | Root directory containing `mcp-metadata.yaml` (see Content Repository Structure). | `./content` |
 | `ACDC_MCP_TRANSPORT` | `--transport`, `-t` | Communication transport: `stdio` or `sse`. | `stdio` |
 | `ACDC_MCP_HOST` | `--host`, `-H` | Host interface to bind for SSE transport. | `0.0.0.0` |
 | `ACDC_MCP_PORT` | `--port`, `-p` | Port to listen on for SSE transport. | `8080` |
@@ -26,6 +26,7 @@ The server is configured via environment variables, command-line flags, or a `.e
 | `ACDC_MCP_SEARCH_KEYWORDS_BOOST` | `--search-keywords-boost` | Boost factor for keyword matches. | `3.0` |
 | `ACDC_MCP_SEARCH_NAME_BOOST` | `--search-name-boost` | Boost factor for name matches. | `2.0` |
 | `ACDC_MCP_SEARCH_CONTENT_BOOST` | `--search-content-boost` | Boost factor for content matches. | `1.0` |
+| `ACDC_MCP_SEARCH_RESULT_MODE` | `--search-result-mode` | Search output detail: `references` or `content`. | `references` |
 | `ACDC_MCP_AUTH_TYPE` | `--auth-type`, `-a` | Authentication mode for SSE: `none`, `basic`, `apikey`. | `none` |
 | `ACDC_MCP_AUTH_BASIC_USERNAME` | `--auth-basic-username`, `-u` | Username for Basic Auth. | - |
 | `ACDC_MCP_AUTH_BASIC_PASSWORD` | `--auth-basic-password`, `-P` | Password for Basic Auth. | - |
@@ -36,12 +37,12 @@ The server is configured via environment variables, command-line flags, or a `.e
 
 ## Content Repository Structure
 
-The server expects a specific directory structure within `ACDC_MCP_CONTENT_DIR`:
+The server expects `mcp-metadata.yaml` at the root of `ACDC_MCP_CONTENT_DIR`. Source documents are then discovered in one of two mutually exclusive modes, selected by the presence of an `index` block in `mcp-metadata.yaml`:
 
 ```text
 / (Content Root)
-├── mcp-metadata.yaml       # Server identity and tool configuration (Required)
-└── mcp-resources/          # Directory containing resource files (Required)
+├── mcp-metadata.yaml       # Server identity, tool, and index configuration (Required)
+└── mcp-resources/          # Legacy discovery: used when `index` is absent
     ├── guide.md
     └── subfolder/
         └── details.md
@@ -49,7 +50,7 @@ The server expects a specific directory structure within `ACDC_MCP_CONTENT_DIR`:
 
 ### 1. Metadata Manifest (`mcp-metadata.yaml`)
 
-Defines the server's identity and optional tool overrides.
+Defines the server's identity, optional tool overrides, and optional configured indexing.
 
 **Schema:**
 ```yaml
@@ -63,18 +64,25 @@ tools:                  # Optional: Override default tool descriptions
     description: <string> 
   - name: read
     description: <string> 
+
+index:                  # Optional: switches discovery to configured chunk indexing
+  include:               # Required if `index` is present: glob patterns, relative to content root
+    - docs/**/*.md
+  exclude:               # Optional: glob patterns; always wins over `include`
+    - docs/generated/**
 ```
 *Note: If the `tools` section is omitted or a specific tool is not listed, the server provides high-quality default descriptions for the `search` and `read` tools.*
 
-### 2. Resources (`mcp-resources/`)
+### 2a. Legacy Resource Discovery (`mcp-resources/`, `index` absent)
 
--   **Discovery**: The server recursively scans `mcp-resources/` for `.md` files.
+-   **Discovery**: The server recursively scans `mcp-resources/` for `.md` and `.markdown` files. A missing directory yields zero resources (not an error).
 -   **URI Scheme**: `<scheme>://<relative_path_without_extension>` (default scheme: `acdc`)
     -   Example: `mcp-resources/docs/guide.md` -> `acdc://docs/guide`
     -   With `--uri-scheme myorg`: `mcp-resources/docs/guide.md` -> `myorg://docs/guide`
     -   The scheme must be RFC 3986 compliant (starts with a letter, followed by letters/digits/`+`/`-`/`.`).
     -   Windows backslashes are normalized to forward slashes.
 -   **File Format**: Must be Markdown with YAML Frontmatter.
+-   **Error handling**: A file with invalid YAML, missing frontmatter, or missing `name`/`description` is skipped with a warning log; it does not fail startup.
 
 **Frontmatter Requirements:**
 ```markdown
@@ -88,6 +96,28 @@ keywords:               # Optional: List of keywords for search boosting
 Markdown content follows...
 ```
 
+### 2b. Configured Chunk Indexing (`index` present)
+
+-   **Discovery**: Files under the content root matching `index.include` (and not matching `index.exclude`) are indexed, using [doublestar](https://github.com/bmatcuk/doublestar) glob syntax where `**` matches zero or more path segments (`docs/**/*.md` matches both `docs/guide.md` and `docs/api/guide.md`). Patterns must be relative to the content root; absolute or root-escaping patterns fail startup. `exclude` always wins over `include`.
+-   **URI Scheme**: Same construction as legacy discovery, relative to `--content-dir` instead of `mcp-resources/`.
+-   **File Format**: Must be `.md` or `.markdown`. YAML frontmatter is **optional**; when present it must still be valid.
+-   **Metadata derivation**: `name` falls back to the first `#` (H1) heading, `description` to the first paragraph, when frontmatter omits them. `description` is always truncated to 200 Unicode characters, whether it came from frontmatter or the fallback paragraph. `keywords` has no fallback.
+-   **Error handling (strict)**: Any of the following fails server startup: `index.include` missing/empty, an invalid/absolute/root-escaping glob pattern, zero files matched, a matched file that is not Markdown, a matched file that cannot be read or parsed, or the content root itself cannot be resolved (e.g. a broken symlink).
+-   **Not part of this release**: persistence across restarts and live filesystem watching. The chunk catalog and search index are rebuilt fully at each startup.
+
+### 3. Chunking and Fragment URIs (Both Modes)
+
+Chunking is not specific to configured indexing: regardless of which discovery mode selected a document, every discovered document — legacy or configured — is split into chunks before indexing, and `search` always returns chunk URIs, never bare document URIs.
+
+-   **Chunk boundaries**: A new chunk starts at *every* heading, of any level — a chunk's content never includes its subsections' content, though its `heading_path` still records the full ancestry (e.g. `["Configuration", "Authentication"]`). Content before the first heading forms its own chunk, addressed with the reserved fragment `document`. A heading whose text has no letters or digits (e.g. `# !!!`) falls back to the fragment `section`.
+-   **Soft splitting**: A section exceeding a soft limit of **4,000 Unicode code points** is further split along block boundaries into multiple parts, each still tagged with the section's full heading path.
+-   **Fragment URIs**: An unsplit section is `<document-uri>#<heading-slug>` (or `<document-uri>#document` for the pre-heading preamble). A split section's parts are `<document-uri>#<heading-slug>~1`, `~2`, ... — every part, including the first, carries the suffix. Reading the bare `#<heading-slug>` of a split section reconstructs the full section by joining its parts. Duplicate heading text produces de-duplicated slugs (`#overview-1`, `#overview-2`, ...).
+-   **Result diversity**: `search` fetches up to `ACDC_MCP_SEARCH_MAX_RESULTS` × 5 candidates internally, then caps results per source document before returning up to the configured limit: 1 chunk per document in `references` mode, 2 in `content` mode.
+-   **Path labels**: Each chunk is also ranked on path labels derived from the document's relative path (split on `/`, `-`, `_`, whitespace, and camelCase boundaries; lowercased; deduplicated), indexed with a 1.25x boost — see `path_labels` below.
+-   **Duplicate identity**: Startup fails if two discovered documents or chunks resolve to the same URI or ID — for example, `guide.md` and `guide.markdown` selected side by side both produce the URI `<scheme>://guide`. This applies to both discovery modes.
+
+See the [Authoring Resources Guide](authoring-resources.md#chunking-and-fragment-uris) for full details and the [Repository Docs example](../examples/repository-docs/).
+
 ---
 
 ## Tools
@@ -95,7 +125,7 @@ Markdown content follows...
 The server always implements and registers the following MCP tools. Their descriptions can be customized via `mcp-metadata.yaml`, but sensible defaults are provided.
 
 ### `search`
-Performs a full-text search across all indexed resources.
+Performs a full-text search over indexed chunks and returns chunk citations, optionally with the full chunk body.
 
 *   **Input Schema:**
     ```json
@@ -104,44 +134,50 @@ Performs a full-text search across all indexed resources.
     }
     ```
 *   **Behavior:**
-    *   Searches against `name`, `content`, and `keywords` using fuzzy matching (distance 1) and stemming.
-    *   Applies boosting: `keywords` (3.0), `name` (2.0), `content` (1.0) by default.
-    *   Returns a maximum of `ACDC_MCP_SEARCH_MAX_RESULTS`.
+    *   Searches against `source_title`, `path_labels`, `heading_path`, `content`, and `keywords` fields using fuzzy matching (distance 1) and stemming.
+    *   Applies boosting: `keywords` (3.0, configurable), `heading_path` (2.5), `source_title` (2.0, configurable), `path_labels` (1.25), `content` (1.0, configurable).
+    *   Applies per-source-document result diversity — see [Chunking and Fragment URIs](#3-chunking-and-fragment-uris-both-modes).
 *   **Output:**
     Text summary of results in the format:
     ```text
     Search results for '<query>':
 
-    - [<Name>](<URI>): <Snippet> (relevance: <Score>)
+    - **<Source Title>** · [<Chunk URI>](<Chunk URI>)
+      - <Source Path> > <Heading Path> · lines <Start>-<End> · score <Score>
+      - <Highlighted Snippet>
+
+    <Full chunk body — only when ACDC_MCP_SEARCH_RESULT_MODE=content>
     ...
     ```
     *If no results found, returns a descriptive message.*
 
 ### `read`
-Retrieves the full raw content of a resource.
+Retrieves the raw content addressed by a URI: a full source document, a single chunk, or a whole (possibly multi-part) section — see [Chunking and Fragment URIs](#3-chunking-and-fragment-uris-both-modes).
 
 *   **Input Schema:**
     ```json
     {
-      "uri": "string (Required) - The resource URI (e.g. acdc://path)"
+      "uri": "string (Required) - The resource URI (e.g. acdc://path or acdc://path#fragment)"
     }
     ```
 *   **Behavior:**
-    *   Resolves the URI to the corresponding file path.
-    *   Reads the file content (excluding frontmatter, effectively returning the body).
+    *   A base document URI (`<scheme>://path`) returns the full document (frontmatter stripped).
+    *   A chunk fragment URI (`<scheme>://path#fragment`) returns that chunk's content only.
+    *   A section fragment URI for a split section returns all of its parts joined together.
 *   **Output:**
-    Raw string content of the markdown body.
+    Raw markdown content of the resolved document, chunk, or section.
 
 ---
 
 ## MCP Resources
 
-In addition to tools, the server exposes resources directly via the MCP `resources/list` capability.
+In addition to tools, the server exposes source documents (not individual chunks) directly via the MCP `resources/list` capability.
 
-*   **URI**: Same as the `<scheme>://` URI used in tools (default scheme: `acdc`).
-*   **Name**: From frontmatter `name`.
-*   **Description**: From frontmatter `description`.
+*   **URI**: Same as the `<scheme>://` document URI used in tools (default scheme: `acdc`).
+*   **Name**: From frontmatter `name`, or the first `#` heading when using configured indexing without a `name` field.
+*   **Description**: From frontmatter `description`, or the first paragraph when using configured indexing without a `description` field. Always truncated to 200 Unicode characters, whether it came from frontmatter or the fallback paragraph.
 *   **MIME Type**: `text/markdown`.
+*   Chunk and section URIs (`<scheme>://path#fragment`) are not listed; they are reachable via `read` once obtained from a `search` result.
 
 ---
 
@@ -171,13 +207,18 @@ Used for remote connections.
 ## Search Implementation Details
 
 *   **Engine**: Bleve (Go) full-text search engine.
-*   **Indexing**: Occurs at server startup (in-memory or temporary directory).
+*   **Indexing**: Indexes document chunks (not whole documents). Occurs at server startup (in-memory or temporary directory) and is rebuilt in full on every restart — there is no persistence across restarts and no live filesystem watching in this release.
 *   **Features**:
     *   **Fuzzy Search**: Matches terms with an edit distance of 1.
     *   **Stemming**: Uses the standard English analyzer for language-aware matching.
     *   **Highlighting**: Generates dynamic snippets with search term context.
+    *   **Result Diversity**: Caps results per source document (1 in `references` mode, 2 in `content` mode) so results aren't dominated by a single document.
 *   **Indexed Fields (Default Boosts)**:
-    *   `uri` (Stored, Indexed)
-    *   `name` (Stored, Indexed, Boost x2.0)
+    *   `chunk_id`, `source_id`, `source_uri`, `chunk_uri`, `source_path` (Stored, Identifier)
+    *   `source_title` (Stored, Indexed, Boost x2.0)
+    *   `path_labels` (Stored, Indexed, Boost x1.25)
+    *   `heading_path` (Stored, Indexed, Boost x2.5)
     *   `content` (Stored, Indexed, Boost x1.0)
-    *   `keywords` (Indexed, Boost x3.0, Optional)
+    *   `keywords` (Stored, Indexed, Boost x3.0, Optional)
+    *   `start_line`, `end_line` (Stored, Numeric)
+    *   `section_fragment`, `fragment`, `part`, `part_count` (Stored, indexed via Bleve's dynamic default mapping; not explicitly boosted or queried)

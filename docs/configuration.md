@@ -25,6 +25,7 @@ When the same setting is specified in multiple places, the following priority ap
 | `--search-keywords-boost` | — | `ACDC_MCP_SEARCH_KEYWORDS_BOOST` | Boost for keywords matches | `3.0` |
 | `--search-name-boost` | — | `ACDC_MCP_SEARCH_NAME_BOOST` | Boost for name matches | `2.0` |
 | `--search-content-boost` | — | `ACDC_MCP_SEARCH_CONTENT_BOOST` | Boost for content matches | `1.0` |
+| `--search-result-mode` | — | `ACDC_MCP_SEARCH_RESULT_MODE` | Search output detail: `references` (chunk citations only) or `content` (citations plus the full matched chunk body) | `references` |
 
 ## Authentication Settings
 
@@ -59,6 +60,13 @@ When the same setting is specified in multiple places, the following priority ap
 
 This produces resource URIs like `myorg://guides/getting-started` instead of the default `acdc://guides/getting-started`.
 
+**CLI flags (content result mode):**
+```bash
+./bin/acdc-mcp -c /path/to/content --search-result-mode content
+```
+
+By default (`references`), the `search` tool returns chunk citations — title, URI, breadcrumb, and a highlighted snippet — so agents follow up with a `read` call for the full chunk. Setting `--search-result-mode content` (or `ACDC_MCP_SEARCH_RESULT_MODE=content`) additionally inlines the full matched chunk body in the search response itself. See the [Authoring Resources Guide](authoring-resources.md#configured-chunk-indexing-index) for how content is split into chunks.
+
 **Environment variables:**
 ```bash
 ACDC_MCP_TRANSPORT=sse ACDC_MCP_CONTENT_DIR=/data ./bin/acdc-mcp
@@ -78,6 +86,7 @@ auth.basic.password=secret
 The server validates configuration at startup and will fail with a clear error if:
 
 - `--uri-scheme` is empty or doesn't match RFC 3986 (must start with a letter, then letters/digits/`+`/`-`/`.`)
+- `--search-result-mode` is set to anything other than `references` or `content`
 - `--auth-type=basic` is set without username/password
 - `--auth-type=apikey` is set without API keys
 - `--auth-type=none` is set with auth credentials (conflicting intent)
