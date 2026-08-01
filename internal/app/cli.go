@@ -12,6 +12,7 @@ func RegisterFlags(flags *pflag.FlagSet) {
 	flags.Float64("search-keywords-boost", 0, "Boost for keywords matches (default: 3.0)")
 	flags.Float64("search-name-boost", 0, "Boost for name matches (default: 2.0)")
 	flags.Float64("search-content-boost", 0, "Boost for content matches (default: 1.0)")
+	flags.String("search-result-mode", "", "Search output mode: references or content (default: references)")
 	flags.StringP("uri-scheme", "s", "", "URI scheme for resources (default: acdc)")
 	flags.Bool("cross-ref", false, "Transform relative markdown links to resource URIs (default: false)")
 	flags.StringP("auth-type", "a", "", "Authentication type: none, basic, or apikey (default: none)")

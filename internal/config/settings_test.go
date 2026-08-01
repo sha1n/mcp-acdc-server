@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/spf13/pflag"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoadSettings_Defaults(t *testing.T) {
@@ -41,6 +42,13 @@ func TestLoadSettings_Defaults(t *testing.T) {
 	if settings.CrossRef != false {
 		t.Errorf("Expected default cross_ref false, got %v", settings.CrossRef)
 	}
+}
+
+func TestLoadSettings_SearchResultMode(t *testing.T) {
+	t.Setenv("ACDC_MCP_SEARCH_RESULT_MODE", "content")
+	settings, err := LoadSettings()
+	require.NoError(t, err)
+	require.Equal(t, SearchResultModeContent, settings.Search.ResultMode)
 }
 
 func TestLoadSettings_EnvVars(t *testing.T) {
@@ -271,14 +279,27 @@ func TestLoadSettingsWithFlags_AllFlagTypes(t *testing.T) {
 // --- ValidateSettings Tests ---
 
 func TestValidateSettings_ValidNone(t *testing.T) {
-	s := &Settings{Transport: "stdio", Scheme: "acdc", Auth: AuthSettings{Type: AuthTypeNone}}
+	s := &Settings{Transport: "stdio", Scheme: "acdc", Search: SearchSettings{ResultMode: SearchResultModeReferences}, Auth: AuthSettings{Type: AuthTypeNone}}
 	if err := ValidateSettings(s); err != nil {
 		t.Errorf("Expected no error for valid none auth, got: %v", err)
 	}
 }
 
+func TestValidateSettings_SearchResultMode(t *testing.T) {
+	settings := &Settings{
+		Transport: "stdio",
+		Scheme:    "acdc",
+		Search: SearchSettings{
+			ResultMode: SearchResultModeReferences,
+		},
+		Auth: AuthSettings{Type: AuthTypeNone},
+	}
+	settings.Search.ResultMode = "verbose"
+	require.EqualError(t, ValidateSettings(settings), "search result mode must be 'references' or 'content', got: verbose")
+}
+
 func TestValidateSettings_ValidNone_EmptyType(t *testing.T) {
-	s := &Settings{Transport: "stdio", Scheme: "acdc", Auth: AuthSettings{Type: ""}}
+	s := &Settings{Transport: "stdio", Scheme: "acdc", Search: SearchSettings{ResultMode: SearchResultModeReferences}, Auth: AuthSettings{Type: ""}}
 	if err := ValidateSettings(s); err != nil {
 		t.Errorf("Expected no error for empty auth type, got: %v", err)
 	}
@@ -288,6 +309,7 @@ func TestValidateSettings_ValidBasic(t *testing.T) {
 	s := &Settings{
 		Transport: "stdio",
 		Scheme:    "acdc",
+		Search:    SearchSettings{ResultMode: SearchResultModeReferences},
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
 			Basic: BasicAuthSettings{
@@ -305,6 +327,7 @@ func TestValidateSettings_ValidAPIKey(t *testing.T) {
 	s := &Settings{
 		Transport: "stdio",
 		Scheme:    "acdc",
+		Search:    SearchSettings{ResultMode: SearchResultModeReferences},
 		Auth: AuthSettings{
 			Type:    AuthTypeAPIKey,
 			APIKeys: []string{"key1", "key2"},
@@ -325,6 +348,7 @@ func TestValidateSettings_NoneWithCredentials(t *testing.T) {
 			settings: Settings{
 				Transport: "stdio",
 				Scheme:    "acdc",
+				Search:    SearchSettings{ResultMode: SearchResultModeReferences},
 				Auth: AuthSettings{
 					Type:  AuthTypeNone,
 					Basic: BasicAuthSettings{Username: "admin"},
@@ -336,6 +360,7 @@ func TestValidateSettings_NoneWithCredentials(t *testing.T) {
 			settings: Settings{
 				Transport: "stdio",
 				Scheme:    "acdc",
+				Search:    SearchSettings{ResultMode: SearchResultModeReferences},
 				Auth: AuthSettings{
 					Type:  AuthTypeNone,
 					Basic: BasicAuthSettings{Password: "secret"},
@@ -347,6 +372,7 @@ func TestValidateSettings_NoneWithCredentials(t *testing.T) {
 			settings: Settings{
 				Transport: "stdio",
 				Scheme:    "acdc",
+				Search:    SearchSettings{ResultMode: SearchResultModeReferences},
 				Auth: AuthSettings{
 					Type:    AuthTypeNone,
 					APIKeys: []string{"key1"},
@@ -372,6 +398,7 @@ func TestValidateSettings_BasicAuthMissingUsername(t *testing.T) {
 	s := &Settings{
 		Transport: "stdio",
 		Scheme:    "acdc",
+		Search:    SearchSettings{ResultMode: SearchResultModeReferences},
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
 			Basic: BasicAuthSettings{
@@ -392,6 +419,7 @@ func TestValidateSettings_BasicAuthMissingPassword(t *testing.T) {
 	s := &Settings{
 		Transport: "stdio",
 		Scheme:    "acdc",
+		Search:    SearchSettings{ResultMode: SearchResultModeReferences},
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
 			Basic: BasicAuthSettings{
@@ -409,6 +437,7 @@ func TestValidateSettings_BasicAuthWithAPIKeys(t *testing.T) {
 	s := &Settings{
 		Transport: "stdio",
 		Scheme:    "acdc",
+		Search:    SearchSettings{ResultMode: SearchResultModeReferences},
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
 			Basic: BasicAuthSettings{
@@ -431,6 +460,7 @@ func TestValidateSettings_APIKeyMissingKeys(t *testing.T) {
 	s := &Settings{
 		Transport: "stdio",
 		Scheme:    "acdc",
+		Search:    SearchSettings{ResultMode: SearchResultModeReferences},
 		Auth: AuthSettings{
 			Type: AuthTypeAPIKey,
 		},
@@ -448,6 +478,7 @@ func TestValidateSettings_APIKeyWithBasicCreds(t *testing.T) {
 	s := &Settings{
 		Transport: "stdio",
 		Scheme:    "acdc",
+		Search:    SearchSettings{ResultMode: SearchResultModeReferences},
 		Auth: AuthSettings{
 			Type:    AuthTypeAPIKey,
 			APIKeys: []string{"key1"},
@@ -469,6 +500,7 @@ func TestValidateSettings_UnknownAuthType(t *testing.T) {
 	s := &Settings{
 		Transport: "stdio",
 		Scheme:    "acdc",
+		Search:    SearchSettings{ResultMode: SearchResultModeReferences},
 		Auth: AuthSettings{
 			Type: "oauth",
 		},
@@ -485,14 +517,14 @@ func TestValidateSettings_UnknownAuthType(t *testing.T) {
 // --- Transport Validation Tests ---
 
 func TestValidateSettings_ValidTransportStdio(t *testing.T) {
-	s := &Settings{Transport: "stdio", Scheme: "acdc", Auth: AuthSettings{Type: AuthTypeNone}}
+	s := &Settings{Transport: "stdio", Scheme: "acdc", Search: SearchSettings{ResultMode: SearchResultModeReferences}, Auth: AuthSettings{Type: AuthTypeNone}}
 	if err := ValidateSettings(s); err != nil {
 		t.Errorf("Expected no error for valid stdio transport, got: %v", err)
 	}
 }
 
 func TestValidateSettings_ValidTransportSSE(t *testing.T) {
-	s := &Settings{Transport: "sse", Scheme: "acdc", Auth: AuthSettings{Type: AuthTypeNone}}
+	s := &Settings{Transport: "sse", Scheme: "acdc", Search: SearchSettings{ResultMode: SearchResultModeReferences}, Auth: AuthSettings{Type: AuthTypeNone}}
 	if err := ValidateSettings(s); err != nil {
 		t.Errorf("Expected no error for valid sse transport, got: %v", err)
 	}
@@ -514,6 +546,7 @@ func TestValidateSettings_InvalidTransport(t *testing.T) {
 			s := &Settings{
 				Transport: tt.transport,
 				Scheme:    "acdc",
+				Search:    SearchSettings{ResultMode: SearchResultModeReferences},
 				Auth:      AuthSettings{Type: AuthTypeNone},
 			}
 			err := ValidateSettings(s)
@@ -605,7 +638,7 @@ func TestValidateSettings_ValidSchemes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &Settings{Transport: "stdio", Scheme: tt.scheme, Auth: AuthSettings{Type: AuthTypeNone}}
+			s := &Settings{Transport: "stdio", Scheme: tt.scheme, Search: SearchSettings{ResultMode: SearchResultModeReferences}, Auth: AuthSettings{Type: AuthTypeNone}}
 			if err := ValidateSettings(s); err != nil {
 				t.Errorf("Expected no error for scheme %q, got: %v", tt.scheme, err)
 			}
@@ -628,7 +661,7 @@ func TestValidateSettings_InvalidSchemes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &Settings{Transport: "stdio", Scheme: tt.scheme, Auth: AuthSettings{Type: AuthTypeNone}}
+			s := &Settings{Transport: "stdio", Scheme: tt.scheme, Search: SearchSettings{ResultMode: SearchResultModeReferences}, Auth: AuthSettings{Type: AuthTypeNone}}
 			err := ValidateSettings(s)
 			if err == nil {
 				t.Fatalf("Expected error for scheme %q", tt.scheme)
