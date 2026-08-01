@@ -16,8 +16,26 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// CreateMCPServer initializes the core MCP server components
-func CreateMCPServer(settings *config.Settings) (*mcpsdk.Server, func(), error) {
+type factoryDeps struct {
+	discover  func(context.Context, *content.ContentProvider, *domain.IndexMetadata, string) (resources.DiscoveryResult, error)
+	newSearch func(config.SearchSettings) search.Searcher
+}
+
+func defaultFactoryDeps() factoryDeps {
+	return factoryDeps{
+		discover: resources.Discover,
+		newSearch: func(settings config.SearchSettings) search.Searcher {
+			return search.NewService(settings)
+		},
+	}
+}
+
+// CreateMCPServer initializes the core MCP server components.
+func CreateMCPServer(ctx context.Context, settings *config.Settings) (*mcpsdk.Server, func(), error) {
+	return createMCPServer(ctx, settings, defaultFactoryDeps())
+}
+
+func createMCPServer(ctx context.Context, settings *config.Settings, deps factoryDeps) (*mcpsdk.Server, func(), error) {
 	// Initialize content provider
 	cp := content.NewContentProvider(settings.ContentDir)
 
@@ -39,7 +57,7 @@ func CreateMCPServer(settings *config.Settings) (*mcpsdk.Server, func(), error) 
 	}
 
 	// Discover resources
-	discovery, err := resources.Discover(context.Background(), cp, metadata.Index, settings.Scheme)
+	discovery, err := deps.discover(ctx, cp, metadata.Index, settings.Scheme)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to discover resources: %w", err)
 	}
@@ -64,16 +82,16 @@ func CreateMCPServer(settings *config.Settings) (*mcpsdk.Server, func(), error) 
 	promptProvider := prompts.NewPromptProvider(promptDefinitions, cp)
 
 	// Initialize search service
-	searchService := search.NewService(settings.Search)
-	cleanup := func() {
-		searchService.Close()
-	}
+	searchService := deps.newSearch(settings.Search)
 
 	// Index resources
-	IndexResources(context.Background(), resourceProvider, searchService)
+	if err := IndexResources(ctx, resourceProvider, searchService); err != nil {
+		searchService.Close()
+		return nil, nil, err
+	}
 
 	// Create MCP server
 	mcpServer := mcp.CreateServer(metadata, resourceProvider, promptProvider, searchService, settings.Search)
 
-	return mcpServer, cleanup, nil
+	return mcpServer, searchService.Close, nil
 }

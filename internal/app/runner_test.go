@@ -16,6 +16,8 @@ func noopValidate(*config.Settings) error {
 	return nil
 }
 
+type runnerContextKey struct{}
+
 func TestRunWithDeps_ErrorCases(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -51,7 +53,7 @@ func TestRunWithDeps_ErrorCases(t *testing.T) {
 					return &config.Settings{Transport: "sse"}, nil
 				},
 				ValidSettings: noopValidate,
-				CreateServer: func(*config.Settings) (*mcp.Server, func(), error) {
+				CreateServer: func(context.Context, *config.Settings) (*mcp.Server, func(), error) {
 					return nil, nil, errors.New("create server error")
 				},
 			},
@@ -64,7 +66,7 @@ func TestRunWithDeps_ErrorCases(t *testing.T) {
 					return &config.Settings{Transport: "sse"}, nil
 				},
 				ValidSettings: noopValidate,
-				CreateServer: func(*config.Settings) (*mcp.Server, func(), error) {
+				CreateServer: func(context.Context, *config.Settings) (*mcp.Server, func(), error) {
 					return nil, nil, nil
 				},
 				StartSSEServer: func(*mcp.Server, *config.Settings) error {
@@ -95,7 +97,7 @@ func TestRunWithDeps_Cleanup(t *testing.T) {
 			return &config.Settings{Transport: "sse"}, nil
 		},
 		ValidSettings: noopValidate,
-		CreateServer: func(*config.Settings) (*mcp.Server, func(), error) {
+		CreateServer: func(context.Context, *config.Settings) (*mcp.Server, func(), error) {
 			return nil, func() { cleanupCalled = true }, nil
 		},
 		StartSSEServer: func(*mcp.Server, *config.Settings) error {
@@ -137,7 +139,7 @@ func TestRunWithDeps_StdioWithDefaultTransport(t *testing.T) {
 			return &config.Settings{Transport: "stdio"}, nil
 		},
 		ValidSettings: noopValidate,
-		CreateServer: func(*config.Settings) (*mcp.Server, func(), error) {
+		CreateServer: func(context.Context, *config.Settings) (*mcp.Server, func(), error) {
 			// Create a minimal server
 			impl := &mcp.Implementation{Name: "test", Version: "1.0"}
 			server := mcp.NewServer(impl, nil)
@@ -174,7 +176,7 @@ func TestRunWithDeps_StdioWithCustomTransport(t *testing.T) {
 			return &config.Settings{Transport: "stdio"}, nil
 		},
 		ValidSettings: noopValidate,
-		CreateServer: func(*config.Settings) (*mcp.Server, func(), error) {
+		CreateServer: func(context.Context, *config.Settings) (*mcp.Server, func(), error) {
 			impl := &mcp.Implementation{Name: "test", Version: "1.0"}
 			server := mcp.NewServer(impl, nil)
 			return server, nil, nil
@@ -191,6 +193,31 @@ func TestRunWithDeps_StdioWithCustomTransport(t *testing.T) {
 	// Verify that the custom transport was used (Connect was called)
 	if !transportUsed {
 		t.Error("Custom transport Connect was not called")
+	}
+}
+
+func TestRunWithDeps_PassesExactCallerContextToCreateServer(t *testing.T) {
+	ctx := context.WithValue(context.Background(), runnerContextKey{}, "request-context")
+	var createServerCtx context.Context
+	params := RunParams{
+		LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
+			return &config.Settings{Transport: "sse"}, nil
+		},
+		ValidSettings: noopValidate,
+		CreateServer: func(gotCtx context.Context, _ *config.Settings) (*mcp.Server, func(), error) {
+			createServerCtx = gotCtx
+			return nil, nil, nil
+		},
+		StartSSEServer: func(*mcp.Server, *config.Settings) error { return nil },
+	}
+
+	err := RunWithDeps(ctx, params, nil, "test")
+
+	if err != nil {
+		t.Fatalf("RunWithDeps returned error: %v", err)
+	}
+	if createServerCtx != ctx {
+		t.Fatal("CreateServer did not receive the exact caller context")
 	}
 }
 
