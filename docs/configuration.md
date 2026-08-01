@@ -23,7 +23,7 @@ When the same setting is specified in multiple places, the following priority ap
 | `--cross-ref` | — | `ACDC_MCP_CROSS_REF` | Transform relative markdown links between resources into resource URIs | `false` |
 | `--search-max-results` | `-m` | `ACDC_MCP_SEARCH_MAX_RESULTS` | Maximum search results | `10` |
 | `--search-keywords-boost` | — | `ACDC_MCP_SEARCH_KEYWORDS_BOOST` | Boost for keywords matches | `3.0` |
-| `--search-name-boost` | — | `ACDC_MCP_SEARCH_NAME_BOOST` | Boost for name matches | `2.0` |
+| `--search-title-boost` | — | `ACDC_MCP_SEARCH_TITLE_BOOST` | Boost for document title (`source_title`) matches | `2.0` |
 | `--search-content-boost` | — | `ACDC_MCP_SEARCH_CONTENT_BOOST` | Boost for content matches | `1.0` |
 | `--search-result-mode` | — | `ACDC_MCP_SEARCH_RESULT_MODE` | Search output detail: `references` (chunk citations only) or `content` (citations plus the full matched chunk body) | `references` |
 

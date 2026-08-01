@@ -253,7 +253,7 @@ func (s *Service) Search(queryStr string, candidateLimit int) ([]SearchResult, e
 		q = bleve.NewDisjunctionQuery(
 			fieldQuery(queryStr, domain.FieldKeywords, s.settings.KeywordsBoost),
 			fieldQuery(queryStr, domain.FieldHeadingPath, headingBoost),
-			fieldQuery(queryStr, domain.FieldSourceTitle, s.settings.NameBoost),
+			fieldQuery(queryStr, domain.FieldSourceTitle, s.settings.TitleBoost),
 			fieldQuery(queryStr, domain.FieldPathLabels, pathBoost),
 			fieldQuery(queryStr, domain.FieldContent, s.settings.ContentBoost),
 		)

@@ -124,3 +124,22 @@ func TestCLI_FlagParsing_AuthAPIKeys(t *testing.T) {
 		t.Errorf("Unexpected keys: %v", keys)
 	}
 }
+
+func TestRegisterFlags_SearchTitleBoostReplacesNameBoost(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	RegisterFlags(flags)
+
+	require.NotNil(t, flags.Lookup("search-title-boost"))
+	require.Nil(t, flags.Lookup("search-name-boost"))
+}
+
+func TestCLI_FlagParsing_SearchTitleBoost(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	RegisterFlags(flags)
+	require.NoError(t, flags.Set("search-title-boost", "7.5"))
+
+	settings, err := config.LoadSettingsWithFlags(flags)
+
+	require.NoError(t, err)
+	require.Equal(t, 7.5, settings.Search.TitleBoost)
+}
