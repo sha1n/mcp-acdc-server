@@ -25,7 +25,10 @@ func TestCreateServer(t *testing.T) {
 		},
 	}
 
-	resourceProvider := resources.NewResourceProvider([]resources.ResourceDefinition{})
+	resourceProvider, err := resources.NewResourceProvider([]resources.ResourceDefinition{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	promptProvider := prompts.NewPromptProvider([]prompts.PromptDefinition{}, nil)
 	searchService := &mockSearcher{}
 

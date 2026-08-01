@@ -44,7 +44,8 @@ func TestToolRegistration(t *testing.T) {
 		t.Error("Search handler should not be nil")
 	}
 
-	resourceProvider := resources.NewResourceProvider([]resources.ResourceDefinition{})
+	resourceProvider, err := resources.NewResourceProvider([]resources.ResourceDefinition{}, nil)
+	require.NoError(t, err)
 	readHandler := NewReadToolHandler(resourceProvider)
 	if readHandler == nil {
 		t.Error("Read handler should not be nil")
@@ -146,15 +147,17 @@ func TestReadToolHandler_Success(t *testing.T) {
 	err := os.WriteFile(filePath, []byte(resourceContent), 0644)
 	require.NoError(t, err)
 
-	resourceProvider := resources.NewResourceProvider([]resources.ResourceDefinition{
+	resourceProvider, err := resources.NewResourceProvider([]resources.ResourceDefinition{
 		{
 			Name:        "Test Resource",
 			URI:         "acdc://test-resource",
 			Description: "A test resource",
 			MIMEType:    "text/markdown",
 			FilePath:    filePath,
+			Content:     "# Test Content\n\nThis is test content.",
 		},
-	})
+	}, nil)
+	require.NoError(t, err)
 
 	handler := NewReadToolHandler(resourceProvider)
 	require.NotNil(t, handler)
@@ -176,7 +179,8 @@ func TestReadToolHandler_Success(t *testing.T) {
 }
 
 func TestReadToolHandler_Error_ResourceNotFound(t *testing.T) {
-	resourceProvider := resources.NewResourceProvider([]resources.ResourceDefinition{})
+	resourceProvider, err := resources.NewResourceProvider([]resources.ResourceDefinition{}, nil)
+	require.NoError(t, err)
 
 	handler := NewReadToolHandler(resourceProvider)
 	ctx := context.Background()

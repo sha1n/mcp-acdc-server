@@ -23,15 +23,17 @@ func TestMakeResourceHandler_Success(t *testing.T) {
 	err := os.WriteFile(filePath, []byte(resourceContent), 0644)
 	require.NoError(t, err)
 
-	resourceProvider := resources.NewResourceProvider([]resources.ResourceDefinition{
+	resourceProvider, err := resources.NewResourceProvider([]resources.ResourceDefinition{
 		{
 			Name:        "Test Resource",
 			URI:         "acdc://test-resource",
 			Description: "A test resource",
 			MIMEType:    "text/markdown",
 			FilePath:    filePath,
+			Content:     "# Test Content\n\nThis is test content.",
 		},
-	})
+	}, nil)
+	require.NoError(t, err)
 
 	handler := makeResourceHandler(resourceProvider, "acdc://test-resource")
 	require.NotNil(t, handler)
@@ -54,7 +56,8 @@ func TestMakeResourceHandler_Success(t *testing.T) {
 }
 
 func TestMakeResourceHandler_Error_NotFound(t *testing.T) {
-	resourceProvider := resources.NewResourceProvider([]resources.ResourceDefinition{})
+	resourceProvider, err := resources.NewResourceProvider([]resources.ResourceDefinition{}, nil)
+	require.NoError(t, err)
 
 	handler := makeResourceHandler(resourceProvider, "acdc://nonexistent")
 	require.NotNil(t, handler)

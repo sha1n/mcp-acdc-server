@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/sha1n/mcp-acdc-server/internal/domain"
 )
 
 // markdownLinkRe matches markdown links including images: ![text](target) and [text](target "title")
@@ -17,10 +19,10 @@ var markdownLinkRe = regexp.MustCompile(`!?\[([^\]]*)\]\(([^)\s]+)(\s+"[^"]*")?\
 // NewCrossRefTransformer creates a ContentTransformer that rewrites relative
 // markdown links to MCP resource URIs. The scheme parameter is used to
 // recognize and skip links that already use the configured URI scheme.
-func NewCrossRefTransformer(definitions []ResourceDefinition, scheme string) ContentTransformer {
-	filePathToURI := make(map[string]string, len(definitions))
-	for _, d := range definitions {
-		filePathToURI[d.FilePath] = d.URI
+func NewCrossRefTransformer(sources []domain.SourceDocument, scheme string) ContentTransformer {
+	filePathToURI := make(map[string]string, len(sources))
+	for _, source := range sources {
+		filePathToURI[source.FilePath] = source.URI
 	}
 
 	schemePrefix := scheme + "://"
