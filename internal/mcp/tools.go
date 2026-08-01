@@ -52,7 +52,7 @@ func NewSearchToolHandler(searchService search.Searcher) mcp.ToolHandlerFor[Sear
 		// Args are already validated and unmarshaled by SDK via jsonschema tags
 		slog.Info("Search request", "query", args.Query)
 
-		results, err := searchService.Search(args.Query, nil)
+		results, err := searchService.Search(args.Query, 0)
 		if err != nil {
 			slog.Error("Search failed", "query", args.Query, "error", err)
 			return nil, nil, err
@@ -64,7 +64,7 @@ func NewSearchToolHandler(searchService search.Searcher) mcp.ToolHandlerFor[Sear
 		} else {
 			fmt.Fprintf(&sb, "Search results for '%s':\n\n", args.Query)
 			for _, r := range results {
-				fmt.Fprintf(&sb, "- [%s](%s): %s\n\n", r.Name, r.URI, r.Snippet)
+				fmt.Fprintf(&sb, "- [%s](%s): %s\n\n", r.SourceTitle, r.SourceURI, r.Snippet)
 			}
 		}
 
