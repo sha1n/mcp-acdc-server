@@ -9,6 +9,7 @@ import (
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/content"
 	"github.com/sha1n/mcp-acdc-server/internal/resources"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCreateMCPServer_Success(t *testing.T) {
@@ -237,6 +238,41 @@ tools: []
 	if server == nil {
 		t.Fatal("Server is nil")
 	}
+}
+
+func TestCreateMCPServer_FailsWhenConfiguredDiscoveryFails(t *testing.T) {
+	contentDir := t.TempDir()
+	metadata := `
+server: { name: test, version: 1.0, instructions: inst }
+tools: []
+index:
+  include: ["docs/**"]
+`
+	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadata), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(contentDir, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "data.txt"), []byte("not markdown"), 0o644))
+
+	_, _, err := CreateMCPServer(&config.Settings{ContentDir: contentDir, Scheme: "acdc", Search: config.SearchSettings{InMemory: true}})
+	require.ErrorContains(t, err, "failed to discover resources")
+	require.ErrorContains(t, err, "configured index selected non-Markdown file")
+}
+
+func TestCreateMCPServer_FailsWhenDiscoveredSourcesShareURI(t *testing.T) {
+	contentDir := t.TempDir()
+	metadata := `
+server: { name: test, version: 1.0, instructions: inst }
+tools: []
+index:
+  include: ["docs/*"]
+`
+	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadata), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(contentDir, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "guide.md"), []byte("# Guide"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "guide.markdown"), []byte("# Guide duplicate"), 0o644))
+
+	_, _, err := CreateMCPServer(&config.Settings{ContentDir: contentDir, Scheme: "acdc", Search: config.SearchSettings{InMemory: true}})
+	require.ErrorContains(t, err, "failed to create resource provider")
+	require.ErrorContains(t, err, "duplicate source URI: acdc://docs/guide")
 }
 
 func TestCreateMCPServer_InvalidToolMetadata_MissingName(t *testing.T) {

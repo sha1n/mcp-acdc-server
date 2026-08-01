@@ -3,6 +3,7 @@ package resources
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -44,6 +45,21 @@ func TestDiscover_ConfiguredValidation(t *testing.T) {
 			require.ErrorContains(t, err, tt.wantErr)
 		})
 	}
+}
+
+func TestDiscover_ConfiguredRejectsInvalidExcludeAndMissingRoot(t *testing.T) {
+	root := t.TempDir()
+
+	_, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"docs/**/*.md"},
+		Exclude: []string{"/private/*.md"},
+	}, "acdc")
+	require.ErrorContains(t, err, "index pattern must be relative")
+
+	_, err = Discover(context.Background(), content.NewContentProvider(filepath.Join(root, "missing")), &domain.IndexMetadata{
+		Include: []string{"docs/**/*.md"},
+	}, "acdc")
+	require.ErrorContains(t, err, "resolve content root")
 }
 
 func TestDiscover_ConfiguredMatching(t *testing.T) {
@@ -113,6 +129,90 @@ func TestDiscover_ConfiguredSkipsSymlinksAndPreservesContainment(t *testing.T) {
 	result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{Include: []string{"docs/**/*.md"}}, "acdc")
 	require.NoError(t, err)
 	require.Equal(t, []string{"acdc://docs/inside"}, sourceURIs(result.Sources))
+}
+
+func TestDiscover_LegacySkipsInvalidFilesAndBuildsChunks(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "mcp-resources/valid.md", "---\nname: Valid\ndescription: Valid description\n---\n# Valid\n\nBody.\n")
+	writeFile(t, root, "mcp-resources/broken.md", "---\nname: [\n---\n# Broken\n")
+	writeFile(t, root, "mcp-resources/missing.md", "---\nname: Missing description\n---\n# Missing\n")
+	writeFile(t, root, "mcp-resources/ignore.txt", "not a resource")
+
+	result, err := Discover(context.Background(), content.NewContentProvider(root), nil, "acdc")
+	require.NoError(t, err)
+	require.Equal(t, []string{"acdc://valid"}, sourceURIs(result.Sources))
+	require.NotEmpty(t, result.Chunks)
+	require.Equal(t, "# Valid\n\nBody.\n", result.Sources[0].Content)
+}
+
+func TestDiscover_LegacyMissingDirectoryAndCancellation(t *testing.T) {
+	root := t.TempDir()
+
+	definitions, err := DiscoverResources(content.NewContentProvider(root), "acdc")
+	require.NoError(t, err)
+	require.Empty(t, definitions)
+
+	resourcesDir := filepath.Join(root, "mcp-resources")
+	require.NoError(t, os.MkdirAll(resourcesDir, 0o755))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = Discover(ctx, content.NewContentProvider(root), nil, "acdc")
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestDiscover_LegacySkipsUnreadableFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file permissions are not portable on Windows")
+	}
+	root := t.TempDir()
+	writeFile(t, root, "mcp-resources/available.md", "---\nname: Available\ndescription: Readable\n---\n# Available\n")
+	private := writeFile(t, root, "mcp-resources/private.md", "---\nname: Private\ndescription: Unreadable\n---\n# Private\n")
+	require.NoError(t, os.Chmod(private, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(private, 0o600) })
+
+	result, err := Discover(context.Background(), content.NewContentProvider(root), nil, "acdc")
+	require.NoError(t, err)
+	require.Equal(t, []string{"acdc://available"}, sourceURIs(result.Sources))
+}
+
+func TestDiscoverResources_FailsForUnresolvableLegacyRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks requires additional permissions on Windows")
+	}
+	root := t.TempDir()
+	resourcesDir := filepath.Join(root, "mcp-resources")
+	require.NoError(t, os.Symlink(resourcesDir, resourcesDir))
+
+	_, err := DiscoverResources(content.NewContentProvider(root), "acdc")
+	require.ErrorContains(t, err, "resolve resources root")
+}
+
+func TestDiscover_IgnoresNonRegularFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mkfifo is not available on Windows")
+	}
+	root := t.TempDir()
+	docs := filepath.Join(root, "docs")
+	require.NoError(t, os.MkdirAll(docs, 0o755))
+	fifo := filepath.Join(docs, "stream.md")
+	require.NoError(t, exec.Command("mkfifo", fifo).Run())
+
+	_, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{Include: []string{"docs/*.md"}}, "acdc")
+	require.ErrorContains(t, err, "configured index matched no files")
+}
+
+func TestDiscover_ReportsUnreadableDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permissions are not portable on Windows")
+	}
+	root := t.TempDir()
+	restricted := filepath.Join(root, "docs", "restricted")
+	require.NoError(t, os.MkdirAll(restricted, 0o755))
+	require.NoError(t, os.Chmod(restricted, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(restricted, 0o700) })
+
+	_, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{Include: []string{"docs/**/*.md"}}, "acdc")
+	require.Error(t, err)
 }
 
 func writeFile(t *testing.T, root, name, body string) string {

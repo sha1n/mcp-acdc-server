@@ -106,6 +106,66 @@ func TestResourceProvider_StreamChunks_StopsWhileBlocked(t *testing.T) {
 	require.ErrorIs(t, <-errs, context.Canceled)
 }
 
+func TestResourceProvider_ListsAndStreamsImmutableSources(t *testing.T) {
+	source := domain.SourceDocument{
+		ID: "acdc://guide", URI: "acdc://guide", Name: "Guide", Description: "Read this", MIMEType: "text/markdown",
+		Content: "body", Keywords: []string{"guide"},
+	}
+	provider, err := NewResourceProvider([]domain.SourceDocument{source}, nil, WithTransformer(func(body string, _ ResourceDefinition) string {
+		return strings.ToUpper(body)
+	}))
+	require.NoError(t, err)
+
+	// Mutating the caller-owned source must not change the catalog exposed to MCP or indexing.
+	source.Name = "Changed"
+	source.Keywords[0] = "changed"
+	listed := provider.ListResources()
+	require.Equal(t, []string{"acdc://guide"}, []string{listed[0].URI})
+	require.Equal(t, "Guide", listed[0].Name)
+	require.Equal(t, "Read this", listed[0].Description)
+	require.Equal(t, "text/markdown", listed[0].MIMEType)
+
+	stream := make(chan domain.Document, 1)
+	require.NoError(t, provider.StreamResources(context.Background(), stream))
+	document := <-stream
+	require.Equal(t, "acdc://guide", document.URI)
+	require.Equal(t, "Guide", document.Name)
+	require.Equal(t, "BODY", document.Content)
+	require.Equal(t, []string{"guide"}, document.Keywords)
+}
+
+func TestResourceProvider_StreamResourcesHonorsCancellation(t *testing.T) {
+	provider, err := NewResourceProvider([]domain.SourceDocument{{ID: "acdc://guide", URI: "acdc://guide"}}, nil)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, provider.StreamResources(ctx, make(chan domain.Document)), context.Canceled)
+}
+
+func TestResourceProvider_StreamResourcesStopsWhileBlocked(t *testing.T) {
+	provider, err := NewResourceProvider([]domain.SourceDocument{{ID: "acdc://guide", URI: "acdc://guide", Content: "body"}}, nil)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errs := make(chan error, 1)
+	go func() { errs <- provider.StreamResources(ctx, make(chan domain.Document)) }()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	require.ErrorIs(t, <-errs, context.Canceled)
+}
+
+func TestResourceProvider_StreamsOrphanChunkWithSourceIdentity(t *testing.T) {
+	chunk := domain.Chunk{ID: "acdc://orphan#document", SourceID: "acdc://orphan", SourceURI: "acdc://orphan", ChunkURI: "acdc://orphan#document", Content: "body"}
+	provider, err := NewResourceProvider(nil, []domain.Chunk{chunk}, WithTransformer(func(body string, source ResourceDefinition) string {
+		return source.ID + ":" + body
+	}))
+	require.NoError(t, err)
+
+	stream := make(chan domain.Chunk, 1)
+	require.NoError(t, provider.StreamChunks(context.Background(), stream))
+	require.Equal(t, "acdc://orphan:body", (<-stream).Content)
+}
+
 func TestDiscoverResources_LegacyCompatibility(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "mcp-resources/nested/guide.md", "---\nname: Guide\ndescription: Existing resource\n---\n# Guide\n")
