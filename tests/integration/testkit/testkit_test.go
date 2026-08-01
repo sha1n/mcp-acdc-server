@@ -442,3 +442,151 @@ func TestCreateTestContentDir_PromptsWriteError(t *testing.T) {
 		t.Error("Expected failure for prompts WriteFile")
 	}
 }
+
+func TestCreateTestContentDir_WithFiles(t *testing.T) {
+	opts := &ContentDirOptions{
+		Files: map[string]string{
+			"docs/platform/auth.md":    "# Authentication\n\nContent.\n",
+			"docs/generated/skip.md":   "# Generated\n\nContent.\n",
+			"mcp-metadata-sibling.txt": "not a resource",
+		},
+	}
+	contentDir := CreateTestContentDir(t, opts)
+
+	for name, content := range opts.Files {
+		path := filepath.Join(contentDir, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("Failed to read file %s: %v", name, err)
+		}
+		if string(data) != content {
+			t.Errorf("Unexpected content for %s: got %q, want %q", name, data, content)
+		}
+	}
+
+	// Files must be written beneath the content root, not mcp-resources.
+	if _, err := os.Stat(filepath.Join(contentDir, "mcp-resources", "docs")); !os.IsNotExist(err) {
+		t.Error("Files should not be written under mcp-resources")
+	}
+}
+
+func TestCreateTestContentDir_FilesRejectsAbsolutePath(t *testing.T) {
+	tempDir := t.TempDir()
+	mt := &mockTB{T: t, tempDir: tempDir}
+	opts := &ContentDirOptions{
+		Files: map[string]string{
+			"/etc/passwd": "malicious",
+		},
+	}
+
+	CreateTestContentDir(mt, opts)
+
+	if !mt.failed {
+		t.Error("Expected failure for absolute Files path")
+	}
+}
+
+func TestCreateTestContentDir_FilesRejectsEscapingPath(t *testing.T) {
+	tempDir := t.TempDir()
+	mt := &mockTB{T: t, tempDir: tempDir}
+	opts := &ContentDirOptions{
+		Files: map[string]string{
+			"../escape.md": "malicious",
+		},
+	}
+
+	CreateTestContentDir(mt, opts)
+
+	if !mt.failed {
+		t.Error("Expected failure for escaping Files path")
+	}
+}
+
+func TestCreateTestContentDir_FilesMkdirError(t *testing.T) {
+	tempDir := t.TempDir()
+	contentDir := filepath.Join(tempDir, "mkdir-err")
+	_ = os.MkdirAll(filepath.Join(contentDir, "content"), 0755)
+
+	// Create a file where a directory is expected to cause MkdirAll failure
+	filesParentDir := filepath.Join(contentDir, "content", "docs")
+	_ = os.WriteFile(filesParentDir, []byte("not a directory"), 0644)
+
+	mt := &mockTB{T: t, tempDir: contentDir}
+	opts := &ContentDirOptions{
+		Files: map[string]string{"docs/auth.md": "content"},
+	}
+
+	CreateTestContentDir(mt, opts)
+
+	if !mt.failed {
+		t.Error("Expected failure for Files MkdirAll")
+	}
+}
+
+func TestCreateTestContentDir_FilesWriteError(t *testing.T) {
+	tempDir := t.TempDir()
+	contentDir := filepath.Join(tempDir, "write-err")
+	_ = os.MkdirAll(filepath.Join(contentDir, "content"), 0755)
+
+	mt := &mockTB{T: t, tempDir: contentDir}
+	opts := &ContentDirOptions{
+		Files: map[string]string{"auth.md": "content"},
+	}
+
+	// Create a directory where a file is expected to cause WriteFile failure
+	_ = os.MkdirAll(filepath.Join(contentDir, "content", "auth.md"), 0755)
+
+	CreateTestContentDir(mt, opts)
+
+	if !mt.failed {
+		t.Error("Expected failure for Files WriteFile")
+	}
+}
+
+func TestNewTestFlags_WithResultMode(t *testing.T) {
+	contentDir := CreateTestContentDir(t, nil)
+	opts := &FlagOptions{
+		Transport:  "stdio",
+		ResultMode: "content",
+	}
+	flags := NewTestFlags(t, contentDir, opts)
+
+	resultMode, _ := flags.GetString("search-result-mode")
+	if resultMode != "content" {
+		t.Errorf("Expected search-result-mode 'content', got '%s'", resultMode)
+	}
+}
+
+func TestNewTestFlags_WithoutResultMode(t *testing.T) {
+	contentDir := CreateTestContentDir(t, nil)
+	flags := NewTestFlags(t, contentDir, nil)
+
+	resultMode, _ := flags.GetString("search-result-mode")
+	if resultMode != "" {
+		t.Errorf("Expected empty search-result-mode (use config default), got '%s'", resultMode)
+	}
+}
+
+func TestNewTestFlags_WithCrossRef(t *testing.T) {
+	contentDir := CreateTestContentDir(t, nil)
+	opts := &FlagOptions{
+		Transport: "stdio",
+		CrossRef:  true,
+	}
+	flags := NewTestFlags(t, contentDir, opts)
+
+	crossRef, _ := flags.GetBool("cross-ref")
+	if !crossRef {
+		t.Error("Expected cross-ref true, got false")
+	}
+}
+
+func TestNewTestFlags_WithoutCrossRef(t *testing.T) {
+	contentDir := CreateTestContentDir(t, nil)
+	flags := NewTestFlags(t, contentDir, nil)
+
+	crossRef, _ := flags.GetBool("cross-ref")
+	if crossRef {
+		t.Error("Expected cross-ref false (use config default), got true")
+	}
+}

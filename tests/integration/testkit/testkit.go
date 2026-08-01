@@ -112,9 +112,12 @@ func getFreePortWithAddr(addrStr string) (int, error) {
 
 // ContentDirOptions configures CreateTestContentDir
 type ContentDirOptions struct {
-	Metadata  string            // Custom metadata YAML (uses default if empty)
-	Resources map[string]string // filename -> content (no resources if nil)
-	Prompts   map[string]string // filename -> content (no prompts if nil)
+	Metadata   string            // Custom metadata YAML (uses default if empty)
+	Resources  map[string]string // filename -> content (no resources if nil)
+	Prompts    map[string]string // filename -> content (no prompts if nil)
+	Files      map[string]string // path (relative to content root) -> content (no extra files if nil)
+	ResultMode string            // Search result mode to request via NewStdioTestClient (process default if empty)
+	CrossRef   bool              // Cross-reference link rewriting to request via NewStdioTestClient (process default if false)
 }
 
 // DefaultMetadata returns the default test metadata YAML
@@ -177,16 +180,34 @@ func CreateTestContentDir(t testing.TB, opts *ContentDirOptions) string {
 		}
 	}
 
+	if opts != nil && opts.Files != nil {
+		for name, content := range opts.Files {
+			if !filepath.IsLocal(name) {
+				t.Fatalf("Invalid Files path %q: must be relative and confined to the content root", name)
+				continue
+			}
+			path := filepath.Join(contentDir, filepath.Clean(name))
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+				t.Fatalf("Failed to create parent dir for file %s: %v", name, err)
+			}
+			if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+				t.Fatalf("Failed to write file %s: %v", name, err)
+			}
+		}
+	}
+
 	return contentDir
 }
 
 // FlagOptions configures NewTestFlags
 type FlagOptions struct {
-	Port      int    // Uses free port if 0
-	Transport string // Defaults to "sse"
-	AuthType  string // Defaults to "none"
-	Host      string // Defaults to "localhost"
-	Scheme    string // Defaults to "" (uses config default "acdc")
+	Port       int    // Uses free port if 0
+	Transport  string // Defaults to "sse"
+	AuthType   string // Defaults to "none"
+	Host       string // Defaults to "localhost"
+	Scheme     string // Defaults to "" (uses config default "acdc")
+	ResultMode string // Defaults to "" (uses config default "references"); sets --search-result-mode only when non-empty
+	CrossRef   bool   // Defaults to false; sets --cross-ref only when true
 }
 
 // NewTestFlags creates a configured pflag.FlagSet for testing
@@ -232,6 +253,12 @@ func NewTestFlags(t testing.TB, contentDir string, opts *FlagOptions) *pflag.Fla
 	_ = flags.Set("host", host)
 	if scheme != "" {
 		_ = flags.Set("uri-scheme", scheme)
+	}
+	if opts != nil && opts.ResultMode != "" {
+		_ = flags.Set("search-result-mode", opts.ResultMode)
+	}
+	if opts != nil && opts.CrossRef {
+		_ = flags.Set("cross-ref", "true")
 	}
 
 	return flags
