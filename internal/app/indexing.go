@@ -37,7 +37,8 @@ func IndexResources(ctx context.Context, streamer ChunkStreamer, indexer search.
 		producerErr = <-producerErrs
 	}
 
-	if producerErr != nil && (!errors.Is(producerErr, context.Canceled) || indexErr == nil) {
+	producerCanceled := errors.Is(producerErr, context.Canceled) || errors.Is(producerErr, context.DeadlineExceeded)
+	if producerErr != nil && (!producerCanceled || indexErr == nil) {
 		return fmt.Errorf("stream chunks: %w", producerErr)
 	}
 	if indexErr != nil {

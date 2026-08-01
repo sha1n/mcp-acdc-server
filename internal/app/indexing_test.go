@@ -110,6 +110,18 @@ func TestIndexResources_PrefersProducerErrorWhenIndexerFinishesFirst(t *testing.
 	require.ErrorContains(t, err, "stream chunks: stream failed")
 }
 
+func TestIndexResources_PrefersIndexerErrorOverProducerDeadline(t *testing.T) {
+	streamer := &fakeChunkStreamer{
+		err:                 context.DeadlineExceeded,
+		waitForCancellation: true,
+	}
+	indexer := &fakeSearcher{indexErr: errors.New("index failed")}
+
+	err := IndexResources(context.Background(), streamer, indexer)
+
+	require.ErrorContains(t, err, "index chunks: index failed")
+}
+
 func TestIndexResources_CancelsProducerWhenIndexerFails(t *testing.T) {
 	canceled := make(chan struct{}, 1)
 	streamer := &fakeChunkStreamer{waitForCancellation: true, canceled: canceled}
