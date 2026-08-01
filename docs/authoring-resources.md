@@ -4,7 +4,7 @@ This guide explains how to create and structure markdown resource files for the 
 
 ## File Location
 
-Place all resource markdown files inside the `mcp-resources/` subdirectory of your content directory:
+By default (when `mcp-metadata.yaml` has no `index` block — see [Configured Chunk Indexing](#configured-chunk-indexing-index)), place all resource markdown files inside the `mcp-resources/` subdirectory of your content directory:
 
 ```
 content/
@@ -91,9 +91,120 @@ The server validates `mcp-metadata.yaml` at startup and will fail to start if:
 - Any tool defined in the `tools` section is missing a `name` or `description`
 - Duplicate tool names exist
 
+## Chunking and Fragment URIs
+
+Every discovered document — whether found via legacy `mcp-resources/` scanning or a configured `index` (see below) — is split into chunks before indexing, and the `search` tool always returns chunk URIs (`<document-uri>#<fragment>`), never bare document URIs. This section applies to both discovery modes.
+
+### How Documents Are Split
+
+A new chunk starts at *every* Markdown heading, regardless of level — a chunk's content never includes its subsections' content. For example:
+
+```markdown
+# Configuration
+Parent text.
+
+## Authentication
+API keys.
+```
+
+produces **two** chunks: one for `# Configuration` containing only "Parent text.", and a separate one for `## Authentication` containing "API keys." The `## Authentication` chunk's heading path is still `["Configuration", "Authentication"]`, so its provenance reflects the nesting even though its content does not include the parent section's body.
+
+Content before the first heading (if any) forms its own chunk, addressed with the reserved fragment `document`. A heading whose text has no letters or digits (e.g. `# !!!`) falls back to the fragment `section`.
+
+A section that exceeds a soft limit of **4,000 Unicode code points** is further split along block boundaries into multiple parts, each still tagged with the section's full heading path.
+
+### Fragment URIs
+
+- An unsplit section is addressable as `<document-uri>#<heading-slug>` (e.g. `acdc://docs/guide#rotating-keys`, or `acdc://docs/guide#document` for the pre-heading preamble).
+- A section split into multiple parts addresses each part as `<document-uri>#<heading-slug>~1`, `#<heading-slug>~2`, and so on — the suffix applies to every part, including the first.
+- Reading the bare `<document-uri>#<heading-slug>` of a *split* section returns the full section, reconstructed by joining all of its parts.
+- Duplicate heading text within the same document produces de-duplicated slugs (e.g. a second "Overview" heading becomes `#overview-1`).
+
+### Result Diversity
+
+To keep results varied across documents, the `search` tool over-fetches candidate chunks internally (5x the configured result limit) and then applies a per-document cap before returning up to the configured limit: `references` mode keeps at most one chunk per source document; `content` mode keeps at most two.
+
+### Fragment Reads
+
+The `read` tool resolves any URI returned by `search` or `resources/list`:
+
+- The base document URI (e.g. `acdc://docs/guide`) returns the full document (frontmatter stripped).
+- A chunk fragment URI (e.g. `acdc://docs/guide#rotating-keys~2`) returns only that chunk's content.
+- A section fragment URI for a split section (e.g. `acdc://docs/guide#rotating-keys`) returns all of that section's parts joined together.
+
+Only source documents (not individual chunks) appear in `resources/list`; chunk and section URIs are reachable once you have one, typically from a `search` result.
+
+### Path Labels
+
+Each chunk's search ranking also considers **path labels**, derived from the document's relative path: the path (extension stripped) is split on `/`, `-`, `_`, whitespace, and camelCase boundaries, lowercased, and deduplicated. For example, `docs/apiReference/authGuide.md` produces labels `["docs", "api", "reference", "auth", "guide"]`. Path labels are indexed with a 1.25x boost, so file and directory names that match query terms help a document rank higher — see [Keywords and Search Boosting](#keywords-and-search-boosting).
+
+### Duplicate Identity
+
+Regardless of discovery mode, server startup fails if two discovered documents or chunks resolve to the same URI or ID — for example, `guide.md` and `guide.markdown` sitting side by side and both being selected produces the identical document URI `acdc://guide` for both.
+
+## Configured Chunk Indexing (`index`)
+
+By default the server discovers documents under `mcp-resources/`, each requiring frontmatter (see [Resource Frontmatter Format](#resource-frontmatter-format) below). Adding an `index` block to `mcp-metadata.yaml` switches **document discovery** to configured indexing instead: any Markdown matched by glob patterns is discovered directly, without requiring the `mcp-resources/` layout or frontmatter. When `index` is present, it replaces `mcp-resources/` discovery entirely — the two modes are not combined. Discovered documents are chunked and searched identically either way — see [Chunking and Fragment URIs](#chunking-and-fragment-uris) above.
+
+### Schema
+
+```yaml
+index:
+  include:
+    - docs/**/*.md
+  exclude:
+    - docs/generated/**
+```
+
+| Field     | Required | Description                                              |
+| --------- | -------- | ---------------------------------------------------------- |
+| `include` | Yes      | List of glob patterns selecting Markdown files. At least one pattern is required. |
+| `exclude` | No       | List of glob patterns to skip, evaluated after `include`.  |
+
+### Pattern Semantics
+
+- Patterns are relative to `--content-dir`. Absolute patterns or patterns that escape the content root (e.g. `../x.md`) fail at startup.
+- Patterns use [doublestar](https://github.com/bmatcuk/doublestar) glob syntax, where `**` matches zero or more path segments. `docs/**/*.md` therefore matches files directly under `docs/` (e.g. `docs/guide.md`) as well as nested files (e.g. `docs/api/auth.md`) — a "zero-depth" match.
+- `exclude` always wins: a file matched by `include` is dropped if it also matches any `exclude` pattern.
+- Every selected file must have a `.md` or `.markdown` extension; a pattern that selects any other file type fails startup.
+- Symlinked files and directories are skipped during discovery.
+
+### Metadata Derivation for Configured Markdown
+
+Frontmatter is **optional** for configured Markdown. When present, it is still parsed as YAML and must be valid. Title, description, and keywords are derived as follows:
+
+| Field         | Source                                                                 |
+| ------------- | ----------------------------------------------------------------------- |
+| `name`        | Frontmatter `name`, or the document's first `#` (H1) heading if absent. A document whose first heading is `##` or deeper has no fallback and gets an empty name. |
+| `description` | Frontmatter `description`, or the document's first paragraph if absent. Always truncated to 200 Unicode characters, whether it came from frontmatter or the fallback. |
+| `keywords`    | Frontmatter `keywords` list. Empty if absent — no fallback derivation.  |
+
+### Strict Configured Discovery Errors
+
+Unlike legacy `mcp-resources/` discovery, configured indexing fails the server at startup — rather than skipping the offending file — if any of the following occur:
+
+- `index.include` is missing or empty.
+- Any `include`/`exclude` pattern is absolute, escapes the content root, or is not a valid glob.
+- No files match the configured patterns.
+- A matched file is not `.md`/`.markdown`.
+- A matched file cannot be read or fails to parse (including invalid frontmatter YAML, when frontmatter is present).
+- The content root itself cannot be resolved (e.g. a broken symlink at `--content-dir`).
+
+See also [Duplicate Identity](#duplicate-identity) above, which fails startup in both discovery modes.
+
+### Unchanged Legacy Behavior
+
+When `index` is absent from `mcp-metadata.yaml`, discovery keeps scanning `mcp-resources/` for `.md` and `.markdown` files exactly as before: frontmatter with `name` and `description` remains required per file, and files that are missing, invalid, or incomplete are skipped with a warning log rather than failing startup. A missing `mcp-resources/` directory yields zero resources, not an error.
+
+### Not Yet Supported
+
+Persistence across restarts and live filesystem watching are not part of this release. The chunk catalog and search index are rebuilt fully at startup (in memory or a temporary directory); pick up content changes by restarting the server.
+
+See [Configuration Reference](configuration.md) for the `--search-result-mode` flag that controls how much chunk detail the `search` tool returns, and the [Repository Docs example](../examples/repository-docs/) for a runnable configured-indexing setup.
+
 ## Resource Frontmatter Format
 
-Each resource file **must** start with YAML frontmatter containing required metadata:
+Legacy `mcp-resources/` discovery (used when `index` is absent from `mcp-metadata.yaml`) requires each resource file to start with YAML frontmatter containing required metadata:
 
 ```yaml
 ---
@@ -129,13 +240,15 @@ Keywords provide a way to improve search relevance. When a search query matches 
 
 ### How It Works
 
-The search service uses a disjunction query across three fields:
+The search service uses a disjunction query across five fields:
 
-| Field      | Boost | Description                              |
-| ---------- | ----- | ---------------------------------------- |
-| `name`     | 2.0x  | Resource title (configurable)            |
-| `content`  | 1.0x  | Markdown body content (configurable)     |
-| `keywords` | 3.0x  | Frontmatter keywords (configurable)      |
+| Field         | Boost | Description                                              |
+| ------------- | ----- | --------------------------------------------------------- |
+| `source_title`| 2.0x  | Resource/document title (configurable)                    |
+| `heading_path`| 2.5x  | The chunk's Markdown heading ancestry                      |
+| `path_labels` | 1.25x | Labels derived from the file path — see [Path Labels](#path-labels) |
+| `content`     | 1.0x  | Markdown chunk content (configurable)                      |
+| `keywords`    | 3.0x  | Frontmatter keywords (configurable)                        |
 
 ### Advanced Search Features
 
@@ -172,7 +285,7 @@ Content about software development...
 ```
 
 Searching for `"golang"` will rank **Resource B** higher because:
-1. Resource B matches "golang" in its keywords field (boosted 2x)
+1. Resource B matches "golang" in its keywords field (boosted 3x)
 2. Resource A has no keyword match
 
 ### Best Practices for Keywords
@@ -209,6 +322,8 @@ The URI scheme can be customized via the `--uri-scheme` flag or `ACDC_MCP_URI_SC
 | `mcp-resources/api/endpoints.md`    | `myorg://api/endpoints`    |
 
 See [Configuration Reference](configuration.md) for details.
+
+The same scheme applies to [configured chunk indexing](#configured-chunk-indexing-index), except the path is relative to `--content-dir` instead of `mcp-resources/` (e.g. `docs/setup/intro.md` → `acdc://docs/setup/intro`). Chunks within a document are addressed with a `#fragment` suffix on the document URI — see [Fragment Reads](#fragment-reads).
 
 ## Complete Example
 

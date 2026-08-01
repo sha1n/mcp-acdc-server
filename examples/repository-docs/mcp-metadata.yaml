@@ -1,0 +1,11 @@
+server:
+  name: Repository Documentation
+  version: 1.0.0
+  instructions: |
+    Search repository documentation before answering repository-specific questions.
+
+index:
+  include:
+    - docs/**/*.md
+  exclude:
+    - docs/generated/**
