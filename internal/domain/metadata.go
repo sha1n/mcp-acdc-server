@@ -34,19 +34,19 @@ type McpMetadata struct {
 var DefaultToolMetadata = map[string]ToolMetadata{
 	"search": {
 		Name: "search",
-		Description: `Search across all development resources using full-text search. This tool searches resource names, descriptions, and content to help you find relevant standards, guidelines, and documentation.
+		Description: `Search across all indexed documentation using full-text search. This tool searches source titles, heading text, path segments, markdown content, and keywords to help you find relevant standards, guidelines, and documentation.
 
 WHEN TO USE: Use this as your first step before generating code or reviewing implementations. Search for relevant topics to discover which resources apply to your task.
 
-HOW IT WORKS: Searches are performed across resource names, descriptions, and full markdown content. Results include the resource name, URI, and a relevant text snippet showing where your query was found.`,
+HOW IT WORKS: Searches are performed across source titles, heading paths, file/directory path segments, markdown content, and keywords. Results are chunk citations: each includes the source title, a chunk URI (open it with the read tool), a heading breadcrumb, the matched line range, and a relevant snippet. When the server is configured for content result mode, each result also includes the full text of the matched chunk.`,
 	},
 	"read": {
 		Name: "read",
-		Description: `Read the full content of a specified resource. This tool allows you to retrieve the complete markdown content of any development resource using its URI.
+		Description: `Read the full content of a source document, or a single chunk within it. This tool allows you to retrieve markdown content using a URI returned by search or a resource listing.
 
-WHEN TO USE: Use after you have found a relevant resource URI (e.g., via the search tool or by listing resources) and need to read its full content to understand specific standards, guidelines, or instructions.
+WHEN TO USE: Use after you have found a relevant URI (e.g., via the search tool or by listing resources) and need to read its content to understand specific standards, guidelines, or instructions.
 
-HOW IT WORKS: Provide the URI of the resource you wish to read (e.g., 'acdc://guides/getting-started.md'). The tool returns the full markdown content of the resource with frontmatter removed.`,
+HOW IT WORKS: Provide a base URI (e.g., 'acdc://guides/getting-started') to read the whole document, or that same URI with a '#fragment' suffix (e.g., 'acdc://guides/getting-started#installation') to read a single chunk, exactly as returned by search. Resource URIs never include a file extension. The scheme defaults to 'acdc://' but may be configured differently by the server operator, so always use the scheme from the URI you were given.`,
 	},
 }
 

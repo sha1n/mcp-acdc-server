@@ -276,6 +276,20 @@ func TestLoadSettingsWithFlags_AllFlagTypes(t *testing.T) {
 	}
 }
 
+// TestLoadSettingsWithFlags_SearchResultModeDefaultsToReferences pins the
+// process-wide default result mode when --search-result-mode is registered
+// but left unset, exercising the same flag-unset fallback path CLI users hit
+// when they don't pass the flag (internal/app/cli.go registers it with an
+// empty-string default so viper falls through to this SetDefault).
+func TestLoadSettingsWithFlags_SearchResultModeDefaultsToReferences(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	flags.String("search-result-mode", "", "")
+
+	settings, err := LoadSettingsWithFlags(flags)
+	require.NoError(t, err)
+	require.Equal(t, SearchResultModeReferences, settings.Search.ResultMode)
+}
+
 // --- ValidateSettings Tests ---
 
 func TestValidateSettings_ValidNone(t *testing.T) {

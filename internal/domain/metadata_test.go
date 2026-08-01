@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -154,6 +156,41 @@ func TestGetToolMetadata(t *testing.T) {
 			t.Errorf("expected default search even with empty tools")
 		}
 	})
+}
+
+// exampleURIPattern matches single-quoted example URIs like 'acdc://guides/getting-started'
+// or 'acdc://guides/getting-started#installation' as used in the default tool descriptions.
+var exampleURIPattern = regexp.MustCompile(`'([a-zA-Z][a-zA-Z0-9+\-.]*://[^']*)'`)
+
+func TestDefaultToolMetadata_ReadDescriptionExampleURIsHaveNoFileExtension(t *testing.T) {
+	desc := DefaultToolMetadata["read"].Description
+
+	matches := exampleURIPattern.FindAllStringSubmatch(desc, -1)
+	require.NotEmpty(t, matches, "expected at least one example URI in the read tool description")
+
+	for _, match := range matches {
+		uri := match[1]
+		require.False(t, strings.HasSuffix(uri, ".md"), "example URI %q should not carry a .md extension - resource URIs never include the file extension", uri)
+		require.False(t, strings.HasSuffix(uri, ".markdown"), "example URI %q should not carry a .markdown extension - resource URIs never include the file extension", uri)
+	}
+}
+
+func TestDefaultToolMetadata_ReadDescriptionMentionsFragmentForm(t *testing.T) {
+	desc := DefaultToolMetadata["read"].Description
+
+	require.Contains(t, desc, "#", "expected the read tool description to mention the '#fragment' URI form for reading a single chunk")
+}
+
+func TestDefaultToolMetadata_SearchDescriptionDoesNotClaimDescriptionsAreSearched(t *testing.T) {
+	desc := DefaultToolMetadata["search"].Description
+
+	require.NotContains(t, strings.ToLower(desc), "descriptions", "descriptions are not an indexed search field - the search default description should not claim otherwise")
+}
+
+func TestDefaultToolMetadata_SearchDescriptionMentionsChunkResults(t *testing.T) {
+	desc := DefaultToolMetadata["search"].Description
+
+	require.Contains(t, strings.ToLower(desc), "chunk", "search results are chunk citations - the default description should describe them as such")
 }
 
 func TestToolsMap(t *testing.T) {
