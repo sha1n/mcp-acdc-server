@@ -1,6 +1,10 @@
 package domain
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 func TestMcpMetadata_Validate(t *testing.T) {
 	tests := []struct {
@@ -74,6 +78,33 @@ func TestMcpMetadata_Validate(t *testing.T) {
 			if err := tt.meta.Validate(); (err != nil) != tt.wantErr {
 				t.Errorf("McpMetadata.Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
+		})
+	}
+}
+
+func TestMcpMetadata_ValidateIndex(t *testing.T) {
+	tests := []struct {
+		name    string
+		index   *IndexMetadata
+		wantErr string
+	}{
+		{name: "absent", index: nil},
+		{name: "configured", index: &IndexMetadata{Include: []string{"docs/**/*.md"}}},
+		{name: "empty include", index: &IndexMetadata{}, wantErr: "index.include requires at least one pattern"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metadata := McpMetadata{
+				Server: ServerMetadata{Name: "test", Version: "1", Instructions: "test"},
+				Index:  tt.index,
+			}
+			err := metadata.Validate()
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.EqualError(t, err, tt.wantErr)
 		})
 	}
 }

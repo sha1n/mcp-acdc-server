@@ -25,6 +25,7 @@ func TestLog(t *testing.T) {
 					KeywordsBoost: 1.0,
 					NameBoost:     1.0,
 					ContentBoost:  1.0,
+					ResultMode:    SearchResultModeReferences,
 				},
 				Auth: AuthSettings{
 					Type: AuthTypeNone,
@@ -35,6 +36,7 @@ func TestLog(t *testing.T) {
 				"Config: transport",
 				"Config: search.max_results",
 				"Config: search.in_memory",
+				"Config: search.result_mode",
 				"Config: auth.type",
 			},
 		},
@@ -98,6 +100,7 @@ func TestLog(t *testing.T) {
 				assert.Contains(t, captured, "Config: content_dir")
 				assert.Contains(t, captured, "Config: transport")
 				assert.NotContains(t, captured, "Config: host")
+				assert.Equal(t, SearchResultModeReferences, captured["Config: search.result_mode"])
 			}
 			if tt.settings.Auth.Type == AuthTypeBasic {
 				assert.Contains(t, captured, "Config: auth.basic.username")
@@ -119,6 +122,7 @@ func TestLogValues(t *testing.T) {
 		Transport:  "stdio",
 		Search: SearchSettings{
 			MaxResults: 10,
+			ResultMode: SearchResultModeReferences,
 		},
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
@@ -151,6 +155,7 @@ func TestLogValues(t *testing.T) {
 			attrMap[a.Key] = a.Value
 		}
 		assert.Equal(t, int64(10), attrMap["max_results"].Int64())
+		assert.Equal(t, "references", attrMap["result_mode"].String())
 	})
 
 	t.Run("AuthSettingsLogValue", func(t *testing.T) {

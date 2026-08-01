@@ -25,6 +25,7 @@ func LogWithLogger(s *Settings, logger *slog.Logger) {
 	logger.InfoContext(ctx, "Config: search.keywords_boost", "value", s.Search.KeywordsBoost)
 	logger.InfoContext(ctx, "Config: search.name_boost", "value", s.Search.NameBoost)
 	logger.InfoContext(ctx, "Config: search.content_boost", "value", s.Search.ContentBoost)
+	logger.InfoContext(ctx, "Config: search.result_mode", "value", s.Search.ResultMode)
 
 	logger.InfoContext(ctx, "Config: auth.type", "value", s.Auth.Type)
 	switch s.Auth.Type {
@@ -44,6 +45,7 @@ func SearchSettingsLogValue(s SearchSettings) slog.Value {
 		slog.Float64("keywords_boost", s.KeywordsBoost),
 		slog.Float64("name_boost", s.NameBoost),
 		slog.Float64("content_boost", s.ContentBoost),
+		slog.String("result_mode", string(s.ResultMode)),
 	)
 }
 

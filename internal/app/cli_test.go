@@ -3,7 +3,9 @@ package app
 import (
 	"testing"
 
+	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/spf13/pflag"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRegisterFlags_AllFlagsExist(t *testing.T) {
@@ -19,6 +21,7 @@ func TestRegisterFlags_AllFlagsExist(t *testing.T) {
 		{"host", "H"},
 		{"port", "p"},
 		{"search-max-results", "m"},
+		{"search-result-mode", ""},
 		{"auth-type", "a"},
 		{"auth-basic-username", "u"},
 		{"auth-basic-password", "P"},
@@ -35,6 +38,15 @@ func TestRegisterFlags_AllFlagsExist(t *testing.T) {
 			t.Errorf("Flag --%s has wrong shorthand: expected -%s, got -%s", ef.long, ef.short, f.Shorthand)
 		}
 	}
+}
+
+func TestCLI_FlagParsing_SearchResultMode(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	RegisterFlags(flags)
+	require.NoError(t, flags.Set("search-result-mode", "content"))
+	settings, err := config.LoadSettingsWithFlags(flags)
+	require.NoError(t, err)
+	require.Equal(t, config.SearchResultModeContent, settings.Search.ResultMode)
 }
 
 func TestRegisterFlags_FlagDescriptions(t *testing.T) {

@@ -17,10 +17,17 @@ type ToolMetadata struct {
 	Description string `yaml:"description"`
 }
 
+// IndexMetadata represents the index section of mcp-metadata.yaml.
+type IndexMetadata struct {
+	Include []string `yaml:"include"`
+	Exclude []string `yaml:"exclude,omitempty"`
+}
+
 // McpMetadata represents the root of mcp-metadata.yaml
 type McpMetadata struct {
 	Server ServerMetadata `yaml:"server"`
 	Tools  []ToolMetadata `yaml:"tools"`
+	Index  *IndexMetadata `yaml:"index,omitempty"`
 }
 
 // DefaultToolMetadata provides sensible defaults for known tools
@@ -76,6 +83,9 @@ func (m *McpMetadata) Validate() error {
 	}
 	if m.Server.Instructions == "" {
 		return fmt.Errorf("server instructions are required")
+	}
+	if m.Index != nil && len(m.Index.Include) == 0 {
+		return fmt.Errorf("index.include requires at least one pattern")
 	}
 
 	for i, t := range m.Tools {

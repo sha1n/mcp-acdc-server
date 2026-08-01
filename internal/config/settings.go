@@ -14,13 +14,22 @@ import (
 // schemeRegexp validates URI schemes per RFC 3986: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )
 var schemeRegexp = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+\-.]*$`)
 
+// SearchResultMode controls the detail level in search results.
+type SearchResultMode string
+
+const (
+	SearchResultModeReferences SearchResultMode = "references"
+	SearchResultModeContent    SearchResultMode = "content"
+)
+
 // SearchSettings configuration for search service
 type SearchSettings struct {
-	MaxResults    int     `mapstructure:"max_results"`
-	InMemory      bool    `mapstructure:"in_memory"`
-	KeywordsBoost float64 `mapstructure:"keywords_boost"`
-	NameBoost     float64 `mapstructure:"name_boost"`
-	ContentBoost  float64 `mapstructure:"content_boost"`
+	MaxResults    int              `mapstructure:"max_results"`
+	InMemory      bool             `mapstructure:"in_memory"`
+	KeywordsBoost float64          `mapstructure:"keywords_boost"`
+	NameBoost     float64          `mapstructure:"name_boost"`
+	ContentBoost  float64          `mapstructure:"content_boost"`
+	ResultMode    SearchResultMode `mapstructure:"result_mode"`
 }
 
 // Auth type constants
@@ -79,6 +88,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	v.SetDefault("search.keywords_boost", 3.0)
 	v.SetDefault("search.name_boost", 2.0)
 	v.SetDefault("search.content_boost", 1.0)
+	v.SetDefault("search.result_mode", SearchResultModeReferences)
 	v.SetDefault("cross_ref", false)
 	v.SetDefault("auth.type", AuthTypeNone)
 
@@ -94,6 +104,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	_ = v.BindEnv("search.keywords_boost", "ACDC_MCP_SEARCH_KEYWORDS_BOOST")
 	_ = v.BindEnv("search.name_boost", "ACDC_MCP_SEARCH_NAME_BOOST")
 	_ = v.BindEnv("search.content_boost", "ACDC_MCP_SEARCH_CONTENT_BOOST")
+	_ = v.BindEnv("search.result_mode", "ACDC_MCP_SEARCH_RESULT_MODE")
 
 	_ = v.BindEnv("uri_scheme", "ACDC_MCP_URI_SCHEME")
 	_ = v.BindEnv("cross_ref", "ACDC_MCP_CROSS_REF")
@@ -115,6 +126,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 		_ = v.BindPFlag("search.keywords_boost", flags.Lookup("search-keywords-boost"))
 		_ = v.BindPFlag("search.name_boost", flags.Lookup("search-name-boost"))
 		_ = v.BindPFlag("search.content_boost", flags.Lookup("search-content-boost"))
+		_ = v.BindPFlag("search.result_mode", flags.Lookup("search-result-mode"))
 		_ = v.BindPFlag("auth.type", flags.Lookup("auth-type"))
 		_ = v.BindPFlag("auth.basic.username", flags.Lookup("auth-basic-username"))
 		_ = v.BindPFlag("auth.basic.password", flags.Lookup("auth-basic-password"))
@@ -165,6 +177,12 @@ func ValidateSettings(s *Settings) error {
 	// Validate URI scheme (RFC 3986: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ))
 	if !schemeRegexp.MatchString(s.Scheme) {
 		return errors.New("scheme must match RFC 3986 (start with a letter, contain only letters, digits, +, -, .), got: " + s.Scheme)
+	}
+
+	switch s.Search.ResultMode {
+	case SearchResultModeReferences, SearchResultModeContent:
+	default:
+		return errors.New("search result mode must be 'references' or 'content', got: " + string(s.Search.ResultMode))
 	}
 
 	hasBasicCreds := s.Auth.Basic.Username != "" || s.Auth.Basic.Password != ""
