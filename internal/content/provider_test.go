@@ -3,7 +3,10 @@ package content
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestContentProvider_LoadText(t *testing.T) {
@@ -40,6 +43,106 @@ func TestContentProvider_LoadYAML(t *testing.T) {
 	if data["key"] != "value" {
 		t.Errorf("Expected value 'value', got '%v'", data["key"])
 	}
+}
+
+func TestParseMarkdown_OptionalFrontmatterAndDerivedMetadata(t *testing.T) {
+	raw := []byte("# OAuth Setup\n\nUse client credentials securely.\n")
+	parsed, err := ParseMarkdown(raw, FrontmatterOptional)
+	require.NoError(t, err)
+
+	doc, err := BuildSourceDocument(parsed, SourceOptions{
+		URI:          "acdc://docs/platform/oauth",
+		FilePath:     "/repo/docs/platform/oauth.md",
+		RelativePath: "docs/platform/oauth.md",
+		Raw:          raw,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "OAuth Setup", doc.Name)
+	require.Equal(t, "Use client credentials securely.", doc.Description)
+	require.Equal(t, []string{"docs", "platform", "oauth"}, doc.PathLabels)
+	require.Equal(t, 1, doc.BodyStartLine)
+	require.Len(t, doc.Fingerprint, 64)
+}
+
+func TestParseMarkdown_AuthoredMetadataPrecedence(t *testing.T) {
+	raw := []byte("---\nname: Auth Guide\ntitle: Ignored\ndescription: Auth details\nkeywords: [oauth, tokens]\n---\n# Other Heading\nBody\n")
+	parsed, err := ParseMarkdown(raw, FrontmatterOptional)
+	require.NoError(t, err)
+	doc, err := BuildSourceDocument(parsed, SourceOptions{URI: "acdc://auth", RelativePath: "docs/auth.md", Raw: raw})
+	require.NoError(t, err)
+	require.Equal(t, "Auth Guide", doc.Name)
+	require.Equal(t, "Auth details", doc.Description)
+	require.Equal(t, []string{"oauth", "tokens"}, doc.Keywords)
+	require.Equal(t, 7, doc.BodyStartLine)
+}
+
+func TestParseMarkdown_FrontmatterModes(t *testing.T) {
+	_, err := ParseMarkdown([]byte("# Plain"), FrontmatterRequired)
+	require.ErrorContains(t, err, "file must start with YAML frontmatter")
+	_, err = ParseMarkdown([]byte("---\ninvalid: : yaml\n---\nBody"), FrontmatterOptional)
+	require.ErrorContains(t, err, "invalid YAML in frontmatter")
+}
+
+func TestParseMarkdown_FrontmatterBoundaries(t *testing.T) {
+	tests := []struct {
+		name          string
+		raw           string
+		wantName      any
+		wantBody      string
+		wantStartLine int
+	}{
+		{name: "empty at EOF", raw: "---\n---", wantBody: "", wantStartLine: 3},
+		{name: "metadata at EOF", raw: "---\nname: Guide\n---", wantName: "Guide", wantBody: "", wantStartLine: 3},
+		{name: "null metadata", raw: "---\nnull\n---\nBody", wantBody: "Body", wantStartLine: 4},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := ParseMarkdown([]byte(tt.raw), FrontmatterOptional)
+			require.NoError(t, err)
+			require.Equal(t, tt.wantName, parsed.Metadata["name"])
+			require.Equal(t, tt.wantBody, string(parsed.Body))
+			require.Equal(t, tt.wantStartLine, parsed.BodyStartLine)
+		})
+	}
+}
+
+func TestBuildSourceDocument_NilParsedMarkdown(t *testing.T) {
+	_, err := BuildSourceDocument(nil, SourceOptions{})
+	require.EqualError(t, err, "parsed markdown is required")
+}
+
+func TestBuildSourceDocument_NonStringMetadataFallsBack(t *testing.T) {
+	raw := []byte("---\nname: 42\ndescription: [invalid]\n---\n# Derived Name\n\nDerived description.\n")
+	parsed, err := ParseMarkdown(raw, FrontmatterOptional)
+	require.NoError(t, err)
+
+	doc, err := BuildSourceDocument(parsed, SourceOptions{
+		URI:          "acdc://docs/client-credentials",
+		RelativePath: "Docs/clientCredentials/oauth_oauth.md",
+		Raw:          raw,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "Derived Name", doc.Name)
+	require.Equal(t, "Derived description.", doc.Description)
+	require.Equal(t, []string{"docs", "client", "credentials", "oauth"}, doc.PathLabels)
+}
+
+func TestBuildSourceDocument_DescriptionRuneLimit(t *testing.T) {
+	parsed := &ParsedMarkdown{Metadata: map[string]any{}}
+	longDescription := strings.Repeat("é", 201)
+	parsed.Metadata["description"] = longDescription
+	doc, err := BuildSourceDocument(parsed, SourceOptions{})
+	require.NoError(t, err)
+	require.Equal(t, strings.Repeat("é", 200), doc.Description)
+	require.Len(t, []rune(doc.Description), 200)
+}
+
+func TestBuildSourceDocument_MissingASTMetadataIsEmpty(t *testing.T) {
+	doc, err := BuildSourceDocument(&ParsedMarkdown{Metadata: map[string]any{}}, SourceOptions{})
+	require.NoError(t, err)
+	require.Empty(t, doc.Name)
+	require.Empty(t, doc.Description)
 }
 
 func TestContentProvider_LoadMarkdownWithFrontmatter(t *testing.T) {
@@ -163,6 +266,12 @@ func TestContentProvider_LoadMarkdownWithFrontmatter_Errors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestContentProvider_LoadMarkdownWithFrontmatter_ReadError(t *testing.T) {
+	p := NewContentProvider(t.TempDir())
+	_, err := p.LoadMarkdownWithFrontmatter("missing.md")
+	require.Error(t, err)
 }
 
 func TestContentProvider_GetPath(t *testing.T) {
