@@ -157,9 +157,12 @@ func splitSection(section markdownSection, source []byte) [][]markdownBlock {
 		}
 		combinedRunes := utf8.RuneCount(source[start:block.stop])
 		blockRunes := utf8.RuneCount(source[block.start:block.stop])
-		if len(current) > 0 && blockRunes <= maxChunkRunes && combinedRunes > maxChunkRunes {
-			parts = append(parts, current)
-			current = nil
+		if len(current) > 0 && combinedRunes > maxChunkRunes {
+			keepHeadingWithOversizedBlock := blockRunes > maxChunkRunes && len(current) == 1 && current[0].kind == ast.KindHeading
+			if !keepHeadingWithOversizedBlock {
+				parts = append(parts, current)
+				current = nil
+			}
 		}
 		current = append(current, block)
 	}
@@ -172,7 +175,11 @@ func splitSection(section markdownSection, source []byte) [][]markdownBlock {
 func sourceBlock(node ast.Node, source []byte, bodyStartLine int) (markdownBlock, bool) {
 	start, stop, ok := nodeSourceRange(node)
 	if !ok {
-		return markdownBlock{}, false
+		start = node.Pos()
+		if start < 0 {
+			return markdownBlock{}, false
+		}
+		stop = start
 	}
 
 	start = lineStart(source, start)
@@ -184,6 +191,9 @@ func sourceBlock(node ast.Node, source []byte, bodyStartLine int) (markdownBlock
 		if stop < len(source) && isFenceLine(source, stop) {
 			stop = lineStop(source, stop)
 		}
+	}
+	if _, isHeading := node.(*ast.Heading); isHeading && !isATXHeadingLine(source, start) && isSetextUnderline(source, stop) {
+		stop = lineStop(source, stop)
 	}
 
 	return markdownBlock{
@@ -278,6 +288,27 @@ func isFenceLine(source []byte, offset int) bool {
 		offset++
 	}
 	return count >= 3
+}
+
+func isATXHeadingLine(source []byte, offset int) bool {
+	for offset < len(source) && source[offset] == ' ' {
+		offset++
+	}
+	return offset < len(source) && source[offset] == '#'
+}
+
+func isSetextUnderline(source []byte, offset int) bool {
+	lineEnd := lineStop(source, offset)
+	line := strings.TrimSpace(string(source[offset:lineEnd]))
+	if line == "" || (line[0] != '=' && line[0] != '-') {
+		return false
+	}
+	for index := 1; index < len(line); index++ {
+		if line[index] != line[0] {
+			return false
+		}
+	}
+	return true
 }
 
 func slugifyHeading(value string) string {

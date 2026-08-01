@@ -53,6 +53,51 @@ func TestChunkMarkdown_KeepsIndivisibleBlocks(t *testing.T) {
 	require.Contains(t, chunks[0].Content, "```")
 }
 
+func TestChunkMarkdown_SplitsBeforeOversizedBlockAfterPriorBody(t *testing.T) {
+	raw := []byte("# Example\n\nShort paragraph.\n\n```text\n" + strings.Repeat("x", 5000) + "\n```\n")
+
+	chunks := chunkMarkdownForTest(t, raw)
+
+	require.Len(t, chunks, 2)
+	require.Equal(t, []string{"example~1", "example~2"}, chunkFragments(chunks))
+	require.Contains(t, chunks[0].Content, "Short paragraph.")
+	require.NotContains(t, chunks[0].Content, "```")
+	require.Contains(t, chunks[1].Content, "```")
+}
+
+func TestChunkMarkdown_PreservesBlocksWithoutDescendantSegments(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  []byte
+		want string
+	}{
+		{
+			name: "trailing thematic break",
+			raw:  []byte("# Heading\n\n---\n"),
+			want: "---",
+		},
+		{
+			name: "empty fenced block",
+			raw:  []byte("# Heading\n\n```\n```\n"),
+			want: "```\n```",
+		},
+		{
+			name: "setext underline",
+			raw:  []byte("Heading\n=======\n"),
+			want: "=======",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chunks := chunkMarkdownForTest(t, tt.raw)
+
+			require.Len(t, chunks, 1)
+			require.Contains(t, chunks[0].Content, tt.want)
+		})
+	}
+}
+
 func TestChunkMarkdown_StructuralEdgeCases(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -141,6 +186,8 @@ func TestChunkMarkdown_HeadingIDsDoNotDependOnBodyText(t *testing.T) {
 	changed := chunkMarkdownForTest(t, edited)
 
 	require.Equal(t, chunkFragments(original), chunkFragments(changed))
+	require.Equal(t, chunkIDs(original), chunkIDs(changed))
+	require.Equal(t, chunkURIs(original), chunkURIs(changed))
 }
 
 func chunkMarkdownForTest(t *testing.T, raw []byte) []domain.Chunk {
@@ -160,4 +207,20 @@ func chunkFragments(chunks []domain.Chunk) []string {
 		fragments[index] = chunk.Fragment
 	}
 	return fragments
+}
+
+func chunkIDs(chunks []domain.Chunk) []string {
+	ids := make([]string, len(chunks))
+	for index, chunk := range chunks {
+		ids[index] = chunk.ID
+	}
+	return ids
+}
+
+func chunkURIs(chunks []domain.Chunk) []string {
+	uris := make([]string, len(chunks))
+	for index, chunk := range chunks {
+		uris[index] = chunk.ChunkURI
+	}
+	return uris
 }
