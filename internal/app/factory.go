@@ -73,7 +73,7 @@ func CreateMCPServer(settings *config.Settings) (*mcpsdk.Server, func(), error) 
 	IndexResources(context.Background(), resourceProvider, searchService)
 
 	// Create MCP server
-	mcpServer := mcp.CreateServer(metadata, resourceProvider, promptProvider, searchService)
+	mcpServer := mcp.CreateServer(metadata, resourceProvider, promptProvider, searchService, settings.Search)
 
 	return mcpServer, cleanup, nil
 }
