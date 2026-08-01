@@ -83,7 +83,7 @@ func TestChunkMarkdown_PreservesBlocksWithoutDescendantSegments(t *testing.T) {
 		},
 		{
 			name: "setext underline",
-			raw:  []byte("Heading\n=======\n"),
+			raw:  []byte("Heading\n=======\n\nBody.\n"),
 			want: "=======",
 		},
 	}
@@ -188,6 +188,182 @@ func TestChunkMarkdown_HeadingIDsDoNotDependOnBodyText(t *testing.T) {
 	require.Equal(t, chunkFragments(original), chunkFragments(changed))
 	require.Equal(t, chunkIDs(original), chunkIDs(changed))
 	require.Equal(t, chunkURIs(original), chunkURIs(changed))
+}
+
+func TestChunkMarkdown_PopulatesCompleteChunkContract(t *testing.T) {
+	raw := []byte("# Guide\n\nBody.\n")
+	parsed, err := ParseMarkdown(raw, FrontmatterOptional)
+	require.NoError(t, err)
+	source := domain.SourceDocument{
+		ID:           "source-1",
+		URI:          "acdc://guide",
+		Name:         "Guide title",
+		RelativePath: "docs/guide.md",
+		PathLabels:   []string{"docs", "guide"},
+		Keywords:     []string{"alpha", "beta"},
+	}
+
+	chunks, err := ChunkMarkdown(source, parsed)
+	require.NoError(t, err)
+	require.Equal(t, []domain.Chunk{{
+		ID:              "source-1#guide",
+		SourceID:        "source-1",
+		SourceURI:       "acdc://guide",
+		ChunkURI:        "acdc://guide#guide",
+		SourceTitle:     "Guide title",
+		SourcePath:      "docs/guide.md",
+		PathLabels:      []string{"docs", "guide"},
+		HeadingPath:     []string{"Guide"},
+		SectionFragment: "guide",
+		Fragment:        "guide",
+		Part:            1,
+		PartCount:       1,
+		StartLine:       1,
+		EndLine:         3,
+		Content:         "# Guide\n\nBody.\n",
+		Keywords:        []string{"alpha", "beta"},
+	}}, chunks)
+}
+
+func TestChunkMarkdown_OmitsEmptyLogicalSections(t *testing.T) {
+	raw := []byte("# Parent\n## Child\nBody.\n")
+	chunks := chunkMarkdownForTest(t, raw)
+
+	require.Equal(t, []string{"child"}, chunkFragments(chunks))
+	require.Equal(t, []string{"Parent", "Child"}, chunks[0].HeadingPath)
+	require.Equal(t, "## Child\nBody.\n", chunks[0].Content)
+}
+
+func TestChunkMarkdown_EmptyDocumentProducesNoChunks(t *testing.T) {
+	chunks := chunkMarkdownForTest(t, nil)
+
+	require.Empty(t, chunks)
+}
+
+func TestChunkMarkdown_GreedilySplitsExactSourceRanges(t *testing.T) {
+	first := strings.Repeat("a", 1500)
+	second := strings.Repeat("b", 1500)
+	third := strings.Repeat("c", 1500)
+	raw := []byte("# Large\n\n" + first + "\n\n" + second + "\n\n" + third + "\n")
+
+	chunks := chunkMarkdownForTest(t, raw)
+
+	require.Len(t, chunks, 2)
+	require.Equal(t, "# Large\n\n"+first+"\n\n"+second+"\n", chunks[0].Content)
+	require.Equal(t, third+"\n", chunks[1].Content)
+	require.Equal(t, []string{"large~1", "large~2"}, chunkFragments(chunks))
+	require.Equal(t, 1, chunks[0].Part)
+	require.Equal(t, 2, chunks[1].Part)
+	require.Equal(t, 2, chunks[0].PartCount)
+	require.Equal(t, 2, chunks[1].PartCount)
+	require.Equal(t, 1, chunks[0].StartLine)
+	require.Equal(t, 5, chunks[0].EndLine)
+	require.Equal(t, 7, chunks[1].StartLine)
+	require.Equal(t, 7, chunks[1].EndLine)
+}
+
+func TestChunkMarkdown_DocumentChunksUseSourceTitleOutsideHeadingPath(t *testing.T) {
+	raw := []byte("Body.\n")
+	parsed, err := ParseMarkdown(raw, FrontmatterOptional)
+	require.NoError(t, err)
+	source := domain.SourceDocument{ID: "source", URI: "acdc://guide", Name: "Guide"}
+
+	chunks, err := ChunkMarkdown(source, parsed)
+	require.NoError(t, err)
+	require.Len(t, chunks, 1)
+	require.Empty(t, chunks[0].HeadingPath)
+	require.Equal(t, "Guide", chunks[0].SourceTitle)
+}
+
+func TestChunkMarkdown_NormalizesStablePublicFragments(t *testing.T) {
+	raw := []byte("# API_Key\nOne.\n\n# *Résumé* Guide\nTwo.\n\n# API--Key\nThree.\n\n# API\nFour.\n\n# API-1\nFive.\n\n# API\nSix.\n")
+
+	chunks := chunkMarkdownForTest(t, raw)
+
+	wantFragments := []string{"api_key", "résumé-guide", "api--key", "api", "api-1", "api-2"}
+	require.Equal(t, wantFragments, chunkFragments(chunks))
+	for index, fragment := range wantFragments {
+		require.Equal(t, "acdc://stable#"+fragment, chunks[index].ID)
+		require.Equal(t, "acdc://stable#"+fragment, chunks[index].ChunkURI)
+	}
+}
+
+func TestChunkMarkdown_UsesUnicodeCodePointSoftLimit(t *testing.T) {
+	first := strings.Repeat("é", 1999)
+	exactSecond := strings.Repeat("界", 1998)
+	aboveSecond := strings.Repeat("界", 1999)
+	exactRaw := []byte(first + "\n\n" + exactSecond + "\n")
+	aboveRaw := []byte(first + "\n\n" + aboveSecond + "\n")
+
+	exact := chunkMarkdownForTest(t, exactRaw)
+	require.Len(t, exact, 1)
+	require.Equal(t, "document", exact[0].Fragment)
+	require.Equal(t, string(exactRaw), exact[0].Content)
+	require.Equal(t, 1, exact[0].PartCount)
+
+	above := chunkMarkdownForTest(t, aboveRaw)
+	require.Len(t, above, 2)
+	require.Equal(t, []string{"document~1", "document~2"}, chunkFragments(above))
+	require.Equal(t, first+"\n", above[0].Content)
+	require.Equal(t, aboveSecond+"\n", above[1].Content)
+	require.Equal(t, 2, above[0].PartCount)
+	require.Equal(t, 2, above[1].PartCount)
+}
+
+func TestChunkMarkdown_KeepsEveryOversizedStructuralBlockIntact(t *testing.T) {
+	long := strings.Repeat("x", 4100)
+	tests := []struct {
+		name string
+		raw  []byte
+	}{
+		{name: "GFM table", raw: []byte("# Table\n\n| value |\n| --- |\n| " + long + " |\n")},
+		{name: "list", raw: []byte("# List\n\n- " + long + "\n")},
+		{name: "tilde fence", raw: []byte("# Fence\n\n~~~text\n" + long + "\n~~~\n")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chunks := chunkMarkdownForTest(t, tt.raw)
+
+			require.Len(t, chunks, 1)
+			require.Equal(t, string(tt.raw), chunks[0].Content)
+			require.Equal(t, 1, chunks[0].Part)
+			require.Equal(t, 1, chunks[0].PartCount)
+			require.Equal(t, 1, chunks[0].StartLine)
+			require.Equal(t, strings.Count(string(tt.raw), "\n"), chunks[0].EndLine)
+		})
+	}
+}
+
+func TestChunkMarkdown_ResetsHeadingHierarchyAcrossLevelChanges(t *testing.T) {
+	raw := []byte("# A\nA body.\n\n### C\nC body.\n\n## B\nB body.\n\n# D\nD body.\n")
+
+	chunks := chunkMarkdownForTest(t, raw)
+
+	require.Equal(t, []string{"a", "c", "b", "d"}, chunkFragments(chunks))
+	require.Equal(t, []string{"A"}, chunks[0].HeadingPath)
+	require.Equal(t, []string{"A", "C"}, chunks[1].HeadingPath)
+	require.Equal(t, []string{"A", "B"}, chunks[2].HeadingPath)
+	require.Equal(t, []string{"D"}, chunks[3].HeadingPath)
+}
+
+func TestChunkMarkdown_InvalidParsedInputReturnsError(t *testing.T) {
+	tests := []struct {
+		name   string
+		parsed *ParsedMarkdown
+	}{
+		{name: "nil parsed markdown", parsed: nil},
+		{name: "missing AST", parsed: &ParsedMarkdown{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chunks, err := ChunkMarkdown(domain.SourceDocument{}, tt.parsed)
+
+			require.Nil(t, chunks)
+			require.Error(t, err)
+		})
+	}
 }
 
 func chunkMarkdownForTest(t *testing.T, raw []byte) []domain.Chunk {

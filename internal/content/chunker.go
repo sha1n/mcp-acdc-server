@@ -79,6 +79,9 @@ func ChunkMarkdown(source domain.SourceDocument, parsed *ParsedMarkdown) ([]doma
 
 	var chunks []domain.Chunk
 	for _, section := range sections {
+		if !sectionHasContent(section) {
+			continue
+		}
 		parts := splitSection(section, parsed.Body)
 		for part, blocks := range parts {
 			start := blocks[0].start
@@ -111,6 +114,15 @@ func ChunkMarkdown(source domain.SourceDocument, parsed *ParsedMarkdown) ([]doma
 	}
 
 	return chunks, nil
+}
+
+func sectionHasContent(section markdownSection) bool {
+	for _, block := range section.blocks {
+		if block.kind != ast.KindHeading {
+			return true
+		}
+	}
+	return false
 }
 
 func headingPath(stack [6]string) []string {
@@ -313,21 +325,28 @@ func isSetextUnderline(source []byte, offset int) bool {
 
 func slugifyHeading(value string) string {
 	var slug strings.Builder
-	separator := false
+	whitespace := false
 	for _, character := range strings.ToLower(strings.TrimSpace(value)) {
 		switch {
 		case unicode.IsLetter(character), unicode.IsNumber(character):
-			if separator && slug.Len() > 0 {
+			if whitespace && slug.Len() > 0 {
 				slug.WriteByte('-')
 			}
 			slug.WriteRune(character)
-			separator = false
-		case unicode.IsSpace(character), character == '-', character == '_':
-			separator = slug.Len() > 0
+			whitespace = false
+		case character == '-', character == '_':
+			if whitespace && slug.Len() > 0 {
+				slug.WriteByte('-')
+			}
+			slug.WriteRune(character)
+			whitespace = false
+		case unicode.IsSpace(character):
+			whitespace = slug.Len() > 0
 		}
 	}
-	if slug.Len() == 0 {
+	normalized := strings.Trim(slug.String(), "-_")
+	if normalized == "" {
 		return "section"
 	}
-	return slug.String()
+	return normalized
 }
