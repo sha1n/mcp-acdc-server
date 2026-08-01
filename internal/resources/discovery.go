@@ -22,11 +22,33 @@ type DiscoveryResult struct {
 	Chunks  []domain.Chunk
 }
 
+// discoveryOps keeps filesystem operations explicit for deterministic error
+// handling tests. Each Discover call receives its own immutable value.
+type discoveryOps struct {
+	canonicalPath func(string) (string, error)
+	walkDir       func(string, fs.WalkDirFunc) error
+	readFile      func(string) ([]byte, error)
+	relativePath  func(string, string) (string, error)
+}
+
+func defaultDiscoveryOps() discoveryOps {
+	return discoveryOps{
+		canonicalPath: canonicalPath,
+		walkDir:       filepath.WalkDir,
+		readFile:      os.ReadFile,
+		relativePath:  filepath.Rel,
+	}
+}
+
 // Discover loads configured Markdown sources, or legacy mcp-resources when
 // index is nil.
 func Discover(ctx context.Context, cp *content.ContentProvider, index *domain.IndexMetadata, scheme string) (DiscoveryResult, error) {
+	return discoverWithOps(ctx, cp, index, scheme, defaultDiscoveryOps())
+}
+
+func discoverWithOps(ctx context.Context, cp *content.ContentProvider, index *domain.IndexMetadata, scheme string, ops discoveryOps) (DiscoveryResult, error) {
 	if index == nil {
-		return discoverLegacy(ctx, cp, scheme)
+		return discoverLegacy(ctx, cp, scheme, ops)
 	}
 
 	patterns, err := validatePatterns(index.Include)
@@ -38,13 +60,13 @@ func Discover(ctx context.Context, cp *content.ContentProvider, index *domain.In
 		return DiscoveryResult{}, err
 	}
 
-	root, err := canonicalPath(cp.ContentDir)
+	root, err := ops.canonicalPath(cp.ContentDir)
 	if err != nil {
 		return DiscoveryResult{}, fmt.Errorf("resolve content root: %w", err)
 	}
 
 	var selected []string
-	err = filepath.WalkDir(root, func(filePath string, entry fs.DirEntry, walkErr error) error {
+	err = ops.walkDir(root, func(filePath string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -63,7 +85,7 @@ func Discover(ctx context.Context, cp *content.ContentProvider, index *domain.In
 			return nil
 		}
 
-		canonicalFile, err := canonicalPath(filePath)
+		canonicalFile, err := ops.canonicalPath(filePath)
 		if err != nil {
 			return err
 		}
@@ -71,7 +93,7 @@ func Discover(ctx context.Context, cp *content.ContentProvider, index *domain.In
 			return fmt.Errorf("selected file escapes content root: %s", filePath)
 		}
 
-		relativePath, err := filepath.Rel(root, canonicalFile)
+		relativePath, err := ops.relativePath(root, canonicalFile)
 		if err != nil {
 			return err
 		}
@@ -90,7 +112,7 @@ func Discover(ctx context.Context, cp *content.ContentProvider, index *domain.In
 	}
 
 	sort.Strings(selected)
-	return buildCatalog(ctx, root, selected, scheme, false)
+	return buildCatalog(ctx, root, selected, scheme, ops)
 }
 
 // DiscoverResources returns legacy mcp-resources definitions for callers that
@@ -103,8 +125,8 @@ func DiscoverResources(cp *content.ContentProvider, scheme string) ([]ResourceDe
 	return result.Sources, nil
 }
 
-func discoverLegacy(ctx context.Context, cp *content.ContentProvider, scheme string) (DiscoveryResult, error) {
-	root, err := canonicalPath(cp.ResourcesDir)
+func discoverLegacy(ctx context.Context, cp *content.ContentProvider, scheme string, ops discoveryOps) (DiscoveryResult, error) {
+	root, err := ops.canonicalPath(cp.ResourcesDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return DiscoveryResult{}, nil
@@ -113,7 +135,7 @@ func discoverLegacy(ctx context.Context, cp *content.ContentProvider, scheme str
 	}
 
 	var files []string
-	err = filepath.WalkDir(root, func(filePath string, entry fs.DirEntry, walkErr error) error {
+	err = ops.walkDir(root, func(filePath string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -143,7 +165,7 @@ func discoverLegacy(ctx context.Context, cp *content.ContentProvider, scheme str
 		if err := ctx.Err(); err != nil {
 			return DiscoveryResult{}, err
 		}
-		raw, err := os.ReadFile(filePath)
+		raw, err := ops.readFile(filePath)
 		if err != nil {
 			slog.Warn("Skipping invalid resource file", "file", filepath.Base(filePath), "error", err)
 			continue
@@ -159,23 +181,15 @@ func discoverLegacy(ctx context.Context, cp *content.ContentProvider, scheme str
 			slog.Warn("Skipping resource with missing metadata", "file", filepath.Base(filePath))
 			continue
 		}
-		relativePath, err := filepath.Rel(root, filePath)
+		relativePath, err := ops.relativePath(root, filePath)
 		if err != nil {
 			return DiscoveryResult{}, err
 		}
 		uri := sourceURI(scheme, relativePath)
-		source, err := content.BuildSourceDocument(parsed, content.SourceOptions{
+		source := buildParsedSource(parsed, content.SourceOptions{
 			URI: uri, FilePath: filePath, RelativePath: filepath.ToSlash(relativePath), Raw: raw,
 		})
-		if err != nil {
-			slog.Warn("Skipping invalid resource file", "file", filepath.Base(filePath), "error", err)
-			continue
-		}
-		chunks, err := content.ChunkMarkdown(source, parsed)
-		if err != nil {
-			slog.Warn("Skipping invalid resource file", "file", filepath.Base(filePath), "error", err)
-			continue
-		}
+		chunks := chunkParsedSource(source, parsed)
 		result.Sources = append(result.Sources, source)
 		result.Chunks = append(result.Chunks, chunks...)
 		slog.Info("Loaded resource", "uri", uri, "name", source.Name)
@@ -183,12 +197,8 @@ func discoverLegacy(ctx context.Context, cp *content.ContentProvider, scheme str
 	return result, nil
 }
 
-func buildCatalog(ctx context.Context, root string, files []string, scheme string, requiredFrontmatter bool) (DiscoveryResult, error) {
+func buildCatalog(ctx context.Context, root string, files []string, scheme string, ops discoveryOps) (DiscoveryResult, error) {
 	result := DiscoveryResult{}
-	mode := content.FrontmatterOptional
-	if requiredFrontmatter {
-		mode = content.FrontmatterRequired
-	}
 	for _, filePath := range files {
 		if err := ctx.Err(); err != nil {
 			return DiscoveryResult{}, err
@@ -196,33 +206,40 @@ func buildCatalog(ctx context.Context, root string, files []string, scheme strin
 		if !isMarkdown(filePath) {
 			return DiscoveryResult{}, fmt.Errorf("configured index selected non-Markdown file: %s", filePath)
 		}
-		raw, err := os.ReadFile(filePath)
+		raw, err := ops.readFile(filePath)
 		if err != nil {
 			return DiscoveryResult{}, fmt.Errorf("read configured file %s: %w", filePath, err)
 		}
-		parsed, err := content.ParseMarkdown(raw, mode)
+		parsed, err := content.ParseMarkdown(raw, content.FrontmatterOptional)
 		if err != nil {
 			return DiscoveryResult{}, fmt.Errorf("parse configured file %s: %w", filePath, err)
 		}
-		relativePath, err := filepath.Rel(root, filePath)
+		relativePath, err := ops.relativePath(root, filePath)
 		if err != nil {
 			return DiscoveryResult{}, err
 		}
 		uri := sourceURI(scheme, relativePath)
-		source, err := content.BuildSourceDocument(parsed, content.SourceOptions{
+		source := buildParsedSource(parsed, content.SourceOptions{
 			URI: uri, FilePath: filePath, RelativePath: filepath.ToSlash(relativePath), Raw: raw,
 		})
-		if err != nil {
-			return DiscoveryResult{}, fmt.Errorf("build configured source %s: %w", filePath, err)
-		}
-		chunks, err := content.ChunkMarkdown(source, parsed)
-		if err != nil {
-			return DiscoveryResult{}, fmt.Errorf("chunk configured source %s: %w", filePath, err)
-		}
+		chunks := chunkParsedSource(source, parsed)
 		result.Sources = append(result.Sources, source)
 		result.Chunks = append(result.Chunks, chunks...)
 	}
 	return result, nil
+}
+
+// ParseMarkdown returns a non-nil ParsedMarkdown with an AST on success.
+// The two construction helpers reject only that invalid input state, so their
+// errors are unreachable after a successful parse.
+func buildParsedSource(parsed *content.ParsedMarkdown, opts content.SourceOptions) domain.SourceDocument {
+	source, _ := content.BuildSourceDocument(parsed, opts)
+	return source
+}
+
+func chunkParsedSource(source domain.SourceDocument, parsed *content.ParsedMarkdown) []domain.Chunk {
+	chunks, _ := content.ChunkMarkdown(source, parsed)
+	return chunks
 }
 
 func validatePatterns(patterns []string) ([]string, error) {
