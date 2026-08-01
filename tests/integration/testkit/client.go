@@ -25,8 +25,16 @@ func NewStdioTestClient(t testing.TB, contentOpts *ContentDirOptions) *TestClien
 
 	contentDir := CreateTestContentDir(t, contentOpts)
 
+	resultMode := ""
+	crossRef := false
+	if contentOpts != nil {
+		resultMode = contentOpts.ResultMode
+		crossRef = contentOpts.CrossRef
+	}
 	flags := NewTestFlags(t, contentDir, &FlagOptions{
-		Transport: "stdio",
+		Transport:  "stdio",
+		ResultMode: resultMode,
+		CrossRef:   crossRef,
 	})
 
 	service := NewACDCService("acdc-client-test", flags)
