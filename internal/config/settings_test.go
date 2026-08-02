@@ -208,6 +208,49 @@ func TestLoadSettingsWithFlags_NilFlags(t *testing.T) {
 	}
 }
 
+// TestLoadSettings_ContentDirDefaultsToWorkingDirectory pins the zero-config
+// default: with no flag and no env var, content_dir is the process working
+// directory itself, not a "content" subdirectory beneath it.
+func TestLoadSettings_ContentDirDefaultsToWorkingDirectory(t *testing.T) {
+	// Note: Can't use t.Setenv to clear, so restore manually.
+	prevContentDir, hadContentDir := os.LookupEnv("ACDC_MCP_CONTENT_DIR")
+	_ = os.Unsetenv("ACDC_MCP_CONTENT_DIR")
+	t.Cleanup(func() {
+		if hadContentDir {
+			_ = os.Setenv("ACDC_MCP_CONTENT_DIR", prevContentDir)
+		}
+	})
+
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+
+	settings, err := LoadSettings()
+	require.NoError(t, err)
+	require.Equal(t, wd, settings.ContentDir)
+}
+
+// TestLoadSettingsWithFlags_ContentDirFlagOverridesDefault verifies an
+// explicit --content-dir flag still wins over the working-directory default.
+func TestLoadSettingsWithFlags_ContentDirFlagOverridesDefault(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	flags.String("content-dir", "", "")
+	require.NoError(t, flags.Set("content-dir", "/custom/path"))
+
+	settings, err := LoadSettingsWithFlags(flags)
+	require.NoError(t, err)
+	require.Equal(t, "/custom/path", settings.ContentDir)
+}
+
+// TestLoadSettings_ContentDirEnvVarOverridesDefault verifies
+// ACDC_MCP_CONTENT_DIR still wins over the working-directory default.
+func TestLoadSettings_ContentDirEnvVarOverridesDefault(t *testing.T) {
+	t.Setenv("ACDC_MCP_CONTENT_DIR", "/env/path")
+
+	settings, err := LoadSettings()
+	require.NoError(t, err)
+	require.Equal(t, "/env/path", settings.ContentDir)
+}
+
 // TestLoadSettingsWithFlags_AllFlagTypes verifies all flag types work
 func TestLoadSettingsWithFlags_AllFlagTypes(t *testing.T) {
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
