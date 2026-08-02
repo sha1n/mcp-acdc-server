@@ -75,6 +75,13 @@ func TestDiscoverWithOps_ConfiguredFilesystemFailures(t *testing.T) {
 			},
 		},
 		{
+			name: "directory relative path error", wantErr: relativeErr,
+			configure: func(ops *discoveryOps) {
+				ops.walkDir = walkOne(root+"/docs", directoryEntry("docs"))
+				ops.relativePath = func(_, _ string) (string, error) { return "", relativeErr }
+			},
+		},
+		{
 			name: "read error", wantErr: readErr,
 			configure: func(ops *discoveryOps) {
 				ops.walkDir = walkOne(file, regularEntry("guide.md"))
@@ -277,6 +284,10 @@ func walkOne(file string, entry fs.DirEntry) func(string, fs.WalkDirFunc) error 
 
 func regularEntry(name string) testDirEntry {
 	return testDirEntry{name: name}
+}
+
+func directoryEntry(name string) testDirEntry {
+	return testDirEntry{name: name, mode: fs.ModeDir}
 }
 
 type testDirEntry struct {

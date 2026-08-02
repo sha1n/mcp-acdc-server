@@ -119,6 +119,8 @@ func discoverWithOps(ctx context.Context, cp *content.ContentProvider, index *do
 		return DiscoveryResult{}, fmt.Errorf("resolve content root: %w", err)
 	}
 
+	descent := newDescentFilter(patterns)
+
 	var selected []string
 	err = ops.walkDir(root, func(filePath string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -128,7 +130,17 @@ func discoverWithOps(ctx context.Context, cp *content.ContentProvider, index *do
 			return err
 		}
 		if entry.IsDir() {
-			if filePath != root && shouldPruneDir(entry.Name(), policy.lenient) {
+			if filePath == root {
+				return nil
+			}
+			if shouldPruneDir(entry.Name(), policy.lenient) {
+				return fs.SkipDir
+			}
+			relativeDir, err := ops.relativePath(root, filePath)
+			if err != nil {
+				return err
+			}
+			if !descent.allows(filepath.ToSlash(relativeDir)) {
 				return fs.SkipDir
 			}
 			return nil
