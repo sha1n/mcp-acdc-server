@@ -18,7 +18,7 @@ type SearchToolArgument struct {
 
 // ReadToolArgument represents arguments for read tool
 type ReadToolArgument struct {
-	URI string `json:"uri" jsonschema_description:"The acdc:// URI of the resource to fetch"`
+	URI string `json:"uri" jsonschema_description:"The resource URI, exactly as returned by search or a resource listing (e.g. acdc://guides/setup#install)"`
 }
 
 // RegisterSearchTool registers the search tool with the server

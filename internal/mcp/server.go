@@ -30,8 +30,7 @@ func CreateServer(
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    metadata.Server.Name,
 		Version: metadata.Server.Version,
-	}, nil)
-	// Note: Instructions are stored in metadata but not directly supported by official SDK
+	}, &mcp.ServerOptions{Instructions: metadata.Server.Instructions})
 
 	// Register Resources
 	for _, res := range resourceProvider.ListResources() {
