@@ -36,9 +36,12 @@ func TestCreateServer(t *testing.T) {
 	promptProvider := prompts.NewPromptProvider([]prompts.PromptDefinition{}, nil)
 	searchService := &mockSearcher{}
 
-	server := CreateServer(metadata, resourceProvider, promptProvider, searchService, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences})
+	server, registrar := CreateServer(metadata, resourceProvider, promptProvider, searchService, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences}, nil)
 	if server == nil {
 		t.Fatal("Server should not be nil")
+	}
+	if registrar == nil {
+		t.Fatal("Registrar should not be nil")
 	}
 }
 
@@ -64,7 +67,7 @@ func TestCreateServer_InstructionsReachClient(t *testing.T) {
 	require.NoError(t, err)
 	promptProvider := prompts.NewPromptProvider([]prompts.PromptDefinition{}, nil)
 
-	server := CreateServer(metadata, resourceProvider, promptProvider, &mockSearcher{}, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences})
+	server, _ := CreateServer(metadata, resourceProvider, promptProvider, &mockSearcher{}, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences}, nil)
 	require.NotNil(t, server)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -102,7 +105,7 @@ func TestCreateServer_EmptyInstructionsDoesNotBreakCreation(t *testing.T) {
 	require.NoError(t, err)
 	promptProvider := prompts.NewPromptProvider([]prompts.PromptDefinition{}, nil)
 
-	server := CreateServer(metadata, resourceProvider, promptProvider, &mockSearcher{}, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences})
+	server, _ := CreateServer(metadata, resourceProvider, promptProvider, &mockSearcher{}, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences}, nil)
 	require.NotNil(t, server)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -134,6 +137,3 @@ func (m *mockSearcher) Index(ctx context.Context, chunks <-chan domain.Chunk) er
 	}
 	return nil
 }
-
-func (m *mockSearcher) ReplaceSource(context.Context, string, []domain.Chunk) error { return nil }
-func (m *mockSearcher) DeleteSource(context.Context, string) error                  { return nil }

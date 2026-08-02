@@ -10,10 +10,11 @@ import (
 	"github.com/sha1n/mcp-acdc-server/internal/resources"
 )
 
-func makeResourceHandler(resourceProvider *resources.ResourceProvider, uri string) mcp.ResourceHandler {
+func makeResourceHandler(catalog resources.Catalog, revalidator Revalidator, uri string) mcp.ResourceHandler {
 	return func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		revalidator.Revalidate(ctx)
 		slog.Info("Resource request", "uri", uri)
-		content, err := resourceProvider.ReadResource(uri)
+		content, err := catalog.ReadResource(uri)
 		if err != nil {
 			slog.Error("Resource read failed", "uri", uri, "error", err)
 			return nil, err

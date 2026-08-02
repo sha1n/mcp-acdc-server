@@ -35,7 +35,7 @@ func TestMakeResourceHandler_Success(t *testing.T) {
 	}, nil)
 	require.NoError(t, err)
 
-	handler := makeResourceHandler(resourceProvider, "acdc://test-resource")
+	handler := makeResourceHandler(resourceProvider, noopRevalidator{}, "acdc://test-resource")
 	require.NotNil(t, handler)
 
 	ctx := context.Background()
@@ -55,11 +55,45 @@ func TestMakeResourceHandler_Success(t *testing.T) {
 	assert.Equal(t, "# Test Content\n\nThis is test content.", result.Contents[0].Text)
 }
 
+// TestMakeResourceHandler_ServesSwappedCatalogContent verifies that a handler
+// created before a CatalogHolder.Swap serves the new snapshot's content
+// afterwards. A handler that captured a *resources.ResourceProvider snapshot
+// at construction time instead of the holder would keep serving stale
+// content here.
+func TestMakeResourceHandler_ServesSwappedCatalogContent(t *testing.T) {
+	initial, err := resources.NewResourceProvider([]resources.ResourceDefinition{
+		{URI: "acdc://doc", Name: "Doc", Description: "d", MIMEType: "text/markdown", Content: "old content"},
+	}, nil)
+	require.NoError(t, err)
+	holder := resources.NewCatalogHolder(initial)
+
+	handler := makeResourceHandler(holder, noopRevalidator{}, "acdc://doc")
+
+	ctx := context.Background()
+	req := &mcp.ReadResourceRequest{Params: &mcp.ReadResourceParams{URI: "acdc://doc"}}
+
+	result, err := handler(ctx, req)
+	require.NoError(t, err)
+	require.Len(t, result.Contents, 1)
+	assert.Equal(t, "old content", result.Contents[0].Text)
+
+	updated, err := resources.NewResourceProvider([]resources.ResourceDefinition{
+		{URI: "acdc://doc", Name: "Doc", Description: "d", MIMEType: "text/markdown", Content: "new content"},
+	}, nil)
+	require.NoError(t, err)
+	holder.Swap(updated)
+
+	result, err = handler(ctx, req)
+	require.NoError(t, err)
+	require.Len(t, result.Contents, 1)
+	assert.Equal(t, "new content", result.Contents[0].Text)
+}
+
 func TestMakeResourceHandler_Error_NotFound(t *testing.T) {
 	resourceProvider, err := resources.NewResourceProvider([]resources.ResourceDefinition{}, nil)
 	require.NoError(t, err)
 
-	handler := makeResourceHandler(resourceProvider, "acdc://nonexistent")
+	handler := makeResourceHandler(resourceProvider, noopRevalidator{}, "acdc://nonexistent")
 	require.NotNil(t, handler)
 
 	ctx := context.Background()
