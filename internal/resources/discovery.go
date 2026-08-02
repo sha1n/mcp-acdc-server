@@ -40,16 +40,70 @@ func defaultDiscoveryOps() discoveryOps {
 	}
 }
 
-// Discover loads configured Markdown sources, or legacy mcp-resources when
-// index is nil.
-func Discover(ctx context.Context, cp *content.ContentProvider, index *domain.IndexMetadata, scheme string) (DiscoveryResult, error) {
-	return discoverWithOps(ctx, cp, index, scheme, defaultDiscoveryOps())
+// discoverPolicy controls how the configured-index path tolerates repository
+// content. It never affects validation of the invocation itself (patterns,
+// content root, selected file containment or type), only how missing or
+// unreadable/unparsable repository files are handled.
+type discoverPolicy struct {
+	lenient bool
 }
 
-func discoverWithOps(ctx context.Context, cp *content.ContentProvider, index *domain.IndexMetadata, scheme string, ops discoveryOps) (DiscoveryResult, error) {
+// DiscoverOption configures discovery behavior.
+type DiscoverOption func(*discoverPolicy)
+
+// WithLenientIndex tolerates an empty selection and skips files that cannot be read
+// or parsed, instead of failing startup. Used when the index configuration is
+// defaulted rather than declared by an operator. It has no effect in legacy
+// mcp-resources mode (index == nil), which resolves before any policy is applied.
+func WithLenientIndex() DiscoverOption {
+	return func(p *discoverPolicy) { p.lenient = true }
+}
+
+func resolvePolicy(opts []DiscoverOption) discoverPolicy {
+	var policy discoverPolicy
+	for _, opt := range opts {
+		opt(&policy)
+	}
+	return policy
+}
+
+// directories that never hold indexable documentation.
+var alwaysPrunedDirs = map[string]bool{
+	".git": true,
+}
+
+// build/dependency artifact directories pruned only under the lenient
+// policy, so an explicit manifest keeps selecting exactly what it selects
+// today.
+var lenientPrunedDirs = map[string]bool{
+	"node_modules": true,
+	"vendor":       true,
+	"dist":         true,
+	"build":        true,
+	"target":       true,
+	".venv":        true,
+}
+
+func shouldPruneDir(name string, lenient bool) bool {
+	if alwaysPrunedDirs[name] {
+		return true
+	}
+	return lenient && lenientPrunedDirs[name]
+}
+
+// Discover loads configured Markdown sources, or legacy mcp-resources when
+// index is nil. By default it applies today's strict behavior: an empty
+// selection or an unreadable/unparsable configured file fails discovery.
+// Pass WithLenientIndex to tolerate repository content issues instead.
+func Discover(ctx context.Context, cp *content.ContentProvider, index *domain.IndexMetadata, scheme string, opts ...DiscoverOption) (DiscoveryResult, error) {
+	return discoverWithOps(ctx, cp, index, scheme, defaultDiscoveryOps(), opts...)
+}
+
+func discoverWithOps(ctx context.Context, cp *content.ContentProvider, index *domain.IndexMetadata, scheme string, ops discoveryOps, opts ...DiscoverOption) (DiscoveryResult, error) {
 	if index == nil {
 		return discoverLegacy(ctx, cp, scheme, ops)
 	}
+	policy := resolvePolicy(opts)
 
 	patterns, err := validatePatterns(index.Include)
 	if err != nil {
@@ -73,7 +127,13 @@ func discoverWithOps(ctx context.Context, cp *content.ContentProvider, index *do
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if entry.Type()&fs.ModeSymlink != 0 || entry.IsDir() {
+		if entry.IsDir() {
+			if filePath != root && shouldPruneDir(entry.Name(), policy.lenient) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if entry.Type()&fs.ModeSymlink != 0 {
 			return nil
 		}
 
@@ -108,11 +168,15 @@ func discoverWithOps(ctx context.Context, cp *content.ContentProvider, index *do
 		return DiscoveryResult{}, err
 	}
 	if len(selected) == 0 {
+		if policy.lenient {
+			slog.Warn("Configured index matched no files", "root", root)
+			return DiscoveryResult{}, nil
+		}
 		return DiscoveryResult{}, fmt.Errorf("configured index matched no files")
 	}
 
 	sort.Strings(selected)
-	return buildCatalog(ctx, root, selected, scheme, ops)
+	return buildCatalog(ctx, root, selected, scheme, ops, policy)
 }
 
 // DiscoverResources returns legacy mcp-resources definitions for callers that
@@ -197,7 +261,7 @@ func discoverLegacy(ctx context.Context, cp *content.ContentProvider, scheme str
 	return result, nil
 }
 
-func buildCatalog(ctx context.Context, root string, files []string, scheme string, ops discoveryOps) (DiscoveryResult, error) {
+func buildCatalog(ctx context.Context, root string, files []string, scheme string, ops discoveryOps, policy discoverPolicy) (DiscoveryResult, error) {
 	result := DiscoveryResult{}
 	for _, filePath := range files {
 		if err := ctx.Err(); err != nil {
@@ -208,10 +272,18 @@ func buildCatalog(ctx context.Context, root string, files []string, scheme strin
 		}
 		raw, err := ops.readFile(filePath)
 		if err != nil {
+			if policy.lenient {
+				slog.Warn("Skipping unreadable configured file", "file", filepath.Base(filePath), "error", err)
+				continue
+			}
 			return DiscoveryResult{}, fmt.Errorf("read configured file %s: %w", filePath, err)
 		}
 		parsed, err := content.ParseMarkdown(raw, content.FrontmatterOptional)
 		if err != nil {
+			if policy.lenient {
+				slog.Warn("Skipping invalid configured file", "file", filepath.Base(filePath), "error", err)
+				continue
+			}
 			return DiscoveryResult{}, fmt.Errorf("parse configured file %s: %w", filePath, err)
 		}
 		relativePath, err := ops.relativePath(root, filePath)
