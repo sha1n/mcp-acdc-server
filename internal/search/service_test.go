@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"sync"
 	"testing"
 
 	"github.com/blevesearch/bleve/v2"
@@ -267,45 +266,6 @@ func TestService_ReportsIndexOperationFailures(t *testing.T) {
 	require.Nil(t, results)
 }
 
-func TestService_MutationFailureBoundaries(t *testing.T) {
-	t.Run("replace cancellation and uninitialized index", func(t *testing.T) {
-		service := NewService(testSettings())
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		require.ErrorIs(t, service.ReplaceSource(ctx, "source", nil), context.Canceled)
-		require.ErrorContains(t, service.ReplaceSource(context.Background(), "source", nil), "not initialized")
-	})
-
-	t.Run("replace and delete batch failures preserve source state", func(t *testing.T) {
-		backing, err := bleve.NewMemOnly(buildMapping())
-		require.NoError(t, err)
-		index := &failingSearchIndex{backing: backing, batchErr: errors.New("batch failed")}
-		service := NewService(testSettings())
-		defer service.Close()
-		service.index = index
-		service.sourceChunks = map[string][]string{"source": {"old"}}
-
-		require.ErrorContains(t, service.ReplaceSource(context.Background(), "source", []domain.Chunk{{ID: "new"}}), "failed to replace source chunks")
-		require.ErrorContains(t, service.DeleteSource(context.Background(), "source"), "failed to delete source chunks")
-		index.batchErr = nil
-		require.NoError(t, service.DeleteSource(context.Background(), "source"))
-		require.NotContains(t, service.sourceChunks, "source")
-	})
-
-	t.Run("delete cancellation, no index, and unknown source", func(t *testing.T) {
-		service := NewService(testSettings())
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		require.ErrorIs(t, service.DeleteSource(ctx, "source"), context.Canceled)
-		require.NoError(t, service.DeleteSource(context.Background(), "source"))
-		indexChunks(t, service, []domain.Chunk{{ID: "known", SourceID: "known", SourceURI: "acdc://known", ChunkURI: "acdc://known#chunk", Content: "known"}})
-		require.NoError(t, service.DeleteSource(context.Background(), "unknown"))
-		results, err := service.Search("known", 10)
-		require.NoError(t, err)
-		require.Len(t, results, 1)
-	})
-}
-
 func TestService_IndexCreationFailuresPreserveExistingState(t *testing.T) {
 	settings := testSettings()
 	settings.InMemory = false
@@ -452,8 +412,6 @@ func TestService_Index_FailedRebuildPreservesExistingIndex(t *testing.T) {
 }
 
 func TestService_BatchIndexFailures(t *testing.T) {
-	service := NewService(testSettings())
-	defer service.Close()
 	index, err := bleve.NewMemOnly(buildMapping())
 	require.NoError(t, err)
 
@@ -461,14 +419,14 @@ func TestService_BatchIndexFailures(t *testing.T) {
 		stream := make(chan domain.Chunk, 1)
 		stream <- domain.Chunk{Content: "invalid"}
 		close(stream)
-		require.ErrorContains(t, service.batchIndex(context.Background(), index, stream), "failed to add chunk to batch")
+		require.ErrorContains(t, batchIndex(context.Background(), index, stream), "failed to add chunk to batch")
 	})
 	t.Run("reports final batch failure", func(t *testing.T) {
 		stream := make(chan domain.Chunk, 1)
 		stream <- domain.Chunk{ID: "chunk", Content: "valid"}
 		close(stream)
 		mock := &mockBatchIndexer{realIndex: index, batchErr: errors.New("batch failed")}
-		require.ErrorContains(t, service.batchIndex(context.Background(), mock, stream), "failed to execute final batch index")
+		require.ErrorContains(t, batchIndex(context.Background(), mock, stream), "failed to execute final batch index")
 	})
 	t.Run("reports full batch failure", func(t *testing.T) {
 		stream := make(chan domain.Chunk, 100)
@@ -477,7 +435,7 @@ func TestService_BatchIndexFailures(t *testing.T) {
 		}
 		close(stream)
 		mock := &mockBatchIndexer{realIndex: index, batchErr: errors.New("batch failed")}
-		require.ErrorContains(t, service.batchIndex(context.Background(), mock, stream), "failed to execute batch index")
+		require.ErrorContains(t, batchIndex(context.Background(), mock, stream), "failed to execute batch index")
 	})
 }
 
@@ -496,74 +454,6 @@ func TestService_IndexRebuildsAndBatchesChunks(t *testing.T) {
 	count, err = service.DocCount()
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), count)
-}
-
-func TestService_ReplaceAndDeleteSource(t *testing.T) {
-	service := NewService(testSettings())
-	defer service.Close()
-	indexChunks(t, service, []domain.Chunk{{ID: "old", SourceID: "source", SourceURI: "acdc://source", ChunkURI: "acdc://source#old", Content: "legacy"}})
-
-	require.NoError(t, service.ReplaceSource(context.Background(), "source", []domain.Chunk{{ID: "new", SourceID: "source", SourceURI: "acdc://source", ChunkURI: "acdc://source#new", Content: "modern"}}))
-	oldResults, err := service.Search("legacy", 10)
-	require.NoError(t, err)
-	require.Empty(t, oldResults)
-	newResults, err := service.Search("modern", 10)
-	require.NoError(t, err)
-	require.Len(t, newResults, 1)
-
-	require.NoError(t, service.DeleteSource(context.Background(), "source"))
-	newResults, err = service.Search("modern", 10)
-	require.NoError(t, err)
-	require.Empty(t, newResults)
-}
-
-func TestService_ReplaceSource_InvalidChunkPreservesExistingSource(t *testing.T) {
-	service := NewService(testSettings())
-	defer service.Close()
-	indexChunks(t, service, []domain.Chunk{{ID: "old", SourceID: "source", SourceURI: "acdc://source", ChunkURI: "acdc://source#old", Content: "legacy"}})
-
-	err := service.ReplaceSource(context.Background(), "source", []domain.Chunk{{Content: "invalid"}})
-	require.ErrorContains(t, err, "failed to add replacement chunk to batch")
-	results, err := service.Search("legacy", 10)
-	require.NoError(t, err)
-	require.Len(t, results, 1)
-	require.Equal(t, "old", results[0].ChunkID)
-}
-
-func TestService_ReplaceSource_SerializesConcurrentMutations(t *testing.T) {
-	service := NewService(testSettings())
-	defer service.Close()
-	indexChunks(t, service, []domain.Chunk{{ID: "old", SourceID: "source", SourceURI: "acdc://source", ChunkURI: "acdc://source#old", Content: "legacy"}})
-
-	const replacements = 32
-	start := make(chan struct{})
-	errs := make(chan error, replacements)
-	var wait sync.WaitGroup
-	for i := 0; i < replacements; i++ {
-		wait.Add(1)
-		go func(i int) {
-			defer wait.Done()
-			<-start
-			errs <- service.ReplaceSource(context.Background(), "source", []domain.Chunk{{
-				ID:        fmt.Sprintf("replacement-%d", i),
-				SourceID:  "source",
-				SourceURI: "acdc://source",
-				ChunkURI:  fmt.Sprintf("acdc://source#replacement-%d", i),
-				Content:   "replacement",
-			}})
-		}(i)
-	}
-	close(start)
-	wait.Wait()
-	close(errs)
-	for err := range errs {
-		require.NoError(t, err)
-	}
-
-	results, err := service.Search("replacement", replacements)
-	require.NoError(t, err)
-	require.Len(t, results, 1)
-	require.Equal(t, "source", results[0].SourceID)
 }
 
 func chunkIDs(results []SearchResult) []string {

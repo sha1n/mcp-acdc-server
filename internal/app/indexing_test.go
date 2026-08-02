@@ -55,11 +55,7 @@ func (s *fakeSearcher) Index(_ context.Context, chunks <-chan domain.Chunk) erro
 }
 
 func (*fakeSearcher) Search(string, int) ([]search.SearchResult, error) { return nil, nil }
-func (*fakeSearcher) ReplaceSource(context.Context, string, []domain.Chunk) error {
-	return nil
-}
-func (*fakeSearcher) DeleteSource(context.Context, string) error { return nil }
-func (s *fakeSearcher) Close()                                   { s.closeCalls++ }
+func (s *fakeSearcher) Close()                                          { s.closeCalls++ }
 
 func TestIndexResources_Success(t *testing.T) {
 	streamer := &fakeChunkStreamer{chunks: []domain.Chunk{{ID: "one"}}}
