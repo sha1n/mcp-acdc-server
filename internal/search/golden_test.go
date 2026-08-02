@@ -1,0 +1,349 @@
+package search
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/content"
+	"github.com/sha1n/mcp-acdc-server/internal/domain"
+	"github.com/sha1n/mcp-acdc-server/internal/resources"
+	"github.com/stretchr/testify/require"
+)
+
+// Corpora under testdata. zeroConfigCorpus carries no frontmatter, reproducing
+// what the server indexes in repository mode; curatedCorpus carries the
+// frontmatter an authored catalog supplies.
+const (
+	zeroConfigCorpus = "testdata/corpus"
+	curatedCorpus    = "testdata/curated"
+)
+
+// goldenCandidates is deliberately larger than any asserted rank, so a document
+// that drops out of the top ranks is reported rather than silently truncated.
+const goldenCandidates = 25
+
+// goldenQuery pins one ranking judgement. Expectations address documents by
+// source URI or by chunk URI; both forms are matched against every result.
+//
+// Assertions are on rank position only. Bleve scores move with library
+// upgrades and with corpus size, so a score assertion pins the library rather
+// than the ranking model.
+type goldenQuery struct {
+	name    string
+	corpora []string
+	query   string
+	// rationale states why the pinned ranking is the right answer.
+	rationale string
+	// top, when set, must be the URI at rank 1.
+	top string
+	// within maps a URI to the rank it must reach or better.
+	within map[string]int
+	// ranks maps a URI to the exact rank it must occupy. Used to pin a measured
+	// ranking that is not the desired one, so improving it fails the case
+	// instead of passing silently.
+	ranks map[string]int
+	// absent lists URIs that must not appear among the candidates at all.
+	absent []string
+	// finding, when non-empty, marks a case whose expectations pin what the
+	// current model *does* rather than what it should do. Retuning belongs to
+	// the issue named here, not to this harness.
+	finding string
+}
+
+// goldenService indexes the given corpora through the production discovery and
+// chunking path, so the harness measures the scorer against the documents it
+// actually sees rather than against hand-built chunks.
+func goldenService(t *testing.T, corpora ...string) *Service {
+	t.Helper()
+	return goldenServiceWith(t, testSettings(), corpora...)
+}
+
+func goldenServiceWith(t *testing.T, settings config.SearchSettings, corpora ...string) *Service {
+	t.Helper()
+
+	index := &domain.IndexMetadata{Include: []string{"**/*.md"}}
+	var chunks []domain.Chunk
+	for _, corpus := range corpora {
+		result, err := resources.Discover(context.Background(), content.NewContentProvider(corpus), index, "acdc")
+		require.NoError(t, err, "discover %s", corpus)
+		require.NotEmpty(t, result.Chunks, "corpus %s produced no chunks", corpus)
+		chunks = append(chunks, result.Chunks...)
+	}
+
+	service := NewService(settings)
+	t.Cleanup(service.Close)
+	indexChunks(t, service, chunks)
+	return service
+}
+
+// rankOf returns the best 1-based rank at which uri appears, or 0 when absent.
+func rankOf(results []SearchResult, uri string) int {
+	for rank, result := range results {
+		if result.ChunkURI == uri || result.SourceURI == uri {
+			return rank + 1
+		}
+	}
+	return 0
+}
+
+// reportRanking logs the leading results for a query. Visible under
+// `go test -run TestGolden -v`, this table is the measurement the harness
+// exists to produce; the assertions are its regression gate.
+func reportRanking(t *testing.T, query string, results []SearchResult) {
+	t.Helper()
+	t.Logf("query %q — %d candidates", query, len(results))
+	for rank, result := range results {
+		if rank == 5 {
+			break
+		}
+		t.Logf("  %d · %.4f · %s · %s", rank+1, result.Score, result.ChunkURI, strings.Join(result.HeadingPath, " > "))
+	}
+}
+
+func (q goldenQuery) run(t *testing.T) {
+	t.Helper()
+
+	service := goldenService(t, q.corpora...)
+	results, err := service.Search(q.query, goldenCandidates)
+	require.NoError(t, err)
+	reportRanking(t, q.query, results)
+
+	if q.finding != "" {
+		t.Logf("FINDING (%s): %s", q.finding, q.rationale)
+	}
+
+	if q.top != "" {
+		require.NotEmpty(t, results, "no results for %q", q.query)
+		require.Equal(t, 1, rankOf(results, q.top), "%s\nexpected %s at rank 1, got %s", q.rationale, q.top, results[0].ChunkURI)
+	}
+	for uri, limit := range q.within {
+		rank := rankOf(results, uri)
+		require.NotZero(t, rank, "%s\nexpected %s within rank %d, absent from %d candidates", q.rationale, uri, limit, len(results))
+		require.LessOrEqual(t, rank, limit, "%s\nexpected %s within rank %d, got rank %d", q.rationale, uri, limit, rank)
+	}
+	for uri, expected := range q.ranks {
+		require.Equal(t, expected, rankOf(results, uri), "%s\nexpected %s at rank %d", q.rationale, uri, expected)
+	}
+	for _, uri := range q.absent {
+		require.Zero(t, rankOf(results, uri), "%s\nexpected %s to be absent", q.rationale, uri)
+	}
+}
+
+func TestGolden_ZeroConfigRanking(t *testing.T) {
+	corpus := []string{zeroConfigCorpus}
+	queries := []goldenQuery{
+		{
+			name:    "dedicated page beats the README summary",
+			corpora: corpus,
+			query:   "authentication",
+			rationale: "docs/authentication.md is the page about the topic and wins, as it should. " +
+				"Measured: its six chunks then take ranks 1-6 outright, and the README summary — the only other document with a claim to the query — lands at 7. " +
+				"Ranking is per chunk with no per-source diversification, so one document can occupy an entire result page and hide every alternative from a client that reads the top five.",
+			top:     "acdc://docs/authentication",
+			ranks:   map[string]int{"acdc://README": 7},
+			finding: "no per-source diversification",
+		},
+		{
+			name:      "defining section beats sibling sections of the same page",
+			corpora:   corpus,
+			query:     "bearer token",
+			rationale: "The section that defines bearer tokens answers the query; rotation and revocation only use the term.",
+			top:       "acdc://docs/authentication#bearer-tokens",
+		},
+		{
+			name:      "nested heading retrieves the section, not the page",
+			corpora:   corpus,
+			query:     "readiness probe",
+			rationale: "Chunk granularity is the point: the answer is the third-level Readiness section, not the whole Kubernetes page.",
+			top:       "acdc://docs/deployment/kubernetes#readiness",
+		},
+		{
+			name:    "path carries a signal the body does not",
+			corpora: corpus,
+			query:   "rate limiting",
+			rationale: "docs/rate-limiting/quotas.md never writes 'rate' or 'limiting' in its body or headings, so only path_labels can retrieve it. " +
+				"It must still beat the troubleshooting section that mentions an append rate in passing: path_labels (1.25) over content (1.0).",
+			top:    "acdc://docs/rate-limiting/quotas",
+			within: map[string]int{"acdc://docs/troubleshooting#queries-are-slow": 6},
+		},
+		{
+			name:    "a heading beats repetition in a body",
+			corpora: corpus,
+			query:   "checksums",
+			rationale: "The internals page has a Checksums heading and names the term once; the CLI reference names it three times under a heading about a subcommand. " +
+				"heading_path (2.5) over content (1.0): what a section is titled says more than how often a term recurs inside one.",
+			top:    "acdc://docs/internals/indexing#checksums",
+			within: map[string]int{"acdc://docs/reference/cli#ledger-verify": 3},
+		},
+		{
+			name:      "title outranks a heading on a recurring term",
+			corpora:   corpus,
+			query:     "configuration",
+			rationale: "The term recurs in four documents. The page titled Configuration should win over the README section and the passing mentions.",
+			top:       "acdc://docs/configuration",
+			within:    map[string]int{"acdc://README": 6},
+		},
+		{
+			name:      "symptom heading beats an explanatory mention",
+			corpora:   corpus,
+			query:     "401",
+			rationale: "Troubleshooting has a heading for the symptom; authentication.md only mentions the status code while explaining validation.",
+			top:       "acdc://docs/troubleshooting#requests-fail-with-401",
+		},
+		{
+			name:      "an unrelated sibling page does not leak in",
+			corpora:   corpus,
+			query:     "helm chart",
+			rationale: "Precision probe: the Docker page shares a parent directory with Kubernetes but says nothing about Helm.",
+			top:       "acdc://docs/deployment/kubernetes#helm-chart",
+			absent:    []string{"acdc://docs/deployment/docker"},
+		},
+		{
+			name:    "fuzziness admits an unrelated document",
+			corpora: corpus,
+			query:   "readiness",
+			rationale: "README has no bearing on readiness probes, and the corpus contains one obviously correct answer. " +
+				"Measured: every README chunk matches, taking ranks 2-5, because the path label 'readme' stems to a term within edit distance 1 of the query. " +
+				"Fuzziness is applied to every field with no prefix_length, so a document is retrieved on a term it does not contain.",
+			top:     "acdc://docs/deployment/kubernetes#readiness",
+			ranks:   map[string]int{"acdc://README": 2},
+			finding: "#85 — fuzziness=1 with no prefix_length",
+		},
+	}
+
+	for _, query := range queries {
+		t.Run(query.name, query.run)
+	}
+}
+
+func TestGolden_CuratedRanking(t *testing.T) {
+	mixed := []string{zeroConfigCorpus, curatedCorpus}
+	queries := []goldenQuery{
+		{
+			name:    "keywords retrieve a document whose body lacks the term",
+			corpora: mixed,
+			query:   "compaction",
+			rationale: "Retention policy names compaction only in frontmatter keywords; the indexing page carries it as a heading and in its body. " +
+				"The boost table says keywords (3.0) outranks heading_path (2.5), so the curated document was expected to win. " +
+				"Measured: the indexing page wins outright and every retention chunk trails it. A larger boost does not decide a match — " +
+				"the indexing chunk scores on two fields at once, and per-field IDF favours it because the term appears in one heading_path but in the keywords of all three retention chunks. " +
+				"TestSearch_ChunkFieldBoosts proves the boosts are ordered; it holds all else equal, and on a real corpus all else is not equal.",
+			top:     "acdc://docs/internals/indexing#segment-compaction",
+			ranks:   map[string]int{"acdc://docs/retention": 2},
+			finding: "#84 — boost order is not the effective ranking",
+		},
+		{
+			name:    "a keyword beats a passing mention in a body",
+			corpora: mixed,
+			query:   "dashboards",
+			rationale: "Observability declares dashboards as a keyword and never writes the word; troubleshooting mentions one dashboard in passing. " +
+				"keywords (3.0) over content (1.0) is the curated catalog's whole value proposition, and this is the pair that isolates it.",
+			top:    "acdc://docs/observability",
+			within: map[string]int{"acdc://docs/troubleshooting#queries-are-slow": 4},
+		},
+		{
+			name:      "a curated title still competes on its own terms",
+			corpora:   mixed,
+			query:     "metrics endpoint",
+			rationale: "Frontmatter must not make a curated document win queries it has no claim to; here it has one, through both keywords and a heading.",
+			top:       "acdc://docs/observability#metrics-endpoint",
+		},
+	}
+
+	for _, query := range queries {
+		t.Run(query.name, query.run)
+	}
+}
+
+// TestGolden_KeywordsAreInertInZeroConfigMode pins the structural finding that
+// motivates this harness: keywords carry the highest boost in the model (3.0,
+// above heading_path at 2.5) and come only from YAML frontmatter, which
+// repository documentation does not have. In the mode the server now defaults
+// to, the strongest signal has no documents to match.
+func TestGolden_KeywordsAreInertInZeroConfigMode(t *testing.T) {
+	index := &domain.IndexMetadata{Include: []string{"**/*.md"}}
+	result, err := resources.Discover(context.Background(), content.NewContentProvider(zeroConfigCorpus), index, "acdc")
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Chunks)
+
+	var withKeywords []string
+	for _, chunk := range result.Chunks {
+		if len(chunk.Keywords) > 0 {
+			withKeywords = append(withKeywords, chunk.ChunkURI)
+		}
+	}
+	require.Empty(t, withKeywords, "keywords boost %v has no reachable documents without frontmatter", testSettings().KeywordsBoost)
+
+	curated, err := resources.Discover(context.Background(), content.NewContentProvider(curatedCorpus), index, "acdc")
+	require.NoError(t, err)
+	keywordChunks := 0
+	for _, chunk := range curated.Chunks {
+		if len(chunk.Keywords) > 0 {
+			keywordChunks++
+		}
+	}
+	require.NotZero(t, keywordChunks, "curated corpus must exercise the keywords field")
+	t.Logf("keywords populated: 0/%d zero-config chunks, %d/%d curated chunks",
+		len(result.Chunks), keywordChunks, len(curated.Chunks))
+}
+
+// TestGolden_TitleNeverFiresAloneInZeroConfigMode pins the second structural
+// finding. Without frontmatter a source title is the document's first level-one
+// heading, which the chunker also puts at the head of every heading path. So
+// source_title (2.0) never matches a chunk that heading_path (2.5) has not
+// already matched: two of the model's five fields carry no signal of their own
+// in the mode the server now defaults to.
+func TestGolden_TitleNeverFiresAloneInZeroConfigMode(t *testing.T) {
+	index := &domain.IndexMetadata{Include: []string{"**/*.md"}}
+	result, err := resources.Discover(context.Background(), content.NewContentProvider(zeroConfigCorpus), index, "acdc")
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Chunks)
+
+	for _, chunk := range result.Chunks {
+		require.NotEmpty(t, chunk.HeadingPath, "chunk %s has no heading path", chunk.ChunkURI)
+		require.Equal(t, chunk.SourceTitle, chunk.HeadingPath[0], "chunk %s: title is not the head of its heading path", chunk.ChunkURI)
+	}
+}
+
+// TestGolden_ContentBoostCannotOutweighAHeadingMatch measures how much authority
+// a boost constant actually carries, which is what #84 has to know before
+// exposing any of them as configuration.
+//
+// The query isolates one field against another: the internals page carries
+// "checksums" as a heading and never in its body, the CLI reference carries it
+// three times in a body and in no heading. Raising the content boost narrows the
+// gap and then stops — the two scores converge without crossing, so no value of
+// content_boost makes the body match win. Bleve normalizes each clause of the
+// disjunction against the query's own weights, which bounds what a single
+// clause's boost can buy; field length normalization then keeps the short
+// heading_path field ahead of a long body.
+//
+// A boost is therefore not a ranking override. Separately measured against the
+// golden cases: content_boost must reach ~10x its default before any of them
+// change at all, and settles by ~30x. Retuning the ranking model means changing
+// analyzers, field norms, or query structure — the boosts alone cannot express
+// every outcome an operator might configure them to want.
+func TestGolden_ContentBoostCannotOutweighAHeadingMatch(t *testing.T) {
+	const (
+		query       = "checksums"
+		headingOnly = "acdc://docs/internals/indexing#checksums"
+		bodyOnly    = "acdc://docs/reference/cli#ledger-verify"
+	)
+
+	for _, boost := range []float64{1, 3, 1000} {
+		t.Run(fmt.Sprintf("content_boost_%g", boost), func(t *testing.T) {
+			settings := testSettings()
+			settings.ContentBoost = boost
+			service := goldenServiceWith(t, settings, zeroConfigCorpus)
+
+			results, err := service.Search(query, goldenCandidates)
+			require.NoError(t, err)
+			reportRanking(t, query, results)
+			require.Equal(t, 1, rankOf(results, headingOnly), "heading match must lead at content_boost %g", boost)
+			require.Equal(t, 2, rankOf(results, bodyOnly), "body match must trail it at content_boost %g", boost)
+		})
+	}
+}
