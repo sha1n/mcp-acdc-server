@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -272,6 +273,200 @@ func TestDiscover_DoesNotPruneContentRootItself(t *testing.T) {
 	}, "acdc", WithLenientIndex())
 	require.NoError(t, err)
 	require.Equal(t, []string{"acdc://docs/guide"}, sourceURIs(result.Sources))
+}
+
+func TestDiscover_DescendsOnlyDirectoriesIncludePatternsCanReach(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "README.md", "# Readme\n")
+	writeFile(t, root, "docs/guide.md", "# Guide\n")
+	writeFile(t, root, "docs/api/auth.md", "# Auth\n")
+	writeFile(t, root, "src/main.md", "# Main\n")
+	writeFile(t, root, "node_modules/pkg/readme.md", "# Vendored\n")
+
+	everything := []string{".", "docs", "docs/api", "node_modules", "node_modules/pkg", "src"}
+	tests := []struct {
+		name          string
+		include       []string
+		wantDescended []string
+		wantSources   []string
+	}{
+		{
+			name:          "a literal base bounds traversal to its own subtree",
+			include:       []string{"docs/**/*.md"},
+			wantDescended: []string{".", "docs", "docs/api"},
+			wantSources:   []string{"acdc://docs/api/auth", "acdc://docs/guide"},
+		},
+		{
+			name:          "a root anchored pattern descends nothing",
+			include:       []string{"README.md"},
+			wantDescended: []string{"."},
+			wantSources:   []string{"acdc://README"},
+		},
+		{
+			name:          "a globstar descends everything",
+			include:       []string{"**/*.md"},
+			wantDescended: everything,
+			wantSources: []string{
+				"acdc://README", "acdc://docs/api/auth", "acdc://docs/guide",
+				"acdc://node_modules/pkg/readme", "acdc://src/main",
+			},
+		},
+		{
+			name:          "a wildcard first segment descends everything it cannot rule out",
+			include:       []string{"d*cs/**"},
+			wantDescended: everything,
+			wantSources:   []string{"acdc://docs/api/auth", "acdc://docs/guide"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var descended []string
+			result, err := discoverWithOps(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+				Include: tt.include,
+			}, "acdc", recordingDiscoveryOps(&descended))
+			require.NoError(t, err)
+			require.Equal(t, tt.wantDescended, descended)
+			require.Equal(t, tt.wantSources, sourceURIs(result.Sources))
+		})
+	}
+}
+
+func TestDiscover_DescendsTheAncestorsOfANestedPatternBase(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "a/b/guide.md", "# Guide\n")
+	writeFile(t, root, "a/c/other.md", "# Other\n")
+
+	var descended []string
+	result, err := discoverWithOps(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"a/b/*.md"},
+	}, "acdc", recordingDiscoveryOps(&descended))
+	require.NoError(t, err)
+	require.Equal(t, []string{".", "a", "a/b"}, descended)
+	require.Equal(t, []string{"acdc://a/b/guide"}, sourceURIs(result.Sources))
+}
+
+func TestDiscover_PrunesArtifactDirectoriesInsidePatternAdmittedSubtrees(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "docs/guide.md", "# Guide\n")
+	writeFile(t, root, "docs/build/generated.md", "# Generated\n")
+
+	var descended []string
+	result, err := discoverWithOps(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"docs/**/*.md"},
+	}, "acdc", recordingDiscoveryOps(&descended), WithLenientIndex())
+	require.NoError(t, err)
+	require.Equal(t, []string{".", "docs"}, descended)
+	require.Equal(t, []string{"acdc://docs/guide"}, sourceURIs(result.Sources))
+}
+
+// Bounding traversal must never change what is selected.
+func TestDiscover_BoundedTraversalPreservesSelection(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "README.md", "# Readme\n")
+	writeFile(t, root, "docs/guide.md", "# Guide\n")
+	writeFile(t, root, "docs/api/auth.md", "# Auth\n")
+	writeFile(t, root, "docs/generated/skip.md", "# Skip\n")
+	writeFile(t, root, "adr/0001-record.md", "# Record\n")
+	writeFile(t, root, "src/internal/notes.md", "# Notes\n")
+	writeFile(t, root, "node_modules/pkg/readme.md", "# Vendored\n")
+
+	tests := []struct {
+		name    string
+		include []string
+		exclude []string
+		opts    []DiscoverOption
+		want    []string
+	}{
+		{
+			name:    "zero-config defaults",
+			include: []string{"README.md", "docs/**/*.md"},
+			exclude: []string{"docs/generated/**"},
+			want:    []string{"acdc://README", "acdc://docs/api/auth", "acdc://docs/guide"},
+		},
+		{
+			name:    "everything under a strict policy",
+			include: []string{"**/*.md"},
+			want: []string{
+				"acdc://README", "acdc://adr/0001-record", "acdc://docs/api/auth",
+				"acdc://docs/generated/skip", "acdc://docs/guide",
+				"acdc://node_modules/pkg/readme", "acdc://src/internal/notes",
+			},
+		},
+		{
+			name:    "everything under a lenient policy",
+			include: []string{"**/*.md"},
+			opts:    []DiscoverOption{WithLenientIndex()},
+			want: []string{
+				"acdc://README", "acdc://adr/0001-record", "acdc://docs/api/auth",
+				"acdc://docs/generated/skip", "acdc://docs/guide", "acdc://src/internal/notes",
+			},
+		},
+		{
+			name:    "a bare globstar",
+			include: []string{"**"},
+			want: []string{
+				"acdc://README", "acdc://adr/0001-record", "acdc://docs/api/auth",
+				"acdc://docs/generated/skip", "acdc://docs/guide",
+				"acdc://node_modules/pkg/readme", "acdc://src/internal/notes",
+			},
+		},
+		{
+			name:    "braced alternatives",
+			include: []string{"{docs,adr}/**/*.md"},
+			want: []string{
+				"acdc://adr/0001-record", "acdc://docs/api/auth",
+				"acdc://docs/generated/skip", "acdc://docs/guide",
+			},
+		},
+		{
+			name:    "several disjoint bases",
+			include: []string{"src/**/*.md", "adr/*.md"},
+			want:    []string{"acdc://adr/0001-record", "acdc://src/internal/notes"},
+		},
+		{
+			name:    "a nested base reached through its ancestors",
+			include: []string{"docs/api/*.md"},
+			want:    []string{"acdc://docs/api/auth"},
+		},
+		{
+			name:    "root level files only",
+			include: []string{"*.md"},
+			want:    []string{"acdc://README"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+				Include: tt.include,
+				Exclude: tt.exclude,
+			}, "acdc", tt.opts...)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, sourceURIs(result.Sources))
+		})
+	}
+}
+
+// recordingDiscoveryOps walks the real filesystem while recording the directories
+// the walk actually descended into, as slash paths relative to the content root.
+func recordingDiscoveryOps(descended *[]string) discoveryOps {
+	ops := defaultDiscoveryOps()
+	ops.walkDir = func(root string, walk fs.WalkDirFunc) error {
+		return filepath.WalkDir(root, func(filePath string, entry fs.DirEntry, walkErr error) error {
+			err := walk(filePath, entry, walkErr)
+			if walkErr != nil || err != nil || !entry.IsDir() {
+				return err
+			}
+			relativePath, relativeErr := filepath.Rel(root, filePath)
+			if relativeErr != nil {
+				return relativeErr
+			}
+			*descended = append(*descended, filepath.ToSlash(relativePath))
+			return nil
+		})
+	}
+	return ops
 }
 
 func writeFile(t *testing.T, root, name, body string) string {
