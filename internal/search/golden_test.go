@@ -347,3 +347,69 @@ func TestGolden_ContentBoostCannotOutweighAHeadingMatch(t *testing.T) {
 		})
 	}
 }
+
+// TestGolden_HeadingBoostInfluenceIsBounded measures what the heading boost
+// buys once it is configurable, over the same document pair as
+// TestGolden_ContentBoostCannotOutweighAHeadingMatch: the internals page
+// carries "checksums" as a heading and never in its body, the CLI reference
+// carries it in a body and in no heading.
+//
+// The influence is not symmetric, and not for the reason it might seem.
+// Raising heading_boost cannot change the ranking here because the
+// heading-only document already leads at the default 2.5: ranks at 2.5 and
+// at 1000 are identical because rank 1 has nowhere left to go, not because a
+// large boost is inert. (Scores do keep moving — at 1000 the heading match's
+// score is over 4000x the body match's, versus ~12x at 2.5 — the ranks just
+// can't reflect it.) The measured bound on how far a boost can pull a
+// *losing* clause toward overtaking a winner is established separately, by
+// the sibling test TestGolden_ContentBoostCannotOutweighAHeadingMatch, which
+// raises content_boost against this same heading match instead.
+//
+// The boost: 1000 row is not evidence of a bound; it pins that a very large
+// boost does not destabilize the ordering (for example through score
+// overflow), which is a fact worth guarding on its own even though the rank
+// it asserts cannot change by construction.
+//
+// Lowering heading_boost to 0 does drop the heading_path clause from the
+// query, but it does not remove the heading-only document's only route to
+// the term: the chunker slices a section's Content starting at its own
+// heading line, so the heading text is also present in the content field and
+// keeps matching through the content_boost clause. At heading_boost 0 the
+// heading-only document therefore still surfaces, just behind the body match
+// instead of ahead of it — measured, not predicted. That asymmetry, plus the
+// content-field duplication behind it, is the honest description of what an
+// operator gets from --search-heading-boost at 0; docs/configuration.md
+// should say so. Expectations here are measured, not desired; a change means
+// the ranking model moved.
+func TestGolden_HeadingBoostInfluenceIsBounded(t *testing.T) {
+	const (
+		query       = "checksums"
+		headingOnly = "acdc://docs/internals/indexing#checksums"
+		bodyOnly    = "acdc://docs/reference/cli#ledger-verify"
+	)
+
+	tests := []struct {
+		boost       float64
+		wantHeading int
+		wantBody    int
+	}{
+		{boost: 0, wantHeading: 2, wantBody: 1},
+		{boost: 0.1, wantHeading: 1, wantBody: 2},
+		{boost: 2.5, wantHeading: 1, wantBody: 2},
+		{boost: 1000, wantHeading: 1, wantBody: 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("heading_boost_%g", tt.boost), func(t *testing.T) {
+			settings := testSettings()
+			settings.HeadingBoost = tt.boost
+			service := goldenServiceWith(t, settings, zeroConfigCorpus)
+
+			results, err := service.Search(query, goldenCandidates)
+			require.NoError(t, err)
+			reportRanking(t, query, results)
+			require.Equal(t, tt.wantHeading, rankOf(results, headingOnly), "heading-only document at heading_boost %g", tt.boost)
+			require.Equal(t, tt.wantBody, rankOf(results, bodyOnly), "body-only document at heading_boost %g", tt.boost)
+		})
+	}
+}

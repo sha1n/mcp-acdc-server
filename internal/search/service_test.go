@@ -64,9 +64,11 @@ func testSettings() config.SearchSettings {
 	return config.SearchSettings{
 		InMemory:      true,
 		MaxResults:    10,
-		KeywordsBoost: 3,
-		TitleBoost:    2,
-		ContentBoost:  1,
+		KeywordsBoost: config.DefaultKeywordsBoost,
+		HeadingBoost:  config.DefaultHeadingBoost,
+		TitleBoost:    config.DefaultTitleBoost,
+		PathBoost:     config.DefaultPathBoost,
+		ContentBoost:  config.DefaultContentBoost,
 	}
 }
 
@@ -462,4 +464,64 @@ func chunkIDs(results []SearchResult) []string {
 		ids[i] = result.ChunkID
 	}
 	return ids
+}
+
+// TestSearch_ReadsHeadingAndPathBoostsFromSettings pins that both boosts are
+// configuration rather than constants. Zeroing the heading boost must remove the
+// heading_path clause from the query, letting a body-only match overtake a
+// heading-only one — the ordering TestSearch_ChunkFieldBoosts pins at defaults.
+func TestSearch_ReadsHeadingAndPathBoostsFromSettings(t *testing.T) {
+	newService := func(t *testing.T, mutate func(*config.SearchSettings)) *Service {
+		t.Helper()
+		settings := testSettings()
+		mutate(&settings)
+		service := NewService(settings)
+		t.Cleanup(service.Close)
+		indexChunks(t, service, []domain.Chunk{
+			{
+				ID: "heading", SourceID: "heading-source",
+				SourceURI: "acdc://heading", ChunkURI: "acdc://heading#chunk",
+				HeadingPath: []string{"oauth"}, Content: "unrelated",
+			},
+			{
+				ID: "body", SourceID: "body-source",
+				SourceURI: "acdc://body", ChunkURI: "acdc://body#chunk",
+				Content: "oauth",
+			},
+		})
+		return service
+	}
+
+	t.Run("heading boost leads at the default", func(t *testing.T) {
+		results, err := newService(t, func(*config.SearchSettings) {}).Search("oauth", 10)
+		require.NoError(t, err)
+		require.Len(t, results, 2)
+		require.Equal(t, "heading", results[0].ChunkID)
+	})
+
+	t.Run("zero heading boost removes the clause", func(t *testing.T) {
+		results, err := newService(t, func(s *config.SearchSettings) { s.HeadingBoost = 0 }).Search("oauth", 10)
+		require.NoError(t, err)
+		require.NotEmpty(t, results)
+		require.Equal(t, "body", results[0].ChunkID)
+	})
+
+	t.Run("zero path boost removes the clause", func(t *testing.T) {
+		service := NewService(func() config.SearchSettings {
+			s := testSettings()
+			s.PathBoost = 0
+			s.ContentBoost = 0
+			return s
+		}())
+		t.Cleanup(service.Close)
+		indexChunks(t, service, []domain.Chunk{{
+			ID: "path", SourceID: "path-source",
+			SourceURI: "acdc://path", ChunkURI: "acdc://path#chunk",
+			PathLabels: []string{"oauth"}, Content: "unrelated",
+		}})
+
+		results, err := service.Search("oauth", 10)
+		require.NoError(t, err)
+		require.Empty(t, results, "no clause can match once path and content boosts are zero")
+	})
 }

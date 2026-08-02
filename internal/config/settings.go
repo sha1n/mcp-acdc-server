@@ -2,6 +2,8 @@ package config
 
 import (
 	"errors"
+	"fmt"
+	"math"
 	"os"
 	"regexp"
 	"strings"
@@ -21,12 +23,28 @@ const (
 	SearchResultModeContent    SearchResultMode = "content"
 )
 
+// Default relative weights for the five searchable fields. Exported so the
+// viper defaults and ranking-sensitive tests cannot drift apart.
+//
+// A boost is a weight within a normalized disjunction, not a ranking override:
+// raising one clause is bounded by Bleve's per-clause normalization. A boost of
+// 0 removes its field from the query entirely.
+const (
+	DefaultKeywordsBoost float64 = 3.0
+	DefaultTitleBoost    float64 = 2.0
+	DefaultHeadingBoost  float64 = 2.5
+	DefaultPathBoost     float64 = 1.25
+	DefaultContentBoost  float64 = 1.0
+)
+
 // SearchSettings configuration for search service
 type SearchSettings struct {
 	MaxResults    int              `mapstructure:"max_results"`
 	InMemory      bool             `mapstructure:"in_memory"`
 	KeywordsBoost float64          `mapstructure:"keywords_boost"`
+	HeadingBoost  float64          `mapstructure:"heading_boost"`
 	TitleBoost    float64          `mapstructure:"title_boost"`
+	PathBoost     float64          `mapstructure:"path_boost"`
 	ContentBoost  float64          `mapstructure:"content_boost"`
 	ResultMode    SearchResultMode `mapstructure:"result_mode"`
 }
@@ -83,9 +101,11 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	v.SetDefault("port", 8080)
 	v.SetDefault("uri_scheme", "acdc")
 	v.SetDefault("search.max_results", 10)
-	v.SetDefault("search.keywords_boost", 3.0)
-	v.SetDefault("search.title_boost", 2.0)
-	v.SetDefault("search.content_boost", 1.0)
+	v.SetDefault("search.keywords_boost", DefaultKeywordsBoost)
+	v.SetDefault("search.heading_boost", DefaultHeadingBoost)
+	v.SetDefault("search.title_boost", DefaultTitleBoost)
+	v.SetDefault("search.path_boost", DefaultPathBoost)
+	v.SetDefault("search.content_boost", DefaultContentBoost)
 	v.SetDefault("search.result_mode", SearchResultModeReferences)
 	v.SetDefault("cross_ref", false)
 	v.SetDefault("auth.type", AuthTypeNone)
@@ -100,6 +120,8 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	// with hardcoded keys. Errors are intentionally discarded here.
 	_ = v.BindEnv("search.max_results", "ACDC_MCP_SEARCH_MAX_RESULTS")
 	_ = v.BindEnv("search.keywords_boost", "ACDC_MCP_SEARCH_KEYWORDS_BOOST")
+	_ = v.BindEnv("search.heading_boost", "ACDC_MCP_SEARCH_HEADING_BOOST")
+	_ = v.BindEnv("search.path_boost", "ACDC_MCP_SEARCH_PATH_BOOST")
 	_ = v.BindEnv("search.title_boost", "ACDC_MCP_SEARCH_TITLE_BOOST")
 	_ = v.BindEnv("search.content_boost", "ACDC_MCP_SEARCH_CONTENT_BOOST")
 	_ = v.BindEnv("search.result_mode", "ACDC_MCP_SEARCH_RESULT_MODE")
@@ -122,6 +144,8 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 		_ = v.BindPFlag("cross_ref", flags.Lookup("cross-ref"))
 		_ = v.BindPFlag("search.max_results", flags.Lookup("search-max-results"))
 		_ = v.BindPFlag("search.keywords_boost", flags.Lookup("search-keywords-boost"))
+		_ = v.BindPFlag("search.heading_boost", flags.Lookup("search-heading-boost"))
+		_ = v.BindPFlag("search.path_boost", flags.Lookup("search-path-boost"))
 		_ = v.BindPFlag("search.title_boost", flags.Lookup("search-title-boost"))
 		_ = v.BindPFlag("search.content_boost", flags.Lookup("search-content-boost"))
 		_ = v.BindPFlag("search.result_mode", flags.Lookup("search-result-mode"))
@@ -183,6 +207,10 @@ func ValidateSettings(s *Settings) error {
 		return errors.New("search result mode must be 'references' or 'content', got: " + string(s.Search.ResultMode))
 	}
 
+	if err := validateBoosts(s.Search); err != nil {
+		return err
+	}
+
 	hasBasicCreds := s.Auth.Basic.Username != "" || s.Auth.Basic.Password != ""
 	hasAPIKeys := len(s.Auth.APIKeys) > 0
 
@@ -209,5 +237,26 @@ func ValidateSettings(s *Settings) error {
 		return errors.New("unknown auth-type: " + s.Auth.Type)
 	}
 
+	return nil
+}
+
+// validateBoosts rejects boost values Bleve cannot score meaningfully. Zero is
+// legal and disables the field's clause.
+func validateBoosts(s SearchSettings) error {
+	boosts := []struct {
+		key   string
+		value float64
+	}{
+		{"search.keywords_boost", s.KeywordsBoost},
+		{"search.heading_boost", s.HeadingBoost},
+		{"search.title_boost", s.TitleBoost},
+		{"search.path_boost", s.PathBoost},
+		{"search.content_boost", s.ContentBoost},
+	}
+	for _, boost := range boosts {
+		if math.IsNaN(boost.value) || math.IsInf(boost.value, 0) || boost.value < 0 {
+			return fmt.Errorf("%s must be a finite, non-negative number, got: %v", boost.key, boost.value)
+		}
+	}
 	return nil
 }

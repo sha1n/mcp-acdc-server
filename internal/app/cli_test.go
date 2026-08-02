@@ -143,3 +143,25 @@ func TestCLI_FlagParsing_SearchTitleBoost(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 7.5, settings.Search.TitleBoost)
 }
+
+func TestCLI_FlagParsing_SearchHeadingBoost(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	RegisterFlags(flags)
+	require.NoError(t, flags.Set("search-heading-boost", "7.5"))
+
+	settings, err := config.LoadSettingsWithFlags(flags)
+
+	require.NoError(t, err)
+	require.Equal(t, 7.5, settings.Search.HeadingBoost)
+}
+
+func TestCLI_FlagParsing_SearchPathBoost(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	RegisterFlags(flags)
+	require.NoError(t, flags.Set("search-path-boost", "7.5"))
+
+	settings, err := config.LoadSettingsWithFlags(flags)
+
+	require.NoError(t, err)
+	require.Equal(t, 7.5, settings.Search.PathBoost)
+}
