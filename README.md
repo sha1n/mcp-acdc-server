@@ -35,6 +35,10 @@ docker-compose up -d
 **Homebrew:**
 ```bash
 brew install sha1n/tap/acdc-mcp
+acdc-mcp
+```
+Or point it at a dedicated content repository:
+```bash
 acdc-mcp --content-dir ./content
 ```
 
@@ -66,6 +70,10 @@ See [Development Guide](docs/development.md) for build instructions.
 ## 🏃 Running
 
 ### Stdio Transport (default)
+```bash
+acdc-mcp
+```
+Or point it at a dedicated content repository:
 ```bash
 acdc-mcp --content-dir ./content
 ```
@@ -101,7 +109,7 @@ readinessProbe:
 
 | Flag | Short | Environment Variable | Default |
 |------|-------|---------------------|---------|
-| `--content-dir` | `-c` | `ACDC_MCP_CONTENT_DIR` | `./content` |
+| `--content-dir` | `-c` | `ACDC_MCP_CONTENT_DIR` | current working directory |
 | `--transport` | `-t` | `ACDC_MCP_TRANSPORT` | `stdio` |
 | `--port` | `-p` | `ACDC_MCP_PORT` | `8080` |
 | `--uri-scheme` | `-s` | `ACDC_MCP_URI_SCHEME` | `acdc` |
@@ -115,9 +123,18 @@ For full configuration options including authentication, see [Configuration Refe
 
 ## 🤖 Agent Configuration
 
+### Per-Repository (Zero-Config)
+
+Because `--content-dir` defaults to the working directory and `mcp-metadata.yaml` is optional, `acdc-mcp` can be registered once at **user** scope, with no `--content-dir` — for clients that launch stdio servers with the repository as the working directory, as Claude Code and Gemini CLI do, this means it indexes whichever repository the client is running in each time it launches the server:
+
+```bash
+claude mcp add --scope user --transport stdio acdc -- acdc-mcp
+gemini mcp add --scope user --transport stdio --trust acdc acdc-mcp
+```
+
 ### [Gemini CLI](https://github.com/google-gemini/gemini-cli)
 
-**Stdio:**
+**Stdio (fixed content directory):**
 ```bash
 gemini mcp add --scope user --transport stdio --trust acdc acdc-mcp -- --transport stdio --content-dir $ACDC_MCP_CONTENT_DIR
 ```
@@ -129,7 +146,7 @@ gemini mcp add --scope user --transport sse --trust acdc http://<host>:<port>/ss
 
 ### [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code)
 
-**Stdio:**
+**Stdio (fixed content directory):**
 ```bash
 claude mcp add --scope user --transport stdio acdc -- acdc-mcp --transport stdio --content-dir $ACDC_MCP_CONTENT_DIR
 ```
@@ -144,9 +161,13 @@ claude mcp add --scope user --transport sse acdc http://<host>:<port>/sse
 
 ## 📚 Content & Resources
 
-The server requires an `mcp-metadata.yaml` file in your content directory to define server identity. Tool metadata is optional and the server provides high-quality default descriptions for `search` and `read` tools.
+An `mcp-metadata.yaml` file in your content directory is optional. Point `acdc-mcp` at any repository with no manifest and it starts anyway, indexing `README.md` and `docs/**/*.md` with built-in server identity and instructions — no configuration required:
 
-By default, the server discovers markdown files under `mcp-resources/`. Adding an `index` block to `mcp-metadata.yaml` switches document discovery instead to any Markdown matched by glob patterns (e.g. `docs/**/*.md`), without needing frontmatter or a dedicated `mcp-resources/` layout. Either way, discovered documents are split into heading-aware chunks for search.
+```bash
+acdc-mcp --content-dir /path/to/repository
+```
+
+Add an `mcp-metadata.yaml` to override the defaults: customize server identity and instructions, and either add an `index` block to index any Markdown matched by glob patterns (e.g. `docs/**/*.md`, without needing frontmatter), or omit `index` to use the legacy `mcp-resources/` layout, which requires frontmatter on every file. Whichever mode selected the documents, they are split into heading-aware chunks for search.
 
 For details on authoring resource files, including frontmatter format and search keyword boosting, see the [Authoring Resources Guide](docs/authoring-resources.md).
 

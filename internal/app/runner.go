@@ -16,7 +16,7 @@ type RunParams struct {
 	LoadSettings      func(*pflag.FlagSet) (*config.Settings, error)
 	ValidSettings     func(*config.Settings) error
 	StartSSEServer    func(*mcp.Server, *config.Settings) error
-	CreateServer      func(context.Context, *config.Settings) (*mcp.Server, func(), error)
+	CreateServer      func(context.Context, *config.Settings, string) (*mcp.Server, func(), error)
 	CustomIOTransport mcp.Transport // Optional: for testing with custom IO
 }
 
@@ -50,7 +50,7 @@ func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, ve
 	slog.Info("Starting MCP Acdc server", "version", version)
 	config.Log(settings)
 
-	mcpServer, cleanup, err := params.CreateServer(ctx, settings)
+	mcpServer, cleanup, err := params.CreateServer(ctx, settings, version)
 	if err != nil {
 		return err
 	}

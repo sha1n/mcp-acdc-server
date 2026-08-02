@@ -7,7 +7,7 @@ The ACDC (Agent Content Discovery Companion) MCP Server is designed to serve org
 ### Core Principles
 1.  **Centralized Content**: Operates on a local directory (typically a mounted volume) containing static Markdown resources.
 2.  **Zero-Config Client**: Clients discover capabilities dynamically via MCP tool definitions.
-3.  **Metadata-Driven**: Server identity and tool exposure are controlled by a `mcp-metadata.yaml` manifest in the content root.
+3.  **Metadata-Driven**: Server identity, tool exposure, and indexing use built-in defaults, optionally overridden by an `mcp-metadata.yaml` manifest in the content root.
 4.  **Transport Agnostic**: Supports both `stdio` (local process) and `sse` (HTTP) transports.
 
 ---
@@ -18,7 +18,7 @@ The server is configured via environment variables, command-line flags, or a `.e
 
 | Environment Variable | CLI Flag | Description | Default |
 | :--- | :--- | :--- | :--- |
-| `ACDC_MCP_CONTENT_DIR` | `--content-dir`, `-c` | Root directory containing `mcp-metadata.yaml` (see Content Repository Structure). | `./content` |
+| `ACDC_MCP_CONTENT_DIR` | `--content-dir`, `-c` | Root directory to serve; an `mcp-metadata.yaml` there is optional (see Content Repository Structure). | current working directory |
 | `ACDC_MCP_TRANSPORT` | `--transport`, `-t` | Communication transport: `stdio` or `sse`. | `stdio` |
 | `ACDC_MCP_HOST` | `--host`, `-H` | Host interface to bind for SSE transport. | `0.0.0.0` |
 | `ACDC_MCP_PORT` | `--port`, `-p` | Port to listen on for SSE transport. | `8080` |
@@ -37,16 +37,30 @@ The server is configured via environment variables, command-line flags, or a `.e
 
 ## Content Repository Structure
 
-The server expects `mcp-metadata.yaml` at the root of `ACDC_MCP_CONTENT_DIR`. Source documents are then discovered in one of two mutually exclusive modes, selected by the presence of an `index` block in `mcp-metadata.yaml`:
+`mcp-metadata.yaml` at the root of `ACDC_MCP_CONTENT_DIR` is optional. If it is absent, the server falls back to built-in zero-config defaults (see 0 below) rather than failing startup. If it is present, source documents are discovered in one of two mutually exclusive modes, selected by the presence of an `index` block in `mcp-metadata.yaml`:
 
 ```text
 / (Content Root)
-├── mcp-metadata.yaml       # Server identity, tool, and index configuration (Required)
+├── mcp-metadata.yaml       # Server identity, tool, and index configuration (Optional — see 0. Zero-Config Defaults)
 └── mcp-resources/          # Legacy discovery: used when `index` is absent
     ├── guide.md
     └── subfolder/
         └── details.md
 ```
+
+### 0. Zero-Config Defaults (`mcp-metadata.yaml` absent)
+
+-   **Activation**: Triggered only when `mcp-metadata.yaml` does not exist at the content root. A manifest that exists but cannot be read, fails to parse as YAML, or fails `Validate()` is still a fatal startup error — only a *missing* file falls back to defaults.
+-   **Default index**: Equivalent to a manifest with `index.include: ["README.md", "docs/**/*.md"]` (no `exclude`), which selects the same configured chunk indexing path described in 2b, with the same optional-frontmatter metadata derivation.
+-   **Error handling (lenient)**: Unlike an explicit `index` block, the defaulted index tolerates conditions that would otherwise fail startup: zero matched files, and a per-file read or parse failure, are logged as warnings and the file (or the whole selection) is skipped instead of failing the server. Configuration-shape errors — an invalid, absolute, or root-escaping glob pattern, a selected non-Markdown file, or a content root that cannot be resolved — remain fatal, exactly as in 2b.
+-   **Directory pruning**: `.git` is always skipped during traversal, in both this mode and 2b. Under this defaulted mode only, `node_modules`, `vendor`, `dist`, `build`, `target`, and `.venv` are also skipped, so a repository's dependency and build-output directories are never scanned for Markdown. The content root itself is never pruned, even if its name matches one of these.
+-   **Derived identity**: The server name is `"<base> Documentation"`, where `<base>` is the base name of the resolved `--content-dir` path (falling back to `"Repository"` if no meaningful base name can be derived, e.g. the root directory). The version is the build-injected binary version, or `0.0.0` when it is empty. Instructions are generated from a built-in template naming the repository:
+    ```text
+    Documentation for the <base> repository: guides, references, design documents, specs and plans kept under docs/, plus the top-level README.
+
+    Search here before answering questions about this repository's conventions, architecture, decisions, or planned work. Prefer these documents over assumptions drawn from source code alone.
+    ```
+-   **Startup log**: When defaults are used, the server logs `mcp-metadata.yaml not found, using built-in defaults` at info level, with the derived server name and default index patterns.
 
 ### 1. Metadata Manifest (`mcp-metadata.yaml`)
 
@@ -57,7 +71,7 @@ Defines the server's identity, optional tool overrides, and optional configured 
 server:
   name: <string>        # Display name of the MCP server
   version: <string>     # Semantic version string
-  instructions: <string> # System prompt / context instructions for the agent
+  instructions: <string> # Delivered to clients as the MCP server's `instructions` field
 
 tools:                  # Optional: Override default tool descriptions
   - name: search
@@ -98,7 +112,7 @@ Markdown content follows...
 
 ### 2b. Configured Chunk Indexing (`index` present)
 
--   **Discovery**: Files under the content root matching `index.include` (and not matching `index.exclude`) are indexed, using [doublestar](https://github.com/bmatcuk/doublestar) glob syntax where `**` matches zero or more path segments (`docs/**/*.md` matches both `docs/guide.md` and `docs/api/guide.md`). Patterns must be relative to the content root; absolute or root-escaping patterns fail startup. `exclude` always wins over `include`.
+-   **Discovery**: Files under the content root matching `index.include` (and not matching `index.exclude`) are indexed, using [doublestar](https://github.com/bmatcuk/doublestar) glob syntax where `**` matches zero or more path segments (`docs/**/*.md` matches both `docs/guide.md` and `docs/api/guide.md`). Patterns must be relative to the content root; absolute or root-escaping patterns fail startup. `exclude` always wins over `include`. `.git` is always skipped during traversal (see also the zero-config-only pruning in 0 above).
 -   **URI Scheme**: Same construction as legacy discovery, relative to `--content-dir` instead of `mcp-resources/`.
 -   **File Format**: Must be `.md` or `.markdown`. YAML frontmatter is **optional**; when present it must still be valid.
 -   **Metadata derivation**: `name` falls back to the first `#` (H1) heading, `description` to the first paragraph, when frontmatter omits them. `description` is always truncated to 200 Unicode characters, whether it came from frontmatter or the fallback paragraph. `keywords` has no fallback.

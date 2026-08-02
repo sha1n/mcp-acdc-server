@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,6 +176,45 @@ func TestDiscoverWithOps_ConfiguredCancellationBeforeCatalogRead(t *testing.T) {
 
 	_, err := discoverWithOps(ctx, content.NewContentProvider(root), &domain.IndexMetadata{Include: []string{"docs/*.md"}}, "acdc", ops)
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestDiscoverWithOps_ConfiguredReadFailureLeniency(t *testing.T) {
+	root := "/catalog"
+	readableFile := root + "/docs/good.md"
+	unreadableFile := root + "/docs/bad.md"
+	readErr := errors.New("cannot read selected file")
+
+	buildOps := func() discoveryOps {
+		ops := successfulDiscoveryOps(root)
+		ops.walkDir = func(_ string, walk fs.WalkDirFunc) error {
+			if err := walk(unreadableFile, regularEntry("bad.md"), nil); err != nil {
+				return err
+			}
+			return walk(readableFile, regularEntry("good.md"), nil)
+		}
+		ops.relativePath = func(_, path string) (string, error) {
+			return strings.TrimPrefix(path, root+"/"), nil
+		}
+		ops.readFile = func(path string) ([]byte, error) {
+			if path == unreadableFile {
+				return nil, readErr
+			}
+			return []byte("# Good\n\nBody.\n"), nil
+		}
+		return ops
+	}
+	index := &domain.IndexMetadata{Include: []string{"docs/*.md"}}
+
+	t.Run("lenient skips the unreadable file and indexes its readable sibling", func(t *testing.T) {
+		result, err := discoverWithOps(context.Background(), content.NewContentProvider(root), index, "acdc", buildOps(), WithLenientIndex())
+		require.NoError(t, err)
+		require.Equal(t, []string{"acdc://docs/good"}, sourceURIs(result.Sources))
+	})
+
+	t.Run("strict fails discovery on the unreadable file", func(t *testing.T) {
+		_, err := discoverWithOps(context.Background(), content.NewContentProvider(root), index, "acdc", buildOps())
+		require.ErrorIs(t, err, readErr)
+	})
 }
 
 func TestDiscoverWithOps_LegacySkipsUnreadableAndNonregularEntries(t *testing.T) {

@@ -50,6 +50,28 @@ HOW IT WORKS: Provide a base URI (e.g., 'acdc://guides/getting-started') to read
 	},
 }
 
+// DefaultIndexInclude selects the documentation layout assumed when no manifest is present.
+var DefaultIndexInclude = []string{"README.md", "docs/**/*.md"}
+
+// defaultInstructionsFormat is the server instructions used when no manifest is present.
+// %s is substituted with the raw repository name.
+const defaultInstructionsFormat = `Documentation for the %s repository: guides, references, design documents, specs and plans kept under docs/, plus the top-level README.
+
+Search here before answering questions about this repository's conventions, architecture, decisions, or planned work. Prefer these documents over assumptions drawn from source code alone.`
+
+// DefaultMetadata builds the metadata used when the content root has no mcp-metadata.yaml.
+// repoName identifies the indexed repository in the server's display name and instructions.
+func DefaultMetadata(repoName, version string) McpMetadata {
+	return McpMetadata{
+		Server: ServerMetadata{
+			Name:         repoName + " Documentation",
+			Version:      version,
+			Instructions: fmt.Sprintf(defaultInstructionsFormat, repoName),
+		},
+		Index: &IndexMetadata{Include: append([]string(nil), DefaultIndexInclude...)},
+	}
+}
+
 // GetToolMetadata returns metadata for the specified tool name, using overrides if provided
 // in the config, otherwise falling back to defaults.
 func (m *McpMetadata) GetToolMetadata(name string) ToolMetadata {

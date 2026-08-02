@@ -147,6 +147,21 @@ func TestDiscover_LegacyMissingDirectoryAndCancellation(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+func TestDiscover_LegacyIgnoresLenientOption(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "mcp-resources/valid.md", "---\nname: Valid\ndescription: Valid description\n---\n# Valid\n\nBody.\n")
+	writeFile(t, root, "mcp-resources/no-frontmatter.md", "# No Frontmatter\n\nBody.\n")
+
+	strict, err := Discover(context.Background(), content.NewContentProvider(root), nil, "acdc")
+	require.NoError(t, err)
+	require.Equal(t, []string{"acdc://valid"}, sourceURIs(strict.Sources))
+
+	lenient, err := Discover(context.Background(), content.NewContentProvider(root), nil, "acdc", WithLenientIndex())
+	require.NoError(t, err)
+
+	require.Equal(t, strict, lenient)
+}
+
 func TestDiscoverResources_FailsForUnresolvableLegacyRoot(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("creating symlinks requires additional permissions on Windows")
@@ -157,6 +172,106 @@ func TestDiscoverResources_FailsForUnresolvableLegacyRoot(t *testing.T) {
 
 	_, err := DiscoverResources(content.NewContentProvider(root), "acdc")
 	require.ErrorContains(t, err, "resolve resources root")
+}
+
+func TestDiscover_LenientZeroMatchesReturnsEmptyResult(t *testing.T) {
+	root := t.TempDir()
+
+	result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"docs/**/*.md"},
+	}, "acdc", WithLenientIndex())
+	require.NoError(t, err)
+	require.Empty(t, result.Sources)
+	require.Empty(t, result.Chunks)
+}
+
+func TestDiscover_LenientSkipsUnparsableFilesButIndexesSiblings(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "docs/good.md", "# Good\n\nBody.\n")
+	writeFile(t, root, "docs/bad.md", "---\nname: [\n---\n# Bad\n")
+
+	result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"docs/*.md"},
+	}, "acdc", WithLenientIndex())
+	require.NoError(t, err)
+	require.Equal(t, []string{"acdc://docs/good"}, sourceURIs(result.Sources))
+
+	_, err = Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"docs/*.md"},
+	}, "acdc")
+	require.ErrorContains(t, err, "invalid YAML in frontmatter")
+}
+
+func TestDiscover_LenientStillRejectsRootEscapingPatterns(t *testing.T) {
+	root := t.TempDir()
+
+	_, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"../docs/*.md"},
+	}, "acdc", WithLenientIndex())
+	require.ErrorContains(t, err, "index pattern escapes content root")
+}
+
+func TestDiscover_PrunesGitDirectoryUnderBothPolicies(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, ".git/x.md", "# Git\n")
+	writeFile(t, root, "docs/guide.md", "# Guide\n")
+
+	for _, opts := range [][]DiscoverOption{nil, {WithLenientIndex()}} {
+		result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+			Include: []string{"**/*.md"},
+		}, "acdc", opts...)
+		require.NoError(t, err)
+		require.Equal(t, []string{"acdc://docs/guide"}, sourceURIs(result.Sources))
+	}
+}
+
+func TestDiscover_PrunesBuildArtifactDirectoriesOnlyWhenLenient(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "node_modules/x.md", "# Vendored\n")
+	writeFile(t, root, "docs/guide.md", "# Guide\n")
+
+	strict, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"**/*.md"},
+	}, "acdc")
+	require.NoError(t, err)
+	require.Equal(t, []string{"acdc://docs/guide", "acdc://node_modules/x"}, sourceURIs(strict.Sources))
+
+	lenient, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"**/*.md"},
+	}, "acdc", WithLenientIndex())
+	require.NoError(t, err)
+	require.Equal(t, []string{"acdc://docs/guide"}, sourceURIs(lenient.Sources))
+}
+
+func TestDiscover_PrunesNestedBuildArtifactDirectoriesOnlyWhenLenient(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "docs/build/generated.md", "# Generated\n")
+	writeFile(t, root, "docs/guide.md", "# Guide\n")
+
+	strict, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"**/*.md"},
+	}, "acdc")
+	require.NoError(t, err)
+	require.Equal(t, []string{"acdc://docs/build/generated", "acdc://docs/guide"}, sourceURIs(strict.Sources))
+
+	lenient, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"**/*.md"},
+	}, "acdc", WithLenientIndex())
+	require.NoError(t, err)
+	require.Equal(t, []string{"acdc://docs/guide"}, sourceURIs(lenient.Sources))
+}
+
+func TestDiscover_DoesNotPruneContentRootItself(t *testing.T) {
+	root := t.TempDir()
+	buildRoot := filepath.Join(root, "build")
+	require.NoError(t, os.MkdirAll(filepath.Join(buildRoot, "docs"), 0o755))
+	writeFile(t, buildRoot, "docs/guide.md", "# Guide\n")
+
+	result, err := Discover(context.Background(), content.NewContentProvider(buildRoot), &domain.IndexMetadata{
+		Include: []string{"docs/**/*.md"},
+	}, "acdc", WithLenientIndex())
+	require.NoError(t, err)
+	require.Equal(t, []string{"acdc://docs/guide"}, sourceURIs(result.Sources))
 }
 
 func writeFile(t *testing.T, root, name, body string) string {

@@ -193,6 +193,46 @@ func TestDefaultToolMetadata_SearchDescriptionMentionsChunkResults(t *testing.T)
 	require.Contains(t, strings.ToLower(desc), "chunk", "search results are chunk citations - the default description should describe them as such")
 }
 
+func TestDefaultMetadata_PassesValidate(t *testing.T) {
+	meta := DefaultMetadata("my-repo", "1.2.3")
+
+	require.NoError(t, meta.Validate())
+}
+
+func TestDefaultMetadata_IndexIncludeOrder(t *testing.T) {
+	meta := DefaultMetadata("my-repo", "1.2.3")
+
+	require.NotNil(t, meta.Index)
+	require.Equal(t, []string{"README.md", "docs/**/*.md"}, meta.Index.Include)
+}
+
+func TestDefaultMetadata_ToolsFallBackToDefaults(t *testing.T) {
+	meta := DefaultMetadata("my-repo", "1.2.3")
+
+	require.Empty(t, meta.Tools)
+	require.Equal(t, DefaultToolMetadata["search"].Description, meta.GetToolMetadata("search").Description)
+	require.Equal(t, DefaultToolMetadata["read"].Description, meta.GetToolMetadata("read").Description)
+}
+
+func TestDefaultMetadata_NameAndInstructionsContainRepoName(t *testing.T) {
+	meta := DefaultMetadata("my-repo", "1.2.3")
+
+	require.Equal(t, "my-repo Documentation", meta.Server.Name)
+	require.Contains(t, meta.Server.Instructions, "my-repo")
+}
+
+func TestDefaultMetadata_MutatingIndexIncludeDoesNotAffectPackageDefaultOrSecondCall(t *testing.T) {
+	originalDefault := append([]string(nil), DefaultIndexInclude...)
+
+	first := DefaultMetadata("my-repo", "1.2.3")
+	first.Index.Include[0] = "MUTATED.md"
+
+	require.Equal(t, originalDefault, DefaultIndexInclude, "mutating the returned Index.Include must not corrupt the package default")
+
+	second := DefaultMetadata("my-repo", "1.2.3")
+	require.Equal(t, []string{"README.md", "docs/**/*.md"}, second.Index.Include, "mutating a previous result must not affect a later call")
+}
+
 func TestToolsMap(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
 		meta := McpMetadata{

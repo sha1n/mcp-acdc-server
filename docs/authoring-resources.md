@@ -2,6 +2,12 @@
 
 This guide explains how to create and structure markdown resource files for the ACDC MCP server.
 
+## Zero-Config Defaults (No Manifest)
+
+`mcp-metadata.yaml` is optional. Point `--content-dir` at any repository that has no manifest and the server starts anyway, indexing `README.md` and `docs/**/*.md` with a built-in server name, version, and instructions naming the repository. Because the manifest is missing (not merely lacking an `index` block), this reuses the same discovery mechanism as [Configured Chunk Indexing](#configured-chunk-indexing-index) — frontmatter is optional — but tolerates conditions that would otherwise fail startup: an empty selection or a file that cannot be read or parsed is logged as a warning and skipped rather than failing the server. See [Content Repository Structure](SPECIFICATIONS.md#content-repository-structure) in the specification for the exact activation rule, default patterns, and derived identity.
+
+Add an `mcp-metadata.yaml` file to override any of this: give the server a custom name, version, and instructions, restrict or expand which files are indexed, or opt back into the stricter legacy layout described below. The rest of this guide assumes a manifest is present.
+
 ## File Location
 
 By default (when `mcp-metadata.yaml` has no `index` block — see [Configured Chunk Indexing](#configured-chunk-indexing-index)), place all resource markdown files inside the `mcp-resources/` subdirectory of your content directory:
@@ -19,7 +25,7 @@ content/
 
 ## Server Metadata (`mcp-metadata.yaml`)
 
-The `mcp-metadata.yaml` file in the root of your content directory defines server identity and instructions. This file is **required** for the server to start.
+The `mcp-metadata.yaml` file in the root of your content directory overrides the [built-in zero-config defaults](#zero-config-defaults-no-manifest): it defines server identity and instructions explicitly, and controls tool descriptions and indexing. The file is optional — omit it to run with defaults — but once present, the fields below are required within it, and an invalid or unreadable manifest fails startup.
 
 ### Structure
 
@@ -43,7 +49,7 @@ server:
 
 #### The `instructions` Field
 
-The `instructions` field is particularly important—it provides **system-level guidance** to AI agents on how to use this server effectively. Well-crafted instructions significantly improve agent behavior.
+The `instructions` field is particularly important—it is delivered to the client verbatim as the MCP server's `instructions`, giving AI agents **system-level guidance** on how to use this server effectively. Well-crafted instructions significantly improve agent behavior.
 
 **What to include:**
 
