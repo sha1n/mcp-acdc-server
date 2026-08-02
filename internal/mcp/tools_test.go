@@ -40,20 +40,17 @@ func (m *TestMockSearcher) Index(ctx context.Context, chunks <-chan domain.Chunk
 	return nil
 }
 
-func (m *TestMockSearcher) ReplaceSource(context.Context, string, []domain.Chunk) error { return nil }
-func (m *TestMockSearcher) DeleteSource(context.Context, string) error                  { return nil }
-
 func TestToolRegistration(t *testing.T) {
 	// Just verify tools can be created without panic
 	mockSearcher := &TestMockSearcher{}
-	searchHandler := NewSearchToolHandler(mockSearcher, config.SearchSettings{})
+	searchHandler := NewSearchToolHandler(mockSearcher, noopRevalidator{}, config.SearchSettings{})
 	if searchHandler == nil {
 		t.Error("Search handler should not be nil")
 	}
 
 	resourceProvider, err := resources.NewResourceProvider([]resources.ResourceDefinition{}, nil)
 	require.NoError(t, err)
-	readHandler := NewReadToolHandler(resourceProvider)
+	readHandler := NewReadToolHandler(resourceProvider, noopRevalidator{})
 	if readHandler == nil {
 		t.Error("Read handler should not be nil")
 	}
@@ -82,7 +79,7 @@ func TestSearchToolHandler_Success_WithResults(t *testing.T) {
 		},
 	}
 
-	handler := NewSearchToolHandler(mockSearcher, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences})
+	handler := NewSearchToolHandler(mockSearcher, noopRevalidator{}, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences})
 	require.NotNil(t, handler)
 
 	ctx := context.Background()
@@ -114,7 +111,7 @@ func TestSearchToolHandler_UsesServerWideModeAndCandidateWindow(t *testing.T) {
 		SourceTitle: "One",
 		Content:     "full chunk",
 	}}}
-	handler := NewSearchToolHandler(searcher, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeContent})
+	handler := NewSearchToolHandler(searcher, noopRevalidator{}, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeContent})
 
 	result, _, err := handler(context.Background(), nil, SearchToolArgument{Query: "chunk"})
 
@@ -126,7 +123,7 @@ func TestSearchToolHandler_UsesServerWideModeAndCandidateWindow(t *testing.T) {
 func TestSearchToolHandler_Success_NoResults(t *testing.T) {
 	mockSearcher := &TestMockSearcher{}
 
-	handler := NewSearchToolHandler(mockSearcher, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences})
+	handler := NewSearchToolHandler(mockSearcher, noopRevalidator{}, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences})
 	ctx := context.Background()
 	req := &mcp.CallToolRequest{}
 	args := SearchToolArgument{Query: "nonexistent"}
@@ -149,7 +146,7 @@ func TestSearchToolHandler_Error(t *testing.T) {
 		err: expectedErr,
 	}
 
-	handler := NewSearchToolHandler(mockSearcher, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences})
+	handler := NewSearchToolHandler(mockSearcher, noopRevalidator{}, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences})
 	ctx := context.Background()
 	req := &mcp.CallToolRequest{}
 	args := SearchToolArgument{Query: "failing query"}
@@ -193,7 +190,7 @@ func TestReadToolHandler_Success(t *testing.T) {
 	}, nil)
 	require.NoError(t, err)
 
-	handler := NewReadToolHandler(resourceProvider)
+	handler := NewReadToolHandler(resourceProvider, noopRevalidator{})
 	require.NotNil(t, handler)
 
 	ctx := context.Background()
@@ -216,7 +213,7 @@ func TestReadToolHandler_Error_ResourceNotFound(t *testing.T) {
 	resourceProvider, err := resources.NewResourceProvider([]resources.ResourceDefinition{}, nil)
 	require.NoError(t, err)
 
-	handler := NewReadToolHandler(resourceProvider)
+	handler := NewReadToolHandler(resourceProvider, noopRevalidator{})
 	ctx := context.Background()
 	req := &mcp.CallToolRequest{}
 	args := ReadToolArgument{URI: "acdc://nonexistent"}

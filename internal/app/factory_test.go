@@ -479,6 +479,37 @@ func TestCreateMCPServer_PassesCallerContextToDiscovery(t *testing.T) {
 	cleanup()
 }
 
+// TestCreateMCPServer_FingerprintFailureAtStartupDoesNotStopConstruction pins
+// the deliberate startup design: a fingerprint failure only warns and seeds an
+// empty walk digest, it never fails construction. The manifest's include
+// pattern is invalid, which fails the real resources.Fingerprint call inside
+// createMCPServer; deps.discover is injected to succeed regardless of that
+// same metadata, isolating the fingerprint failure from the discovery failure
+// that identical invalid metadata would otherwise also produce.
+func TestCreateMCPServer_FingerprintFailureAtStartupDoesNotStopConstruction(t *testing.T) {
+	contentDir := writeMetadataOnly(t, `server:
+  name: test
+  version: "1"
+  instructions: test
+index:
+  include: ["/abs/pattern/**"]
+`)
+	deps := defaultFactoryDeps()
+	deps.discover = func(context.Context, *content.ContentProvider, *domain.IndexMetadata, string, ...resources.DiscoverOption) (resources.DiscoveryResult, error) {
+		return resources.DiscoveryResult{}, nil
+	}
+	deps.newSearch = func(config.SearchSettings) search.Searcher {
+		return &fakeSearcher{drain: true}
+	}
+
+	server, cleanup, err := createMCPServer(context.Background(), appTestSettings(contentDir), "test", deps)
+
+	require.NoError(t, err)
+	require.NotNil(t, server)
+	require.NotNil(t, cleanup)
+	cleanup()
+}
+
 func TestCreateMCPServer_FailsWhenConfiguredDiscoveryFails(t *testing.T) {
 	contentDir := t.TempDir()
 	metadata := `

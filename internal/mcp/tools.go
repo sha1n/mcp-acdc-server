@@ -22,32 +22,33 @@ type ReadToolArgument struct {
 }
 
 // RegisterSearchTool registers the search tool with the server
-func RegisterSearchTool(s *mcp.Server, searchService search.Searcher, settings config.SearchSettings, metadata domain.ToolMetadata) {
+func RegisterSearchTool(s *mcp.Server, searchService search.Searcher, revalidator Revalidator, settings config.SearchSettings, metadata domain.ToolMetadata) {
 	mcp.AddTool(s,
 		&mcp.Tool{
 			Name:        metadata.Name,
 			Description: metadata.Description,
 			// InputSchema auto-generated from SearchToolArgument
 		},
-		NewSearchToolHandler(searchService, settings),
+		NewSearchToolHandler(searchService, revalidator, settings),
 	)
 }
 
 // RegisterReadTool registers the read tool with the server
-func RegisterReadTool(s *mcp.Server, resourceProvider *resources.ResourceProvider, metadata domain.ToolMetadata) {
+func RegisterReadTool(s *mcp.Server, catalog resources.Catalog, revalidator Revalidator, metadata domain.ToolMetadata) {
 	mcp.AddTool(s,
 		&mcp.Tool{
 			Name:        metadata.Name,
 			Description: metadata.Description,
 			// InputSchema auto-generated from ReadToolArgument
 		},
-		NewReadToolHandler(resourceProvider),
+		NewReadToolHandler(catalog, revalidator),
 	)
 }
 
 // NewSearchToolHandler creates the handler for the search tool
-func NewSearchToolHandler(searchService search.Searcher, settings config.SearchSettings) mcp.ToolHandlerFor[SearchToolArgument, any] {
+func NewSearchToolHandler(searchService search.Searcher, revalidator Revalidator, settings config.SearchSettings) mcp.ToolHandlerFor[SearchToolArgument, any] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, args SearchToolArgument) (*mcp.CallToolResult, any, error) {
+		revalidator.Revalidate(ctx)
 		// Args are already validated and unmarshaled by SDK via jsonschema tags
 		slog.Info("Search request", "query", args.Query)
 
@@ -68,12 +69,13 @@ func NewSearchToolHandler(searchService search.Searcher, settings config.SearchS
 }
 
 // NewReadToolHandler creates the handler for the read tool
-func NewReadToolHandler(resourceProvider *resources.ResourceProvider) mcp.ToolHandlerFor[ReadToolArgument, any] {
+func NewReadToolHandler(catalog resources.Catalog, revalidator Revalidator) mcp.ToolHandlerFor[ReadToolArgument, any] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, args ReadToolArgument) (*mcp.CallToolResult, any, error) {
+		revalidator.Revalidate(ctx)
 		// Args are already validated and unmarshaled by SDK via jsonschema tags
 		slog.Info("Get resource request", "uri", args.URI)
 
-		content, err := resourceProvider.ReadResource(args.URI)
+		content, err := catalog.ReadResource(args.URI)
 		if err != nil {
 			slog.Error("Get resource failed", "uri", args.URI, "error", err)
 			return nil, nil, err

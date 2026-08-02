@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
@@ -50,6 +51,19 @@ func createMCPServer(ctx context.Context, settings *config.Settings, version str
 		discoverOpts = append(discoverOpts, resources.WithLenientIndex())
 	}
 
+	// Fingerprint before discovery so a file that changes between the two
+	// calls is seen as pending work by the first refresh check rather than
+	// silently folded into the seed digest. A fingerprint failure here is not
+	// fatal: a server that indexes fine must not refuse to start because a
+	// refresh gate could not be primed, so an empty digest is seeded instead
+	// and the first Revalidate call treats the content root as changed.
+	seedWalkDigest, err := resources.Fingerprint(ctx, cp, metadata.Index, discoverOpts...)
+	if err != nil {
+		slog.Warn("failed to fingerprint content root at startup; catalog refresh will re-discover on first check",
+			"error", err)
+		seedWalkDigest = ""
+	}
+
 	// Discover resources
 	discovery, err := deps.discover(ctx, cp, metadata.Index, settings.Scheme, discoverOpts...)
 	if err != nil {
@@ -58,13 +72,7 @@ func createMCPServer(ctx context.Context, settings *config.Settings, version str
 
 	warnIfLegacyLayoutIgnored(cp, resolved.defaulted, discovery)
 
-	var resourceOpts []resources.Option
-	if settings.CrossRef {
-		resourceOpts = append(resourceOpts, resources.WithTransformer(
-			resources.NewCrossRefTransformer(discovery.Sources, settings.Scheme),
-		))
-	}
-	resourceProvider, err := resources.NewResourceProvider(discovery.Sources, discovery.Chunks, resourceOpts...)
+	resourceProvider, err := assembleResourceProvider(discovery, settings.CrossRef, settings.Scheme)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create resource provider: %w", err)
 	}
@@ -86,10 +94,54 @@ func createMCPServer(ctx context.Context, settings *config.Settings, version str
 		return nil, nil, err
 	}
 
-	// Create MCP server
-	mcpServer := mcp.CreateServer(metadata, resourceProvider, promptProvider, searchService, settings.Search)
+	holder := resources.NewCatalogHolder(resourceProvider)
+
+	// The refresher closes over the metadata and discover options resolved
+	// once above, so a mid-session refresh applies the same zero-config
+	// leniency decision as startup rather than re-deciding it.
+	refresher := &catalogRefresher{
+		holder:   holder,
+		searcher: searchService,
+		fingerprint: func(ctx context.Context) (string, error) {
+			return resources.Fingerprint(ctx, cp, metadata.Index, discoverOpts...)
+		},
+		discover: func(ctx context.Context) (resources.DiscoveryResult, error) {
+			return deps.discover(ctx, cp, metadata.Index, settings.Scheme, discoverOpts...)
+		},
+		assemble: func(discovery resources.DiscoveryResult) (*resources.ResourceProvider, error) {
+			return assembleResourceProvider(discovery, settings.CrossRef, settings.Scheme)
+		},
+		now:           time.Now,
+		interval:      refreshInterval,
+		walkDigest:    seedWalkDigest,
+		contentDigest: computeContentDigest(discovery.Sources),
+	}
+	refresher.reindex = func(ctx context.Context, provider *resources.ResourceProvider) error {
+		return IndexResources(ctx, provider, refresher.searcher)
+	}
+
+	// Create MCP server. mcp.CreateServer needs the refresher to build the
+	// registrar it returns, so the registrar is bound onto the refresher only
+	// after this call — the narrow window Revalidate's nil-registrar guard
+	// covers.
+	mcpServer, registrar := mcp.CreateServer(metadata, holder, promptProvider, searchService, settings.Search, refresher)
+	refresher.bindRegistrar(registrar)
 
 	return mcpServer, searchService.Close, nil
+}
+
+// assembleResourceProvider builds the resource catalog from a discovery
+// result exactly the same way at startup and on every later refresh,
+// cross-ref transformer included, so a future change to provider options
+// cannot apply to only one of those call sites.
+func assembleResourceProvider(discovery resources.DiscoveryResult, crossRef bool, scheme string) (*resources.ResourceProvider, error) {
+	var opts []resources.Option
+	if crossRef {
+		opts = append(opts, resources.WithTransformer(
+			resources.NewCrossRefTransformer(discovery.Sources, scheme),
+		))
+	}
+	return resources.NewResourceProvider(discovery.Sources, discovery.Chunks, opts...)
 }
 
 // warnIfLegacyLayoutIgnored flags the likely cause of a silently empty

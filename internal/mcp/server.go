@@ -18,32 +18,33 @@ const (
 	ToolNameRead = "read"
 )
 
-// CreateServer creates and configures the MCP server
+// CreateServer creates and configures the MCP server. The returned
+// *ResourceRegistrar has already performed the initial resource
+// registration from catalog; a caller that refreshes the catalog later
+// drives further registration changes through it.
+//
+// A nil revalidator is normalized to a no-op, so callers that never refresh
+// the catalog (e.g. tests) can omit it.
 func CreateServer(
 	metadata domain.McpMetadata,
-	resourceProvider *resources.ResourceProvider,
+	catalog resources.Catalog,
 	promptProvider *prompts.PromptProvider,
 	searchService search.Searcher,
 	searchSettings config.SearchSettings,
-) *mcp.Server {
+	revalidator Revalidator,
+) (*mcp.Server, *ResourceRegistrar) {
+	if revalidator == nil {
+		revalidator = noopRevalidator{}
+	}
+
 	// Create server with official SDK
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:    metadata.Server.Name,
 		Version: metadata.Server.Version,
 	}, &mcp.ServerOptions{Instructions: metadata.Server.Instructions})
 
-	// Register Resources
-	for _, res := range resourceProvider.ListResources() {
-		// Capture uri for closure
-		uri := res.URI
-
-		s.AddResource(&mcp.Resource{
-			URI:         uri,
-			Name:        res.Name,
-			Description: res.Description,
-			MIMEType:    res.MIMEType,
-		}, makeResourceHandler(resourceProvider, uri))
-	}
+	registrar := NewResourceRegistrar(s, catalog, revalidator)
+	registrar.Sync(catalog)
 
 	// Register Prompts
 	for _, p := range promptProvider.ListPrompts() {
@@ -60,11 +61,11 @@ func CreateServer(
 	}
 
 	// Register Tools
-	RegisterSearchTool(s, searchService, searchSettings, metadata.GetToolMetadata(ToolNameSearch))
+	RegisterSearchTool(s, searchService, revalidator, searchSettings, metadata.GetToolMetadata(ToolNameSearch))
 	slog.Info("Registered tool", "name", ToolNameSearch)
 
-	RegisterReadTool(s, resourceProvider, metadata.GetToolMetadata(ToolNameRead))
+	RegisterReadTool(s, catalog, revalidator, metadata.GetToolMetadata(ToolNameRead))
 	slog.Info("Registered tool", "name", ToolNameRead)
 
-	return s
+	return s, registrar
 }
