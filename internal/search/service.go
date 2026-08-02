@@ -45,8 +45,6 @@ type SearchResult struct {
 type Searcher interface {
 	Search(query string, candidateLimit int) ([]SearchResult, error)
 	Index(ctx context.Context, chunks <-chan domain.Chunk) error
-	ReplaceSource(ctx context.Context, sourceID string, chunks []domain.Chunk) error
-	DeleteSource(ctx context.Context, sourceID string) error
 	Close()
 }
 
@@ -65,11 +63,10 @@ type searchIndex interface {
 
 // Service search service using Bleve
 type Service struct {
-	mu           sync.RWMutex
-	settings     config.SearchSettings
-	index        searchIndex
-	indexDir     string
-	sourceChunks map[string][]string
+	mu       sync.RWMutex
+	settings config.SearchSettings
+	index    searchIndex
+	indexDir string
 }
 
 // Ensure Service implements Searcher
@@ -78,8 +75,7 @@ var _ Searcher = (*Service)(nil)
 // NewService creates a new search service
 func NewService(settings config.SearchSettings) *Service {
 	return &Service{
-		settings:     settings,
-		sourceChunks: make(map[string][]string),
+		settings: settings,
 	}
 }
 
@@ -92,8 +88,7 @@ func (s *Service) Index(ctx context.Context, chunks <-chan domain.Chunk) error {
 	if err != nil {
 		return err
 	}
-	newSourceChunks := make(map[string][]string)
-	if err := batchIndex(ctx, index, chunks, newSourceChunks); err != nil {
+	if err := batchIndex(ctx, index, chunks); err != nil {
 		_ = index.Close()
 		if indexDir != "" {
 			_ = removeAll(indexDir)
@@ -104,7 +99,6 @@ func (s *Service) Index(ctx context.Context, chunks <-chan domain.Chunk) error {
 	oldIndex, oldIndexDir := s.index, s.indexDir
 	s.index = index
 	s.indexDir = indexDir
-	s.sourceChunks = newSourceChunks
 	if oldIndex != nil {
 		_ = oldIndex.Close()
 	}
@@ -139,15 +133,10 @@ func (s *Service) newIndex() (searchIndex, string, error) {
 	return index, indexDir, nil
 }
 
-func (s *Service) batchIndex(ctx context.Context, index BatchIndexer, chunks <-chan domain.Chunk) error {
-	return batchIndex(ctx, index, chunks, s.sourceChunks)
-}
-
-func batchIndex(ctx context.Context, index BatchIndexer, chunks <-chan domain.Chunk, sourceChunks map[string][]string) error {
+func batchIndex(ctx context.Context, index BatchIndexer, chunks <-chan domain.Chunk) error {
 	batch := index.NewBatch()
 	batchSize := 100
 	count := 0
-	pendingSources := make(map[string][]string)
 
 	for {
 		select {
@@ -159,7 +148,6 @@ func batchIndex(ctx context.Context, index BatchIndexer, chunks <-chan domain.Ch
 					if err := index.Batch(batch); err != nil {
 						return fmt.Errorf("failed to execute final batch index: %w", err)
 					}
-					addSourceChunks(sourceChunks, pendingSources)
 				}
 				return nil
 			}
@@ -167,25 +155,16 @@ func batchIndex(ctx context.Context, index BatchIndexer, chunks <-chan domain.Ch
 			if err := batch.Index(chunk.ID, chunk); err != nil {
 				return fmt.Errorf("failed to add chunk to batch: %w", err)
 			}
-			pendingSources[chunk.SourceID] = append(pendingSources[chunk.SourceID], chunk.ID)
 			count++
 
 			if count >= batchSize {
 				if err := index.Batch(batch); err != nil {
 					return fmt.Errorf("failed to execute batch index: %w", err)
 				}
-				addSourceChunks(sourceChunks, pendingSources)
 				batch = index.NewBatch()
 				count = 0
-				pendingSources = make(map[string][]string)
 			}
 		}
-	}
-}
-
-func addSourceChunks(destination, sourceChunks map[string][]string) {
-	for sourceID, chunkIDs := range sourceChunks {
-		destination[sourceID] = append(destination[sourceID], chunkIDs...)
 	}
 }
 
@@ -351,66 +330,6 @@ func fieldInt(fields map[string]interface{}, field string) int {
 	default:
 		return 0
 	}
-}
-
-// ReplaceSource atomically removes a source's known chunks and indexes its replacements.
-func (s *Service) ReplaceSource(ctx context.Context, sourceID string, chunks []domain.Chunk) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if s.index == nil {
-		return fmt.Errorf("search index is not initialized")
-	}
-
-	batch := s.index.NewBatch()
-	for _, chunkID := range s.sourceChunks[sourceID] {
-		batch.Delete(chunkID)
-	}
-	for _, chunk := range chunks {
-		if err := batch.Index(chunk.ID, chunk); err != nil {
-			return fmt.Errorf("failed to add replacement chunk to batch: %w", err)
-		}
-	}
-	if err := s.index.Batch(batch); err != nil {
-		return fmt.Errorf("failed to replace source chunks: %w", err)
-	}
-
-	chunkIDs := make([]string, len(chunks))
-	for i, chunk := range chunks {
-		chunkIDs[i] = chunk.ID
-	}
-	s.sourceChunks[sourceID] = chunkIDs
-	return nil
-}
-
-// DeleteSource atomically removes all known chunks for sourceID.
-func (s *Service) DeleteSource(ctx context.Context, sourceID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if s.index == nil {
-		return nil
-	}
-	chunkIDs := s.sourceChunks[sourceID]
-	if len(chunkIDs) == 0 {
-		return nil
-	}
-
-	batch := s.index.NewBatch()
-	for _, chunkID := range chunkIDs {
-		batch.Delete(chunkID)
-	}
-	if err := s.index.Batch(batch); err != nil {
-		return fmt.Errorf("failed to delete source chunks: %w", err)
-	}
-	delete(s.sourceChunks, sourceID)
-	return nil
 }
 
 // Close cleans up resources
