@@ -204,7 +204,7 @@ When `index` is absent from `mcp-metadata.yaml`, discovery keeps scanning `mcp-r
 
 ### Not Yet Supported
 
-Persistence across restarts and live filesystem watching are not part of this release. The chunk catalog and search index are rebuilt fully at startup (in memory or a temporary directory); pick up content changes by restarting the server.
+Persistence across restarts is not part of this release: the chunk catalog and search index are rebuilt fully at startup, in memory or a temporary directory, with no watcher process behind it. Content changes are still picked up without a restart, though — a `search` call, a `read` call, or a resource read re-checks the content root (debounced to at most once every 2 seconds) and, only when something actually changed, re-assembles the catalog and rebuilds the index in place. See [Content Refresh](SPECIFICATIONS.md#content-refresh) for the trigger, the debounce, and how its error handling deliberately differs from the strict startup rules above.
 
 See [Configuration Reference](configuration.md) for the `--search-result-mode` flag that controls how much chunk detail the `search` tool returns, and the [Repository Docs example](../examples/repository-docs/) for a runnable configured-indexing setup.
 
