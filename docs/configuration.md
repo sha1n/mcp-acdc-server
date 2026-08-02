@@ -23,9 +23,46 @@ When the same setting is specified in multiple places, the following priority ap
 | `--cross-ref` | — | `ACDC_MCP_CROSS_REF` | Transform relative markdown links between resources into resource URIs | `false` |
 | `--search-max-results` | `-m` | `ACDC_MCP_SEARCH_MAX_RESULTS` | Maximum search results | `10` |
 | `--search-keywords-boost` | — | `ACDC_MCP_SEARCH_KEYWORDS_BOOST` | Boost for keywords matches | `3.0` |
+| `--search-heading-boost` | — | `ACDC_MCP_SEARCH_HEADING_BOOST` | Boost for heading path (`heading_path`) matches | `2.5` |
 | `--search-title-boost` | — | `ACDC_MCP_SEARCH_TITLE_BOOST` | Boost for document title (`source_title`) matches | `2.0` |
+| `--search-path-boost` | — | `ACDC_MCP_SEARCH_PATH_BOOST` | Boost for path label (`path_labels`) matches | `1.25` |
 | `--search-content-boost` | — | `ACDC_MCP_SEARCH_CONTENT_BOOST` | Boost for content matches | `1.0` |
 | `--search-result-mode` | — | `ACDC_MCP_SEARCH_RESULT_MODE` | Search output detail: `references` (chunk citations only) or `content` (citations plus the full matched chunk body) | `references` |
+
+### What the search boosts actually do
+
+A boost is a relative weight within a single normalized query, not a ranking override. What
+raising one buys depends on whether that field is already winning. Raising the boost of a
+field that is losing narrows its gap to the others and then converges — the scores approach
+each other without ever crossing, so no value makes it overtake. Raising the boost of a field
+that already leads widens its score margin without changing its position, because there is no
+position above first. Field length normalization compounds this: a short `heading_path` match
+stays ahead of a long body match largely independently of the weights. Expect to need a change
+of roughly an order of magnitude before any ranking moves, and expect some orderings not to be
+reachable through boosts at all.
+
+Setting a boost to `0` is different in kind: it removes that field from the query entirely
+rather than just weighting it down. Whether that makes a document unreachable depends on
+whether the same words also live in another indexed field:
+
+- `--search-path-boost 0` genuinely removes a retrieval route. Path labels come from the file
+  path and are not duplicated anywhere else, so documents matched only by their path stop
+  being returned. This is the practical way to suppress path-label noise.
+- `--search-heading-boost 0` demotes rather than hides. A chunk's body text begins at its own
+  heading line, so heading words are also indexed as content and the document is still
+  retrieved — lower down. That holds only for a section's first chunk: when a long section is
+  split into multiple chunks, the later ones carry the section's `heading_path` but not its
+  heading line in their content, so for those chunks `--search-heading-boost 0` does hide
+  rather than demote.
+
+Two of the five fields carry no signal on plain repository Markdown. `keywords` comes only
+from YAML frontmatter, and without frontmatter a document's `source_title` is its first `#`
+heading — which is already the head of every chunk's `heading_path`. So in the default
+zero-config mode, `--search-heading-boost`, `--search-path-boost`, and `--search-content-boost`
+are the three boosts that discriminate between documents; `--search-keywords-boost` and
+`--search-title-boost` have nothing to act on until a document supplies frontmatter.
+
+Negative, `NaN`, infinite and unparseable boost values are rejected at startup.
 
 ## Authentication Settings
 

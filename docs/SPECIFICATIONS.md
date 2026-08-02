@@ -24,7 +24,9 @@ The server is configured via environment variables, command-line flags, or a `.e
 | `ACDC_MCP_PORT` | `--port`, `-p` | Port to listen on for SSE transport. | `8080` |
 | `ACDC_MCP_SEARCH_MAX_RESULTS` | `--search-max-results`, `-m` | Max results returned by the search tool. | `10` |
 | `ACDC_MCP_SEARCH_KEYWORDS_BOOST` | `--search-keywords-boost` | Boost factor for keyword matches. | `3.0` |
+| `ACDC_MCP_SEARCH_HEADING_BOOST` | `--search-heading-boost` | Boost factor for heading path (`heading_path`) matches. | `2.5` |
 | `ACDC_MCP_SEARCH_TITLE_BOOST` | `--search-title-boost` | Boost factor for document title (`source_title`) matches. | `2.0` |
+| `ACDC_MCP_SEARCH_PATH_BOOST` | `--search-path-boost` | Boost factor for path label (`path_labels`) matches. | `1.25` |
 | `ACDC_MCP_SEARCH_CONTENT_BOOST` | `--search-content-boost` | Boost factor for content matches. | `1.0` |
 | `ACDC_MCP_SEARCH_RESULT_MODE` | `--search-result-mode` | Search output detail: `references` or `content`. | `references` |
 | `ACDC_MCP_AUTH_TYPE` | `--auth-type`, `-a` | Authentication mode for SSE: `none`, `basic`, `apikey`. | `none` |
