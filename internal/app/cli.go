@@ -4,7 +4,7 @@ import "github.com/spf13/pflag"
 
 // RegisterFlags registers all CLI flags on the given FlagSet
 func RegisterFlags(flags *pflag.FlagSet) {
-	flags.StringP("content-dir", "c", "", "Path to content directory (default: ./content)")
+	flags.StringP("content-dir", "c", "", "Path to content directory (default: current working directory)")
 	flags.StringP("transport", "t", "", "Transport type: stdio or sse (default: stdio)")
 	flags.StringP("host", "H", "", "Host for SSE transport (default: 0.0.0.0)")
 	flags.IntP("port", "p", 0, "Port for SSE transport (default: 8080)")

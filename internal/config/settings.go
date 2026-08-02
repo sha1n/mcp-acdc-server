@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -77,9 +76,8 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 
 	// Default values
 	cwd, _ := os.Getwd()
-	defaultContentDir := filepath.Join(cwd, "content")
 
-	v.SetDefault("content_dir", defaultContentDir)
+	v.SetDefault("content_dir", cwd)
 	v.SetDefault("transport", "stdio")
 	v.SetDefault("host", "0.0.0.0")
 	v.SetDefault("port", 8080)
