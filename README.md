@@ -125,7 +125,7 @@ For full configuration options including authentication, see [Configuration Refe
 
 ### Per-Repository (Zero-Config)
 
-Because `--content-dir` defaults to the working directory and `mcp-metadata.yaml` is optional, `acdc-mcp` can be registered once at **user** scope, with no `--content-dir` — for clients that launch stdio servers with the repository as the working directory, as Claude Code and Gemini CLI do, this means it indexes whichever repository the client is running in each time it launches the server:
+Because `--content-dir` defaults to the working directory and `mcp-metadata.yaml` is optional, `acdc-mcp` can be registered once at **user** scope, with no `--content-dir` — for clients that launch stdio servers with the repository as the working directory, as Claude Code and Gemini CLI do, this means it indexes whichever repository the client is running in each time it launches the server, and picks up edits made mid-session without needing a restart (see [Content Refresh](docs/SPECIFICATIONS.md#content-refresh)):
 
 ```bash
 claude mcp add --scope user --transport stdio acdc -- acdc-mcp
@@ -170,6 +170,10 @@ acdc-mcp --content-dir /path/to/repository
 Add an `mcp-metadata.yaml` to override the defaults: customize server identity and instructions, and either add an `index` block to index any Markdown matched by glob patterns (e.g. `docs/**/*.md`, without needing frontmatter), or omit `index` to use the legacy `mcp-resources/` layout, which requires frontmatter on every file. Whichever mode selected the documents, they are split into heading-aware chunks for search.
 
 For details on authoring resource files, including frontmatter format and search keyword boosting, see the [Authoring Resources Guide](docs/authoring-resources.md).
+
+### Content Refresh
+
+The catalog and search index don't just build once at startup: a `search` call, a `read` call, or a resource read re-checks the content root (debounced to at most once every 2 seconds) and rebuilds them in place when something actually changed, so an edit made mid-session is visible without restarting the server. `resources/list` doesn't trigger this check and can lag slightly until one of the other three runs. See [Content Refresh](docs/SPECIFICATIONS.md#content-refresh) in the specification for the full trigger, debounce, and error-handling behavior, and note that a rebuild briefly blocks concurrent `search` calls.
 
 ### Examples
 

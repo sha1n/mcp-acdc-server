@@ -27,7 +27,7 @@ Add a manifest when you want a custom server name/instructions, or `index.includ
 - content mode is selected with --search-result-mode=content
 - base URIs read full documents; search-returned fragments read chunks
 - existing mcp-resources behavior remains when index is absent
-- persistence and live watching are not part of this release
+- persistence across restarts is not part of this release; mid-session content changes are still picked up via debounced refresh
 
 ### Usage
 
@@ -45,4 +45,4 @@ The first command returns chunk citations (title, URI, breadcrumb, and a snippet
 ## Notes (Both Variants)
 
 - No frontmatter is required in the indexed Markdown; `name`/`description` fall back to the first H1 (`#`) heading and first paragraph when frontmatter is absent. A document whose first heading is `##` or deeper gets an empty name.
-- The server rebuilds its chunk catalog and search index fully at startup. There is no persistence across restarts and no live filesystem watching — restart the server to pick up documentation changes.
+- The server rebuilds its chunk catalog and search index fully at startup; there is no persistence across restarts. You don't need to restart it to pick up documentation changes, though: a `search` call, a `read` call, or a resource read re-checks the content root (debounced to at most once every 2 seconds) and rebuilds the catalog and index in place when something changed. See [Content Refresh](../../docs/SPECIFICATIONS.md#content-refresh) for the details, including the brief pause a rebuild puts on concurrent searches.

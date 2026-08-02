@@ -52,7 +52,7 @@ The server is configured via environment variables, command-line flags, or a `.e
 
 -   **Activation**: Triggered only when `mcp-metadata.yaml` does not exist at the content root. A manifest that exists but cannot be read, fails to parse as YAML, or fails `Validate()` is still a fatal startup error — only a *missing* file falls back to defaults.
 -   **Default index**: Equivalent to a manifest with `index.include: ["README.md", "docs/**/*.md"]` (no `exclude`), which selects the same configured chunk indexing path described in 2b, with the same optional-frontmatter metadata derivation.
--   **Error handling (lenient)**: Unlike an explicit `index` block, the defaulted index tolerates conditions that would otherwise fail startup: zero matched files, and a per-file read or parse failure, are logged as warnings and the file (or the whole selection) is skipped instead of failing the server. Configuration-shape errors — an invalid, absolute, or root-escaping glob pattern, a selected non-Markdown file, or a content root that cannot be resolved — remain fatal, exactly as in 2b.
+-   **Error handling (lenient)**: Unlike an explicit `index` block, the defaulted index tolerates conditions that would otherwise fail startup: zero matched files, and a per-file read, parse, or URI-construction failure, are logged as warnings and the file (or the whole selection) is skipped instead of failing the server. Configuration-shape errors — an invalid, absolute, or root-escaping glob pattern, a selected non-Markdown file, or a content root that cannot be resolved — remain fatal, exactly as in 2b.
 -   **Directory pruning**: `.git` is always skipped during traversal, in both this mode and 2b. Under this defaulted mode only, `node_modules`, `vendor`, `dist`, `build`, `target`, and `.venv` are also skipped, so a repository's dependency and build-output directories are never scanned for Markdown. The content root itself is never pruned, even if its name matches one of these.
 -   **Derived identity**: The server name is `"<base> Documentation"`, where `<base>` is the base name of the resolved `--content-dir` path (falling back to `"Repository"` if no meaningful base name can be derived, e.g. the root directory). The version is the build-injected binary version, or `0.0.0` when it is empty. Instructions are generated from a built-in template naming the repository:
     ```text
@@ -96,7 +96,7 @@ index:                  # Optional: switches discovery to configured chunk index
     -   The scheme must be RFC 3986 compliant (starts with a letter, followed by letters/digits/`+`/`-`/`.`).
     -   Windows backslashes are normalized to forward slashes.
 -   **File Format**: Must be Markdown with YAML Frontmatter.
--   **Error handling**: A file with invalid YAML, missing frontmatter, or missing `name`/`description` is skipped with a warning log; it does not fail startup.
+-   **Error handling**: A file with invalid YAML, missing frontmatter, missing `name`/`description`, or a relative path that cannot be constructed into a valid resource URI (e.g. containing an ASCII control character) is skipped with a warning log; it does not fail startup.
 
 **Frontmatter Requirements:**
 ```markdown
@@ -116,8 +116,8 @@ Markdown content follows...
 -   **URI Scheme**: Same construction as legacy discovery, relative to `--content-dir` instead of `mcp-resources/`.
 -   **File Format**: Must be `.md` or `.markdown`. YAML frontmatter is **optional**; when present it must still be valid.
 -   **Metadata derivation**: `name` falls back to the first `#` (H1) heading, `description` to the first paragraph, when frontmatter omits them. `description` is always truncated to 200 Unicode characters, whether it came from frontmatter or the fallback paragraph. `keywords` has no fallback.
--   **Error handling (strict)**: Any of the following fails server startup: `index.include` missing/empty, an invalid/absolute/root-escaping glob pattern, zero files matched, a matched file that is not Markdown, a matched file that cannot be read or parsed, or the content root itself cannot be resolved (e.g. a broken symlink).
--   **Not part of this release**: persistence across restarts and live filesystem watching. The chunk catalog and search index are rebuilt fully at each startup.
+-   **Error handling (strict)**: Any of the following fails server startup: `index.include` missing/empty, an invalid/absolute/root-escaping glob pattern, zero files matched, a matched file that is not Markdown, a matched file that cannot be read or parsed, a matched file whose URI cannot be constructed as a valid resource address (e.g. a relative path containing an ASCII control character), or the content root itself cannot be resolved (e.g. a broken symlink). The same conditions encountered on the mid-session refresh described in [Content Refresh](#content-refresh) are logged and skipped instead of fatal — a running server keeps serving its last-known-good catalog.
+-   **Not part of this release**: persistence across restarts. The chunk catalog and search index are rebuilt fully at startup, and rebuilt again mid-session whenever a refresh detects a content change — see [Content Refresh](#content-refresh).
 
 ### 3. Chunking and Fragment URIs (Both Modes)
 
@@ -195,6 +195,20 @@ In addition to tools, the server exposes source documents (not individual chunks
 
 ---
 
+## Content Refresh
+
+The content root is re-checked for changes at the start of every `search` call, every `read` call, and every resource read. `resources/list` does not trigger a check: the underlying SDK serves it directly, with no handler to route through revalidation, so its listing can lag behind the other three surfaces until one of them runs.
+
+A check is debounced to at most once every 2 seconds — a burst of requests inside that window is served from the previous result rather than re-walking the content root. The check itself is layered to keep the common case cheap: it first compares a digest of file paths, sizes, and modification times (no file contents are read) against the last check, and only when that digest changed does it re-discover and diff a content digest, and only when *that* digest also changed does it re-assemble the catalog, rebuild the Bleve search index, publish the new catalog, and reconcile registered resources — sending `notifications/resources/list_changed` to connected clients when the resource set actually changed. An untouched content root costs one cheap filesystem walk per debounce interval; the full rebuild only runs on an actual change.
+
+This applies identically to both discovery modes (legacy `mcp-resources/` and configured indexing) and to both transports — there is no way to scope refresh to one or disable it. Every error on this path (a failed walk, discovery, parse, or index rebuild) is logged and swallowed: the previously published catalog and index stay in place and the next debounce interval retries from scratch. This is deliberately different from the fatal startup errors listed elsewhere on this page — a malformed document must never take down a server that has already been serving successfully.
+
+A content-change rebuild holds the search index's write lock for its duration, so a concurrent `search` call briefly blocks until the rebuild finishes. For the zero-config, locally-indexed case this is on the order of milliseconds; for a large curated corpus served over SSE to many concurrent clients, it is a real (if brief) pause on every edit, with no configuration to opt out of it.
+
+Persistence across restarts is still not part of this release: nothing is written to disk, and the catalog/index are rebuilt from scratch every time the process starts, independent of the mid-session refresh described here.
+
+---
+
 ## Transports
 
 The server supports two transport modes, which are **mutually exclusive**. Only one transport can be active at a time.
@@ -221,7 +235,7 @@ Used for remote connections.
 ## Search Implementation Details
 
 *   **Engine**: Bleve (Go) full-text search engine.
-*   **Indexing**: Indexes document chunks (not whole documents). Occurs at server startup (in-memory or temporary directory) and is rebuilt in full on every restart — there is no persistence across restarts and no live filesystem watching in this release.
+*   **Indexing**: Indexes document chunks (not whole documents), in-memory or in a temporary directory — no persistence across restarts. Built in full at startup, and rebuilt in full again mid-session whenever a debounced refresh detects a content change; see [Content Refresh](#content-refresh) for the trigger, debounce interval, and concurrency cost.
 *   **Features**:
     *   **Fuzzy Search**: Matches terms with an edit distance of 1.
     *   **Stemming**: Uses the standard English analyzer for language-aware matching.
