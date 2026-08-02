@@ -13,11 +13,6 @@ import (
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
 )
 
-const (
-	headingBoost = 2.5
-	pathBoost    = 1.25
-)
-
 var (
 	newMemoryIndex = bleve.NewMemOnly
 	makeTempDir    = os.MkdirTemp
@@ -229,13 +224,7 @@ func (s *Service) Search(queryStr string, candidateLimit int) ([]SearchResult, e
 	if queryStr == "*" {
 		q = bleve.NewMatchAllQuery()
 	} else {
-		q = bleve.NewDisjunctionQuery(
-			fieldQuery(queryStr, domain.FieldKeywords, s.settings.KeywordsBoost),
-			fieldQuery(queryStr, domain.FieldHeadingPath, headingBoost),
-			fieldQuery(queryStr, domain.FieldSourceTitle, s.settings.TitleBoost),
-			fieldQuery(queryStr, domain.FieldPathLabels, pathBoost),
-			fieldQuery(queryStr, domain.FieldContent, s.settings.ContentBoost),
-		)
+		q = bleve.NewDisjunctionQuery(s.boostedFieldQueries(queryStr)...)
 	}
 
 	searchRequest := bleve.NewSearchRequest(q)
@@ -276,6 +265,35 @@ func (s *Service) Search(queryStr string, candidateLimit int) ([]SearchResult, e
 	}
 
 	return results, nil
+}
+
+// boostedFieldQueries builds one match clause per field carrying a positive boost.
+// Bleve's boost only scales a matching clause's score contribution — it does not
+// stop the clause from matching — so a field configured at boost 0 is omitted
+// entirely rather than included with a score of zero. The guard is <= 0, not
+// == 0, because NewService accepts an unvalidated SearchSettings: a negative
+// boost would feed a negative weight into bleve's sumOfSquaredWeights,
+// producing a NaN queryNorm and NaN scores for every clause, not just its own.
+func (s *Service) boostedFieldQueries(queryStr string) []query.Query {
+	fields := []struct {
+		name  string
+		boost float64
+	}{
+		{domain.FieldKeywords, s.settings.KeywordsBoost},
+		{domain.FieldHeadingPath, s.settings.HeadingBoost},
+		{domain.FieldSourceTitle, s.settings.TitleBoost},
+		{domain.FieldPathLabels, s.settings.PathBoost},
+		{domain.FieldContent, s.settings.ContentBoost},
+	}
+
+	queries := make([]query.Query, 0, len(fields))
+	for _, f := range fields {
+		if f.boost <= 0 {
+			continue
+		}
+		queries = append(queries, fieldQuery(queryStr, f.name, f.boost))
+	}
+	return queries
 }
 
 func fieldQuery(queryStr, field string, boost float64) *query.MatchQuery {

@@ -184,6 +184,33 @@ func TestLogValues(t *testing.T) {
 	})
 }
 
+func TestLog_IncludesHeadingAndPathBoosts(t *testing.T) {
+	captured := make(map[string]any)
+	logger := slog.New(&mapHandler{attrs: captured})
+
+	LogWithLogger(&Settings{
+		Transport: "stdio",
+		Search:    SearchSettings{HeadingBoost: 2.5, PathBoost: 1.25},
+		Auth:      AuthSettings{Type: AuthTypeNone},
+	}, logger)
+
+	assert.Equal(t, 2.5, captured["Config: search.heading_boost"])
+	assert.Equal(t, 1.25, captured["Config: search.path_boost"])
+}
+
+func TestSearchSettingsLogValue_IncludesHeadingAndPathBoosts(t *testing.T) {
+	attrs := SearchSettingsLogValue(SearchSettings{HeadingBoost: 2.5, PathBoost: 1.25}).Group()
+
+	found := make(map[string]float64)
+	for _, attr := range attrs {
+		if attr.Value.Kind() == slog.KindFloat64 {
+			found[attr.Key] = attr.Value.Float64()
+		}
+	}
+	assert.Equal(t, 2.5, found["heading_boost"])
+	assert.Equal(t, 1.25, found["path_boost"])
+}
+
 // Custom handler for testing LogValue output
 type mapHandler struct {
 	attrs map[string]any

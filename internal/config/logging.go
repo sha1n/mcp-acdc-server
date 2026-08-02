@@ -23,6 +23,8 @@ func LogWithLogger(s *Settings, logger *slog.Logger) {
 	logger.InfoContext(ctx, "Config: search.max_results", "value", s.Search.MaxResults)
 	logger.InfoContext(ctx, "Config: search.in_memory", "value", s.Search.InMemory)
 	logger.InfoContext(ctx, "Config: search.keywords_boost", "value", s.Search.KeywordsBoost)
+	logger.InfoContext(ctx, "Config: search.heading_boost", "value", s.Search.HeadingBoost)
+	logger.InfoContext(ctx, "Config: search.path_boost", "value", s.Search.PathBoost)
 	logger.InfoContext(ctx, "Config: search.title_boost", "value", s.Search.TitleBoost)
 	logger.InfoContext(ctx, "Config: search.content_boost", "value", s.Search.ContentBoost)
 	logger.InfoContext(ctx, "Config: search.result_mode", "value", s.Search.ResultMode)
@@ -43,6 +45,8 @@ func SearchSettingsLogValue(s SearchSettings) slog.Value {
 		slog.Int("max_results", s.MaxResults),
 		slog.Bool("in_memory", s.InMemory),
 		slog.Float64("keywords_boost", s.KeywordsBoost),
+		slog.Float64("heading_boost", s.HeadingBoost),
+		slog.Float64("path_boost", s.PathBoost),
 		slog.Float64("title_boost", s.TitleBoost),
 		slog.Float64("content_boost", s.ContentBoost),
 		slog.String("result_mode", string(s.ResultMode)),

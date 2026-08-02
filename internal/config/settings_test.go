@@ -1,6 +1,7 @@
 package config
 
 import (
+	"math"
 	"os"
 	"strings"
 	"testing"
@@ -758,4 +759,131 @@ func TestLoadSettings_SearchTitleBoostIgnoresRetiredNameEnvVar(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, 2.0, settings.Search.TitleBoost)
+}
+
+func TestLoadSettings_SearchHeadingBoostDefault(t *testing.T) {
+	settings, err := LoadSettings()
+
+	require.NoError(t, err)
+	require.Equal(t, 2.5, settings.Search.HeadingBoost)
+}
+
+func TestLoadSettings_SearchPathBoostDefault(t *testing.T) {
+	settings, err := LoadSettings()
+
+	require.NoError(t, err)
+	require.Equal(t, 1.25, settings.Search.PathBoost)
+}
+
+func TestLoadSettings_SearchHeadingBoostEnvVar(t *testing.T) {
+	t.Setenv("ACDC_MCP_SEARCH_HEADING_BOOST", "4.5")
+
+	settings, err := LoadSettings()
+
+	require.NoError(t, err)
+	require.Equal(t, 4.5, settings.Search.HeadingBoost)
+}
+
+func TestLoadSettings_SearchPathBoostEnvVar(t *testing.T) {
+	t.Setenv("ACDC_MCP_SEARCH_PATH_BOOST", "0.5")
+
+	settings, err := LoadSettings()
+
+	require.NoError(t, err)
+	require.Equal(t, 0.5, settings.Search.PathBoost)
+}
+
+func TestLoadSettingsWithFlags_SearchHeadingBoostFlagBeatsEnvVar(t *testing.T) {
+	t.Setenv("ACDC_MCP_SEARCH_HEADING_BOOST", "4.5")
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	flags.Float64("search-heading-boost", 0, "")
+	require.NoError(t, flags.Set("search-heading-boost", "6.0"))
+
+	settings, err := LoadSettingsWithFlags(flags)
+
+	require.NoError(t, err)
+	require.Equal(t, 6.0, settings.Search.HeadingBoost)
+}
+
+func TestLoadSettingsWithFlags_SearchPathBoostFlagBeatsEnvVar(t *testing.T) {
+	t.Setenv("ACDC_MCP_SEARCH_PATH_BOOST", "0.5")
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	flags.Float64("search-path-boost", 0, "")
+	require.NoError(t, flags.Set("search-path-boost", "3.0"))
+
+	settings, err := LoadSettingsWithFlags(flags)
+
+	require.NoError(t, err)
+	require.Equal(t, 3.0, settings.Search.PathBoost)
+}
+
+// The exported defaults and the values viper installs must not drift apart.
+func TestLoadSettings_BoostDefaultsMatchExportedConstants(t *testing.T) {
+	settings, err := LoadSettings()
+
+	require.NoError(t, err)
+	require.Equal(t, DefaultKeywordsBoost, settings.Search.KeywordsBoost)
+	require.Equal(t, DefaultTitleBoost, settings.Search.TitleBoost)
+	require.Equal(t, DefaultHeadingBoost, settings.Search.HeadingBoost)
+	require.Equal(t, DefaultPathBoost, settings.Search.PathBoost)
+	require.Equal(t, DefaultContentBoost, settings.Search.ContentBoost)
+}
+
+func TestValidateSettings_RejectsInvalidBoosts(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*SearchSettings)
+		wantErr string
+	}{
+		{"negative keywords", func(s *SearchSettings) { s.KeywordsBoost = -1 }, "search.keywords_boost"},
+		{"negative heading", func(s *SearchSettings) { s.HeadingBoost = -0.5 }, "search.heading_boost"},
+		{"negative title", func(s *SearchSettings) { s.TitleBoost = -1 }, "search.title_boost"},
+		{"negative path", func(s *SearchSettings) { s.PathBoost = -1 }, "search.path_boost"},
+		{"negative content", func(s *SearchSettings) { s.ContentBoost = -1 }, "search.content_boost"},
+		{"NaN heading", func(s *SearchSettings) { s.HeadingBoost = math.NaN() }, "search.heading_boost"},
+		{"positive infinity path", func(s *SearchSettings) { s.PathBoost = math.Inf(1) }, "search.path_boost"},
+		{"negative infinity content", func(s *SearchSettings) { s.ContentBoost = math.Inf(-1) }, "search.content_boost"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			search := SearchSettings{ResultMode: SearchResultModeReferences}
+			tt.mutate(&search)
+			s := &Settings{Transport: "stdio", Scheme: "acdc", Search: search, Auth: AuthSettings{Type: AuthTypeNone}}
+
+			err := ValidateSettings(s)
+
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+// Zero disables a field's contribution and is a supported operator choice —
+// notably as a mitigation for fuzzy path-label noise. It must never be rejected.
+func TestValidateSettings_AcceptsZeroBoosts(t *testing.T) {
+	s := &Settings{
+		Transport: "stdio",
+		Scheme:    "acdc",
+		Search: SearchSettings{
+			ResultMode:    SearchResultModeReferences,
+			KeywordsBoost: 0, HeadingBoost: 0, TitleBoost: 0, PathBoost: 0, ContentBoost: 0,
+		},
+		Auth: AuthSettings{Type: AuthTypeNone},
+	}
+
+	require.NoError(t, ValidateSettings(s))
+}
+
+// A malformed boost fails to decode rather than coercing to zero, which would
+// silently disable the field. Pinned because validateBoosts cannot catch a
+// value that has already become a legal 0.
+func TestLoadSettings_MalformedBoostIsRejected(t *testing.T) {
+	t.Setenv("ACDC_MCP_SEARCH_HEADING_BOOST", "2.5x")
+
+	settings, err := LoadSettings()
+
+	require.Error(t, err)
+	require.Nil(t, settings)
+	require.Contains(t, err.Error(), "search.heading_boost")
 }

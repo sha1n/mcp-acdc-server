@@ -10,6 +10,8 @@ func RegisterFlags(flags *pflag.FlagSet) {
 	flags.IntP("port", "p", 0, "Port for SSE transport (default: 8080)")
 	flags.IntP("search-max-results", "m", 0, "Maximum search results (default: 10)")
 	flags.Float64("search-keywords-boost", 0, "Boost for keywords matches (default: 3.0)")
+	flags.Float64("search-heading-boost", 0, "Boost for heading path matches (default: 2.5)")
+	flags.Float64("search-path-boost", 0, "Boost for path label matches (default: 1.25)")
 	flags.Float64("search-title-boost", 0, "Boost for document title matches (default: 2.0)")
 	flags.Float64("search-content-boost", 0, "Boost for content matches (default: 1.0)")
 	flags.String("search-result-mode", "", "Search output mode: references or content (default: references)")
