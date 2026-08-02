@@ -3,6 +3,7 @@ package resources
 import (
 	"context"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -201,6 +202,64 @@ func TestDiscover_LenientSkipsUnparsableFilesButIndexesSiblings(t *testing.T) {
 		Include: []string{"docs/*.md"},
 	}, "acdc")
 	require.ErrorContains(t, err, "invalid YAML in frontmatter")
+}
+
+// TestDiscover_ConfiguredRejectsUnaddressableURI covers the strict-policy
+// side of a file selected by the index whose generated URI cannot be
+// registered as an MCP resource: the go-sdk's AddResource panics on a URI
+// that fails url.Parse, and an ASCII control character -- illegal in a URL
+// but legal in a relative file path on Linux and macOS -- is enough to
+// trigger it. An operator who declared an explicit index named this file;
+// one it cannot address is a configuration-level failure, not a warning.
+func TestDiscover_ConfiguredRejectsUnaddressableURI(t *testing.T) {
+	root := t.TempDir()
+	badPath := writeFile(t, root, "docs/a\nb.md", "# Bad\n")
+
+	// The fixture must actually reproduce the failure mode under test, not a
+	// weaker proxy: confirm the file exists on disk and that url.Parse
+	// genuinely rejects the URI discovery would build for it.
+	_, statErr := os.Stat(badPath)
+	require.NoError(t, statErr, "fixture file with a control character in its name must exist")
+	_, parseErr := url.Parse(sourceURI("acdc", "docs/a\nb"))
+	require.Error(t, parseErr, "fixture URI must fail url.Parse or this test proves nothing")
+
+	_, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"docs/**/*.md"},
+	}, "acdc")
+	require.ErrorContains(t, err, badPath)
+}
+
+// TestDiscover_LenientSkipsUnaddressableURIButIndexesSiblings covers the
+// zero-config side of the same failure: the user declared nothing, so
+// refusing to start over one malformed filename would turn it into zero
+// documentation. The file is skipped and its siblings are still discovered.
+func TestDiscover_LenientSkipsUnaddressableURIButIndexesSiblings(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "docs/good.md", "# Good\n\nBody.\n")
+	badPath := writeFile(t, root, "docs/a\nb.md", "# Bad\n")
+	_, statErr := os.Stat(badPath)
+	require.NoError(t, statErr, "fixture file with a control character in its name must exist")
+
+	result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"docs/*.md"},
+	}, "acdc", WithLenientIndex())
+	require.NoError(t, err)
+	require.Equal(t, []string{"acdc://docs/good"}, sourceURIs(result.Sources))
+}
+
+// TestDiscover_LegacySkipsUnaddressableURI pins legacy discovery's existing,
+// policy-agnostic convention: skip with a warning and keep going, the same
+// way it already treats an unreadable or unparsable legacy resource file.
+func TestDiscover_LegacySkipsUnaddressableURI(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "mcp-resources/valid.md", "---\nname: Valid\ndescription: Valid description\n---\n# Valid\n\nBody.\n")
+	badPath := writeFile(t, root, "mcp-resources/a\nb.md", "---\nname: Bad\ndescription: Bad description\n---\n# Bad\n")
+	_, statErr := os.Stat(badPath)
+	require.NoError(t, statErr, "fixture file with a control character in its name must exist")
+
+	result, err := Discover(context.Background(), content.NewContentProvider(root), nil, "acdc")
+	require.NoError(t, err)
+	require.Equal(t, []string{"acdc://valid"}, sourceURIs(result.Sources))
 }
 
 func TestDiscover_LenientStillRejectsRootEscapingPatterns(t *testing.T) {
@@ -483,4 +542,37 @@ func sourceURIs(sources []domain.SourceDocument) []string {
 		uris[i] = source.URI
 	}
 	return uris
+}
+
+// sortSelectedFiles must order by the native canonical path, not by the
+// slash-converted relativePath -- the two disagree whenever a directory
+// separator byte and an ordinary filename byte fall on opposite sides of each
+// other under the two encodings. This test constructs that disagreement
+// directly as data, with a literal '\' byte in one path, rather than relying
+// on a filesystem walk: a real walk's paths use whatever separator the host
+// OS produces, so on a '/'-separator platform the two sort keys always
+// coincide and a walk-based test cannot observe a regression here at all.
+//
+// The pair is "a\sub.md" vs "aZ.md": '\' is 0x5C and 'Z' is 0x5A, so 'Z'
+// sorts first natively (byte 0x5A < 0x5C) but last under the slash form,
+// where the corresponding byte is '/' (0x2F < 0x5A). Any implementation
+// that sorts by relativePath instead of path fails this on every platform.
+func TestSortSelectedFiles_OrdersByNativePathNotSlashForm(t *testing.T) {
+	nested := selectedFile{path: `root\a\sub.md`, relativePath: "a/sub.md"}
+	sibling := selectedFile{path: `root\aZ.md`, relativePath: "aZ.md"}
+
+	tests := []struct {
+		name  string
+		input []selectedFile
+	}{
+		{name: "nested first", input: []selectedFile{nested, sibling}},
+		{name: "sibling first", input: []selectedFile{sibling, nested}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			files := append([]selectedFile(nil), tt.input...)
+			sortSelectedFiles(files)
+			require.Equal(t, []selectedFile{sibling, nested}, files)
+		})
+	}
 }
