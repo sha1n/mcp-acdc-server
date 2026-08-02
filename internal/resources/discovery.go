@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/sha1n/mcp-acdc-server/internal/content"
@@ -105,23 +107,61 @@ func discoverWithOps(ctx context.Context, cp *content.ContentProvider, index *do
 	}
 	policy := resolvePolicy(opts)
 
-	patterns, err := validatePatterns(index.Include)
+	root, selected, err := selectConfiguredFiles(ctx, cp, index, ops, policy)
 	if err != nil {
 		return DiscoveryResult{}, err
 	}
+	if len(selected) == 0 {
+		if policy.lenient {
+			slog.Warn("Configured index matched no files", "root", root)
+			return DiscoveryResult{}, nil
+		}
+		return DiscoveryResult{}, fmt.Errorf("configured index matched no files")
+	}
+
+	paths := make([]string, len(selected))
+	for i, file := range selected {
+		paths[i] = file.path
+	}
+	return buildCatalog(ctx, root, paths, scheme, ops, policy)
+}
+
+// selectedFile is a member of the file set a Discover call would select,
+// with the cheap-to-obtain filesystem attributes Fingerprint needs. It never
+// carries file content: that stays exclusive to buildCatalog and
+// discoverLegacy, the callers that actually read a file's bytes.
+type selectedFile struct {
+	path         string // canonical absolute path
+	relativePath string // slash-separated, relative to root
+	size         int64
+	modTime      time.Time
+}
+
+// selectConfiguredFiles walks cp.ContentDir and returns, in native canonical
+// path order, every regular file matching index's include/exclude patterns under
+// policy. It performs every check that must fail the invocation outright --
+// pattern validity, root resolution, and root-escape containment -- but
+// leaves the "selected nothing" decision to the caller, since that decision
+// differs between Discover (fatal unless lenient) and Fingerprint (an empty
+// selection is a legitimate digest).
+func selectConfiguredFiles(ctx context.Context, cp *content.ContentProvider, index *domain.IndexMetadata, ops discoveryOps, policy discoverPolicy) (string, []selectedFile, error) {
+	patterns, err := validatePatterns(index.Include)
+	if err != nil {
+		return "", nil, err
+	}
 	excludes, err := validatePatterns(index.Exclude)
 	if err != nil {
-		return DiscoveryResult{}, err
+		return "", nil, err
 	}
 
 	root, err := ops.canonicalPath(cp.ContentDir)
 	if err != nil {
-		return DiscoveryResult{}, fmt.Errorf("resolve content root: %w", err)
+		return "", nil, fmt.Errorf("resolve content root: %w", err)
 	}
 
 	descent := newDescentFilter(patterns)
 
-	var selected []string
+	var selected []selectedFile
 	err = ops.walkDir(root, func(filePath string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -173,22 +213,20 @@ func discoverWithOps(ctx context.Context, cp *content.ContentProvider, index *do
 		if !matchesAny(patterns, relativePath) || matchesAny(excludes, relativePath) {
 			return nil
 		}
-		selected = append(selected, canonicalFile)
+		selected = append(selected, selectedFile{
+			path:         canonicalFile,
+			relativePath: relativePath,
+			size:         info.Size(),
+			modTime:      info.ModTime(),
+		})
 		return nil
 	})
 	if err != nil {
-		return DiscoveryResult{}, err
-	}
-	if len(selected) == 0 {
-		if policy.lenient {
-			slog.Warn("Configured index matched no files", "root", root)
-			return DiscoveryResult{}, nil
-		}
-		return DiscoveryResult{}, fmt.Errorf("configured index matched no files")
+		return "", nil, err
 	}
 
-	sort.Strings(selected)
-	return buildCatalog(ctx, root, selected, scheme, ops, policy)
+	sortSelectedFiles(selected)
+	return root, selected, nil
 }
 
 // DiscoverResources returns legacy mcp-resources definitions for callers that
@@ -202,15 +240,63 @@ func DiscoverResources(cp *content.ContentProvider, scheme string) ([]ResourceDe
 }
 
 func discoverLegacy(ctx context.Context, cp *content.ContentProvider, scheme string, ops discoveryOps) (DiscoveryResult, error) {
+	_, files, err := selectLegacyFiles(ctx, cp, ops)
+	if err != nil {
+		return DiscoveryResult{}, err
+	}
+
+	result := DiscoveryResult{}
+	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return DiscoveryResult{}, err
+		}
+		raw, err := ops.readFile(file.path)
+		if err != nil {
+			slog.Warn("Skipping invalid resource file", "file", filepath.Base(file.path), "error", err)
+			continue
+		}
+		parsed, err := content.ParseMarkdown(raw, content.FrontmatterRequired)
+		if err != nil {
+			slog.Warn("Skipping invalid resource file", "file", filepath.Base(file.path), "error", err)
+			continue
+		}
+		name, _ := parsed.Metadata["name"].(string)
+		description, _ := parsed.Metadata["description"].(string)
+		if name == "" || description == "" {
+			slog.Warn("Skipping resource with missing metadata", "file", filepath.Base(file.path))
+			continue
+		}
+		uri := sourceURI(scheme, file.relativePath)
+		if _, err := url.Parse(uri); err != nil {
+			slog.Warn("Skipping invalid resource file", "file", filepath.Base(file.path), "error", err)
+			continue
+		}
+		source := buildParsedSource(parsed, content.SourceOptions{
+			URI: uri, FilePath: file.path, RelativePath: file.relativePath, Raw: raw,
+		})
+		chunks := chunkParsedSource(source, parsed)
+		result.Sources = append(result.Sources, source)
+		result.Chunks = append(result.Chunks, chunks...)
+		slog.Info("Loaded resource", "uri", uri, "name", source.Name)
+	}
+	return result, nil
+}
+
+// selectLegacyFiles walks cp.ResourcesDir and returns, in native canonical
+// path order, every regular Markdown file beneath it. A missing resources
+// directory is not a configuration error in legacy mode -- it simply means
+// there are no legacy resources -- so it yields an empty selection rather
+// than propagating the stat failure.
+func selectLegacyFiles(ctx context.Context, cp *content.ContentProvider, ops discoveryOps) (string, []selectedFile, error) {
 	root, err := ops.canonicalPath(cp.ResourcesDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return DiscoveryResult{}, nil
+			return "", nil, nil
 		}
-		return DiscoveryResult{}, fmt.Errorf("resolve resources root: %w", err)
+		return "", nil, fmt.Errorf("resolve resources root: %w", err)
 	}
 
-	var files []string
+	var files []selectedFile
 	err = ops.walkDir(root, func(filePath string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -228,49 +314,35 @@ func discoverLegacy(ctx context.Context, cp *content.ContentProvider, scheme str
 		if !info.Mode().IsRegular() {
 			return nil
 		}
-		files = append(files, filePath)
+		relativePath, err := ops.relativePath(root, filePath)
+		if err != nil {
+			return err
+		}
+		files = append(files, selectedFile{
+			path:         filePath,
+			relativePath: filepath.ToSlash(relativePath),
+			size:         info.Size(),
+			modTime:      info.ModTime(),
+		})
 		return nil
 	})
 	if err != nil {
-		return DiscoveryResult{}, err
+		return "", nil, err
 	}
-	sort.Strings(files)
 
-	result := DiscoveryResult{}
-	for _, filePath := range files {
-		if err := ctx.Err(); err != nil {
-			return DiscoveryResult{}, err
-		}
-		raw, err := ops.readFile(filePath)
-		if err != nil {
-			slog.Warn("Skipping invalid resource file", "file", filepath.Base(filePath), "error", err)
-			continue
-		}
-		parsed, err := content.ParseMarkdown(raw, content.FrontmatterRequired)
-		if err != nil {
-			slog.Warn("Skipping invalid resource file", "file", filepath.Base(filePath), "error", err)
-			continue
-		}
-		name, _ := parsed.Metadata["name"].(string)
-		description, _ := parsed.Metadata["description"].(string)
-		if name == "" || description == "" {
-			slog.Warn("Skipping resource with missing metadata", "file", filepath.Base(filePath))
-			continue
-		}
-		relativePath, err := ops.relativePath(root, filePath)
-		if err != nil {
-			return DiscoveryResult{}, err
-		}
-		uri := sourceURI(scheme, relativePath)
-		source := buildParsedSource(parsed, content.SourceOptions{
-			URI: uri, FilePath: filePath, RelativePath: filepath.ToSlash(relativePath), Raw: raw,
-		})
-		chunks := chunkParsedSource(source, parsed)
-		result.Sources = append(result.Sources, source)
-		result.Chunks = append(result.Chunks, chunks...)
-		slog.Info("Loaded resource", "uri", uri, "name", source.Name)
-	}
-	return result, nil
+	sortSelectedFiles(files)
+	return root, files, nil
+}
+
+// sortSelectedFiles orders files by native canonical path, matching the order
+// each selection walk produced before it moved behind this shared helper.
+// Sorting by path rather than the slash-converted relativePath matters on a
+// platform whose path separator is not '/': a file directly at a directory
+// boundary can compare on opposite sides of a sibling name under the two
+// forms (for example "aZ.md" vs. "a\sub.md": '\' is 0x5C, so it sorts after
+// 'Z' natively but "/" is 0x2F, so the slash form would sort before it).
+func sortSelectedFiles(files []selectedFile) {
+	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
 }
 
 func buildCatalog(ctx context.Context, root string, files []string, scheme string, ops discoveryOps, policy discoverPolicy) (DiscoveryResult, error) {
@@ -303,6 +375,13 @@ func buildCatalog(ctx context.Context, root string, files []string, scheme strin
 			return DiscoveryResult{}, err
 		}
 		uri := sourceURI(scheme, relativePath)
+		if _, err := url.Parse(uri); err != nil {
+			if policy.lenient {
+				slog.Warn("Skipping unaddressable configured file", "file", filepath.Base(filePath), "error", err)
+				continue
+			}
+			return DiscoveryResult{}, fmt.Errorf("address configured file %s: %w", filePath, err)
+		}
 		source := buildParsedSource(parsed, content.SourceOptions{
 			URI: uri, FilePath: filePath, RelativePath: filepath.ToSlash(relativePath), Raw: raw,
 		})
