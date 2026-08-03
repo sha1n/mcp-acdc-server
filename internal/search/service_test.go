@@ -614,3 +614,73 @@ func TestSearch_MemoryAndDiskIndexesHonourTheSameMapping(t *testing.T) {
 			"search.in_memory changed the ranking, which it must never do")
 	})
 }
+
+// TestSearch_HighlightsMatchedContent covers the fragment Search returns as a
+// result's Snippet. The highlight is requested with no field list, so bleve
+// resolves it against the fields recorded in each hit's Locations — the
+// fields that actually matched — rather than through the index mapping's
+// default field, which is why the composite _all field being empty does not
+// affect it.
+func TestSearch_HighlightsMatchedContent(t *testing.T) {
+	service := goldenService(t, zeroConfigCorpus)
+
+	results, err := service.Search("bearer token", goldenCandidates)
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+	require.Contains(t, results[0].Snippet, "<mark>",
+		"the leading result must carry a highlighted fragment, not the raw chunk body")
+}
+
+// TestSearch_CompositeAllFieldIsEmpty pins that nothing is written to bleve's
+// composite _all field. Every clause Search builds names an explicit field, so
+// populating _all would index every token of five fields for no reader at all.
+//
+// Two probes are required because _all can be fed by two different analyzers,
+// and each one only shows up under its own probe:
+//
+//   - "kubernet" is the "en" stem the mapped text fields' analyzer would write
+//     into _all if IncludeInAll were true on those fields. _all itself is
+//     always queried with the index mapping's default analyzer — "standard",
+//     never "en" — so a query for the unstemmed word "kubernetes" never
+//     reaches those tokens; only the stem does.
+//   - "kubernetes" is the unstemmed word bleve's dynamic mapping would write
+//     under the standard analyzer for any Chunk field left unmapped
+//     (section_fragment, fragment, part, part_count) if dynamic mapping were
+//     left on. The stem probe cannot catch that leak: dynamic mapping never
+//     produces the "en" stem.
+//
+// Both probes must return zero hits, or the corresponding mapping setting has
+// regressed.
+//
+// The field cannot be asserted away by name: IndexMappingImpl creates it
+// unconditionally, so index.Fields() lists _all whether or not anything feeds
+// it. Emptiness is only observable through a query.
+func TestSearch_CompositeAllFieldIsEmpty(t *testing.T) {
+	service := goldenService(t, zeroConfigCorpus)
+
+	for _, probeTerm := range []string{"kubernet", "kubernetes"} {
+		t.Run(probeTerm, func(t *testing.T) {
+			probe := bleve.NewMatchQuery(probeTerm)
+			probe.SetField("_all")
+			request := bleve.NewSearchRequest(probe)
+			request.Size = goldenCandidates
+
+			result, err := service.index.Search(request)
+			require.NoError(t, err)
+			require.Empty(t, result.Hits, "no field may be composed into _all")
+		})
+	}
+
+	t.Run("unmapped Chunk fields are not indexed", func(t *testing.T) {
+		index, ok := service.index.(bleve.Index)
+		require.True(t, ok, "service.index must be a bleve.Index to reach Fields()")
+
+		fields, err := index.Fields()
+		require.NoError(t, err)
+
+		for _, unmapped := range []string{"section_fragment", "fragment", "part", "part_count"} {
+			require.NotContains(t, fields, unmapped,
+				"dynamic mapping must not index Chunk fields with no explicit mapping")
+		}
+	})
+}
