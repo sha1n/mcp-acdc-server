@@ -8,7 +8,46 @@ import (
 	"github.com/sha1n/mcp-acdc-server/internal/search"
 )
 
-const candidateMultiplier = 5
+const (
+	// candidateMultiplier sizes the first candidate window against the result limit.
+	candidateMultiplier = 5
+	// candidateGrowthFactor widens the window on each further retrieval.
+	candidateGrowthFactor = 4
+	// maxCandidateRetrievals bounds the widening. Query cost grows roughly
+	// linearly with the window, so the ceiling is what keeps a flooded query from
+	// paying for the whole corpus.
+	maxCandidateRetrievals = 3
+)
+
+// fillSearchPage retrieves candidates and selects a page from them, widening the
+// candidate window while the page is short and the candidate set was truncated.
+// The per-source cap discards candidates, so a document occupying the leading
+// ranks would otherwise shrink the page rather than merely lose its own
+// duplicates — a fixed window returns whatever survives the cap.
+//
+// Each round selects from a single Search call rather than accumulating across
+// rounds: a refresh may swap the index between retrievals, and a page assembled
+// from two index generations could carry a stale chunk beside its replacement.
+func fillSearchPage(searcher search.Searcher, query string, mode config.SearchResultMode, limit int) ([]search.SearchResult, error) {
+	window := limit * candidateMultiplier
+
+	for retrieval := 1; ; retrieval++ {
+		results, err := searcher.Search(query, window)
+		if err != nil {
+			return nil, err
+		}
+
+		selected := selectSearchResults(results, mode, limit)
+		// A short result set means the candidates are exhausted, so a wider
+		// window cannot add anything. Comparisons are >=, not ==, so a
+		// non-positive limit terminates on the first retrieval.
+		if len(selected) >= limit || len(results) < window || retrieval >= maxCandidateRetrievals {
+			return selected, nil
+		}
+
+		window *= candidateGrowthFactor
+	}
+}
 
 func selectSearchResults(results []search.SearchResult, mode config.SearchResultMode, limit int) []search.SearchResult {
 	if limit <= 0 {
