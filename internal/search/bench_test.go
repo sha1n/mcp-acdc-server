@@ -31,6 +31,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -78,10 +79,17 @@ func benchIndexKinds() []benchIndexKind {
 	}
 }
 
-// benchBatchSizes spans the shipped default up to one batch for the whole
-// corpus, which is the only way to reach a single root segment in memory.
+// benchBatchSizes spans a deliberately segment-heavy point, the shipped
+// default, a bucket an order of magnitude above it, and one batch for the
+// whole corpus — the only way to reach a single root segment in memory. The
+// segment-heavy point is fixed at 100 rather than derived from
+// defaultBatchSize: it exists to reproduce the many-segment comparison point
+// that motivated the shipped default in the first place, which only stays a
+// distinct measurement if it does not move in lockstep with that default.
+// dedupeInts tolerates the two coinciding, e.g. if the default is ever 100
+// again.
 func benchBatchSizes(corpusSize int) []int {
-	sizes := []int{defaultBatchSize, 1000, 10000}
+	sizes := dedupeInts([]int{100, defaultBatchSize, 10000})
 	kept := sizes[:0]
 	for _, size := range sizes {
 		if size < corpusSize {
@@ -89,6 +97,18 @@ func benchBatchSizes(corpusSize int) []int {
 		}
 	}
 	return append(kept, corpusSize)
+}
+
+// dedupeInts returns the sorted, duplicate-free contents of sizes.
+func dedupeInts(sizes []int) []int {
+	sort.Ints(sizes)
+	out := sizes[:0]
+	for i, size := range sizes {
+		if i == 0 || size != sizes[i-1] {
+			out = append(out, size)
+		}
+	}
+	return out
 }
 
 // benchCorpus loads every Markdown file under dir through ParseMarkdown ->

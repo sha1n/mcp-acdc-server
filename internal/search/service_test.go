@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/blevesearch/bleve/v2"
@@ -432,20 +433,27 @@ func TestService_BatchIndexFailures(t *testing.T) {
 		require.ErrorContains(t, batchIndex(context.Background(), mock, stream, defaultBatchSize), "failed to execute final batch index")
 	})
 	t.Run("reports full batch failure", func(t *testing.T) {
-		stream := make(chan domain.Chunk, 100)
-		for i := 0; i < 100; i++ {
+		// A batch size chosen independently of defaultBatchSize: this subtest
+		// exercises the mid-stream flush (a batch reaching batchSize while more
+		// chunks remain), not the constant's production value.
+		const batchSize = 2
+		stream := make(chan domain.Chunk, batchSize)
+		for i := 0; i < batchSize; i++ {
 			stream <- domain.Chunk{ID: fmt.Sprintf("chunk-%d", i), Content: "valid"}
 		}
 		close(stream)
 		mock := &mockBatchIndexer{realIndex: index, batchErr: errors.New("batch failed")}
-		require.ErrorContains(t, batchIndex(context.Background(), mock, stream, defaultBatchSize), "failed to execute batch index")
+		require.ErrorContains(t, batchIndex(context.Background(), mock, stream, batchSize), "failed to execute batch index")
 	})
 }
 
 func TestService_IndexRebuildsAndBatchesChunks(t *testing.T) {
 	service := NewService(testSettings())
 	defer service.Close()
-	chunks := make([]domain.Chunk, 150)
+	// Indexed through Service.Index, which takes no batch-size argument and
+	// always batches at defaultBatchSize: the corpus must exceed that constant
+	// for the rebuild below to flush more than one batch.
+	chunks := make([]domain.Chunk, defaultBatchSize+50)
 	for i := range chunks {
 		chunks[i] = domain.Chunk{ID: fmt.Sprintf("chunk-%d", i), SourceID: "source", SourceURI: "acdc://source", ChunkURI: fmt.Sprintf("acdc://source#%d", i), Content: "content"}
 	}
@@ -613,6 +621,125 @@ func TestSearch_MemoryAndDiskIndexesHonourTheSameMapping(t *testing.T) {
 			searchThrough(t, memIndex, chunks, "authentication"),
 			"search.in_memory changed the ranking, which it must never do")
 	})
+}
+
+// syntheticCorpusChunks builds n chunks whose content genuinely differs: each
+// carries a topic word repeated a varying number of times (so term frequency,
+// and therefore score, differs chunk to chunk), shared filler text, and a
+// unique marker so no two chunks are identical.
+func syntheticCorpusChunks(n int) []domain.Chunk {
+	topics := []string{"alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet"}
+	const filler = "the system processes requests through a configured pipeline that handles each case differently depending on context and load"
+
+	chunks := make([]domain.Chunk, n)
+	for i := 0; i < n; i++ {
+		topic := topics[i%len(topics)]
+		reps := 1 + i%7
+		content := strings.Repeat(topic+" ", reps) + filler + fmt.Sprintf(" marker%d", i)
+		chunks[i] = domain.Chunk{
+			ID:        fmt.Sprintf("chunk-%d", i),
+			SourceID:  fmt.Sprintf("source-%d", i),
+			SourceURI: fmt.Sprintf("acdc://source-%d", i),
+			ChunkURI:  fmt.Sprintf("acdc://source-%d#chunk", i),
+			Content:   content,
+		}
+	}
+	return chunks
+}
+
+// batchIndexedService indexes chunks into a fresh in-memory index at the
+// given batch size and attaches it to a Service the way searchThrough does,
+// but keeping the batch size a parameter rather than fixing it at
+// defaultBatchSize.
+func batchIndexedService(t *testing.T, chunks []domain.Chunk, batchSize int) *Service {
+	t.Helper()
+
+	idx, err := newMemoryIndex(buildMapping())
+	require.NoError(t, err)
+
+	stream := make(chan domain.Chunk, len(chunks))
+	for _, chunk := range chunks {
+		stream <- chunk
+	}
+	close(stream)
+	require.NoError(t, batchIndex(context.Background(), idx, stream, batchSize))
+
+	service := NewService(testSettings())
+	service.index = idx
+	t.Cleanup(service.Close)
+	return service
+}
+
+// serviceRootSegments counts the segments a query against service fans out
+// across. No settling is needed: these services index in memory, where scorch
+// runs neither the persister nor the merger, so the root snapshot is final the
+// moment batchIndex returns.
+func serviceRootSegments(t *testing.T, service *Service) int {
+	t.Helper()
+
+	idx, ok := service.index.(bleve.Index)
+	require.True(t, ok, "expected a bleve index")
+	return int(rootSegments(t, idx))
+}
+
+// TestSearch_RankingIsIndependentOfBatchSize pins the invariant defaultBatchSize
+// depends on: the batch size only bounds how many segments the in-memory index
+// ends up with, and must never influence which documents match or how they
+// score. The golden harness's corpus is 41 chunks, which forms a single batch
+// at any batch size of 100 or larger, so a golden-report diff across the
+// batch-size change is empty for a trivial reason — it never exercises more
+// than one segment. This test builds a synthetic corpus of 300 chunks with
+// varied content instead, so that the two sides genuinely differ in segment
+// count, and checks that they agree anyway.
+//
+// The segment counts are asserted rather than assumed. The whole test rests on
+// the two indexes being segmented differently, and a batch size that stopped
+// producing that difference would leave the test comparing two identical
+// indexes while still passing. The many-segment side is pinned at a literal
+// 100 so it stays a fixed comparison point; the other side uses
+// defaultBatchSize so this keeps covering the value actually shipped, which is
+// why its expected segment count is stated as a relation rather than a number.
+//
+// This asserts on Score, which the golden harness's rank-only convention
+// forbids elsewhere. That convention exists because absolute scores drift
+// across library upgrades and across corpus sizes, so pinning a score also
+// pins those incidental things. Here the two sides being compared share both
+// the library version and the corpus — the only thing that differs is segment
+// count — so a score difference could only come from segment count itself,
+// which is exactly what this test exists to rule out. This is the same
+// exception TestSearch_MemoryAndDiskIndexesHonourTheSameMapping takes, for
+// the same reason: the invariant under test is agreement between two
+// configurations of one index, not an absolute value.
+func TestSearch_RankingIsIndependentOfBatchSize(t *testing.T) {
+	const (
+		corpusSize      = 300
+		manySegmentSize = 100
+	)
+	chunks := syntheticCorpusChunks(corpusSize)
+
+	manySegments := batchIndexedService(t, chunks, manySegmentSize)
+	defaultBatched := batchIndexedService(t, chunks, defaultBatchSize)
+
+	manyCount := serviceRootSegments(t, manySegments)
+	defaultCount := serviceRootSegments(t, defaultBatched)
+	require.Equal(t, corpusSize/manySegmentSize, manyCount,
+		"batch size %d over %d chunks must yield one segment per batch", manySegmentSize, corpusSize)
+	require.Less(t, defaultCount, manyCount,
+		"batch size %d must segment the corpus differently from batch size %d, or this test compares two identically segmented indexes",
+		defaultBatchSize, manySegmentSize)
+
+	for _, query := range []string{"alpha", "delta", "hotel", "juliet", "marker137"} {
+		t.Run(query, func(t *testing.T) {
+			manyResults, err := manySegments.Search(query, 50)
+			require.NoError(t, err)
+			defaultResults, err := defaultBatched.Search(query, 50)
+			require.NoError(t, err)
+			require.NotEmpty(t, manyResults, "query %q retrieved nothing", query)
+
+			require.Equal(t, rankedScores(defaultResults), rankedScores(manyResults),
+				"batch size changed ranking or score for query %q", query)
+		})
+	}
 }
 
 // TestSearch_HighlightsMatchedContent covers the fragment Search returns as a
