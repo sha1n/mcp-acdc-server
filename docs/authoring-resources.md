@@ -128,7 +128,9 @@ A section that exceeds a soft limit of **4,000 Unicode code points** is further 
 
 ### Result Diversity
 
-To keep results varied across documents, the `search` tool over-fetches candidate chunks internally (5x the configured result limit) and then applies a per-document cap before returning up to the configured limit: `references` mode keeps at most one chunk per source document; `content` mode keeps at most two.
+To keep results varied across documents, the `search` tool over-fetches candidate chunks internally and then applies a per-document cap before returning up to the configured limit: `references` mode keeps at most one chunk per source document; `content` mode keeps at most two.
+
+The cap discards candidates, so the over-fetch adapts rather than being fixed. The candidate window starts at 5x the result limit and widens 4x for up to two further retrievals (20x, then 80x) while the page is still short and candidates remain. A document with many matching sections therefore costs the page nothing: its extra chunks are replaced by other documents rather than leaving gaps. A page can still come back short — when the corpus genuinely holds fewer matching documents than the limit, or when one document's matching sections outnumber the widest candidate window.
 
 ### Fragment Reads
 
