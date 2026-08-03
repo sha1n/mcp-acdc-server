@@ -145,9 +145,14 @@ func (s *Service) newIndex() (searchIndex, string, error) {
 
 // defaultBatchSize is how many chunks Service.Index accumulates before
 // introducing a segment. In memory scorch runs no merger goroutine
-// (scorch.go gates both background loops on a non-empty path), so this
-// also fixes the number of segments a query fans out across.
-const defaultBatchSize = 100
+// (scorch.go gates both background loops on a non-empty path), so this also
+// fixes the number of segments a query fans out across — which is why it is
+// this large rather than a round hundred: query latency scales with segment
+// count, and a handful of segments performs indistinguishably from a single
+// one, so the batch size only needs to keep the segment count small, not
+// minimize it. Raising it further buys little further query latency for a
+// steep rise in build-time heap, since a batch is held in memory whole.
+const defaultBatchSize = 1000
 
 func batchIndex(ctx context.Context, index BatchIndexer, chunks <-chan domain.Chunk, batchSize int) error {
 	batch := index.NewBatch()
