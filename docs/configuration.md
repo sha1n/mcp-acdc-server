@@ -100,6 +100,21 @@ that collide here already share their first four characters. Bleve's automatic m
 raises the tolerance to two characters for any term longer than five, which widens exactly the
 problem described above.
 
+### How much of a query has to match
+
+A document is retrieved when it matches **any one** term of the query. Ordering the rest is left to
+scoring: matching more terms of the query generally ranks a document higher, though a single rare
+term can still outscore several common ones. A search for `helm chart readiness` finds the Helm
+section on two of its terms and the readiness section on one, and ranks them in that order.
+
+Requiring *every* term was measured and rejected. Bleve applies that requirement within a single
+field rather than across the document, and two of the three fields that discriminate between
+documents without frontmatter — the heading path and the path labels — are a handful of words each.
+They can almost never hold a whole query, so requiring every term silently removes those two from
+the ranking and leaves the document body as the only field that can still match. Measured across
+21 queries on two corpora, that changed the leading result on eight and improved none; on a small
+documentation set it made ordinary multi-word queries return nothing at all.
+
 ### Where the index lives
 
 The search index is held in memory by default. It is rebuilt from the content
@@ -108,13 +123,14 @@ persisting it to disk buys nothing back.
 
 Pass `--search-in-memory=false`, or set `ACDC_MCP_SEARCH_IN_MEMORY=false`, to
 build it on disk instead, under a temporary directory. That is worth doing for
-a large curated catalog. The in-memory index builds about twice as fast at
-every size measured and answers queries faster up to at least a thousand
-chunks, but by roughly fifteen thousand the on-disk index has overtaken it and
-answers about twice as fast — and it holds its data in memory-mapped segments
-the operating system can reclaim under pressure, where the in-memory index
-costs a couple of hundred megabytes of Go heap at that size. Exactly where the
-two cross over has not been measured, and neither has the reason.
+a large curated catalog. The in-memory index builds roughly two to three times
+as fast at every size measured and answers queries faster up to at least a
+thousand chunks, but by roughly fifteen thousand the on-disk index has
+overtaken it and answers roughly 1.6–1.75× faster (about 9 ms against 16 ms at
+that size) — and it holds its data in memory-mapped segments the operating
+system can reclaim under pressure, where the in-memory index costs a bit over
+a hundred megabytes of Go heap at that size. Exactly where the two cross over
+has not been measured, and neither has the reason.
 
 Size a deployment for twice that figure. A refresh builds the replacement
 index in full before releasing the previous one, so a content change briefly
