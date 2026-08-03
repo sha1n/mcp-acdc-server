@@ -52,13 +52,11 @@ func NewSearchToolHandler(searchService search.Searcher, revalidator Revalidator
 		// Args are already validated and unmarshaled by SDK via jsonschema tags
 		slog.Info("Search request", "query", args.Query)
 
-		results, err := searchService.Search(args.Query, settings.MaxResults*candidateMultiplier)
+		selected, err := fillSearchPage(searchService, args.Query, settings.ResultMode, settings.MaxResults)
 		if err != nil {
 			slog.Error("Search failed", "query", args.Query, "error", err)
 			return nil, nil, err
 		}
-
-		selected := selectSearchResults(results, settings.ResultMode, settings.MaxResults)
 
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
