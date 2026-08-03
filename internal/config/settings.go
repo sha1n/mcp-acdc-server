@@ -107,6 +107,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	v.SetDefault("search.path_boost", DefaultPathBoost)
 	v.SetDefault("search.content_boost", DefaultContentBoost)
 	v.SetDefault("search.result_mode", SearchResultModeReferences)
+	v.SetDefault("search.in_memory", true)
 	v.SetDefault("cross_ref", false)
 	v.SetDefault("auth.type", AuthTypeNone)
 

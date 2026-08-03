@@ -16,6 +16,7 @@ func TestLoadSettings_Defaults(t *testing.T) {
 	_ = os.Unsetenv("ACDC_MCP_PORT")
 	_ = os.Unsetenv("ACDC_MCP_AUTH_TYPE")
 	_ = os.Unsetenv("ACDC_MCP_URI_SCHEME")
+	_ = os.Unsetenv("ACDC_MCP_SEARCH_IN_MEMORY")
 
 	settings, err := LoadSettings()
 	if err != nil {
@@ -42,6 +43,9 @@ func TestLoadSettings_Defaults(t *testing.T) {
 	}
 	if settings.CrossRef != false {
 		t.Errorf("Expected default cross_ref false, got %v", settings.CrossRef)
+	}
+	if !settings.Search.InMemory {
+		t.Error("Expected search.in_memory to default to true")
 	}
 }
 
