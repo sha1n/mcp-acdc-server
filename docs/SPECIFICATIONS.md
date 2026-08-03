@@ -205,9 +205,9 @@ A check is debounced to at most once every 2 seconds — a burst of requests ins
 
 This applies identically to both discovery modes (legacy `mcp-resources/` and configured indexing) and to both transports — there is no way to scope refresh to one or disable it. Every error on this path (a failed walk, discovery, parse, or index rebuild) is logged and swallowed: the previously published catalog and index stay in place and the next debounce interval retries from scratch. This is deliberately different from the fatal startup errors listed elsewhere on this page — a malformed document must never take down a server that has already been serving successfully.
 
-A content-change rebuild holds the search index's write lock for its duration, so a concurrent `search` call briefly blocks until the rebuild finishes. For the zero-config, locally-indexed case this is on the order of milliseconds; for a large curated corpus served over SSE to many concurrent clients, it is a real (if brief) pause on every edit, with no configuration to opt out of it.
+A content-change rebuild holds the search index's write lock for its duration, so a concurrent `search` call briefly blocks until the rebuild finishes. For the zero-config, locally-indexed case this is on the order of milliseconds; for a large curated corpus served over SSE to many concurrent clients, it is a real (if brief) pause on every edit, with no configuration to opt out of it. Because the replacement index is built before the previous one is released, a rebuild also holds two complete indexes at once — under the default in-memory mode, that is twice the index's memory for its duration.
 
-Persistence across restarts is still not part of this release: nothing is written to disk, and the catalog/index are rebuilt from scratch every time the process starts, independent of the mid-session refresh described here.
+Persistence across restarts is still not part of this release: the catalog and index are rebuilt from scratch every time the process starts, independent of the mid-session refresh described here. The index is held in memory by default; under `ACDC_MCP_SEARCH_IN_MEMORY=false` it is written to a temporary directory that is discarded on shutdown, so neither mode survives a restart.
 
 ---
 

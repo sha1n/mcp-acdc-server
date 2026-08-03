@@ -53,9 +53,7 @@ type goldenQuery struct {
 	finding string
 }
 
-// goldenService indexes the given corpora through the production discovery and
-// chunking path, so the harness measures the scorer against the documents it
-// actually sees rather than against hand-built chunks.
+// goldenService indexes the given corpora with the harness's default settings.
 func goldenService(t *testing.T, corpora ...string) *Service {
 	t.Helper()
 	return goldenServiceWith(t, testSettings(), corpora...)
