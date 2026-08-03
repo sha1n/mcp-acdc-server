@@ -428,12 +428,16 @@ func hasVolumePrefix(pattern string) bool {
 	return len(pattern) >= 2 && pattern[1] == ':' && ((pattern[0] >= 'a' && pattern[0] <= 'z') || (pattern[0] >= 'A' && pattern[0] <= 'Z'))
 }
 
+// canonicalPath absolutizes before resolving symlinks, so that a relative input
+// resolves the working-directory prefix too. The reverse order leaves a relative
+// content root unresolved while every walked file below it -- reached as an
+// absolute path -- resolves, and containment then rejects the whole selection.
 func canonicalPath(filePath string) (string, error) {
-	resolved, err := filepath.EvalSymlinks(filePath)
+	absolute, err := filepath.Abs(filePath)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Abs(resolved)
+	return filepath.EvalSymlinks(absolute)
 }
 
 func withinRoot(root, candidate string) bool {

@@ -120,6 +120,43 @@ func TestDiscover_ConfiguredSkipsSymlinksAndPreservesContainment(t *testing.T) {
 	require.Equal(t, []string{"acdc://docs/inside"}, sourceURIs(result.Sources))
 }
 
+func TestDiscover_RelativeContentDirUnderSymlinkedWorkingDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks requires additional permissions on Windows")
+	}
+	physical := symlinkFreeTempDir(t)
+	writeFile(t, physical, "docs/guide.md", "# Guide\n\nUseful guide.\n")
+	writeFile(t, physical, "content/docs/guide.md", "# Guide\n\nUseful guide.\n")
+
+	// The working directory must reach the content through a symlink. macOS supplies
+	// one for free under /tmp and /var and Linux does not, so the link is created here
+	// and the temporary directories are resolved first, leaving this the only symlink
+	// in play on either platform.
+	link := filepath.Join(symlinkFreeTempDir(t), "link")
+	require.NoError(t, os.Symlink(physical, link))
+	t.Chdir(link)
+	workingDir, err := os.Getwd()
+	require.NoError(t, err)
+	require.Equal(t, link, workingDir, "the working directory must keep the symlink unresolved for this case to gate anything")
+
+	tests := []struct {
+		name       string
+		contentDir string
+	}{
+		{name: "nested directory", contentDir: "./content"},
+		{name: "working directory itself", contentDir: "."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := Discover(context.Background(), content.NewContentProvider(tt.contentDir), &domain.IndexMetadata{
+				Include: []string{"docs/**/*.md"},
+			}, "acdc")
+			require.NoError(t, err)
+			require.Equal(t, []string{"acdc://docs/guide"}, sourceURIs(result.Sources))
+		})
+	}
+}
+
 func TestDiscover_LegacySkipsInvalidFilesAndBuildsChunks(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "mcp-resources/valid.md", "---\nname: Valid\ndescription: Valid description\n---\n# Valid\n\nBody.\n")
@@ -526,6 +563,13 @@ func recordingDiscoveryOps(descended *[]string) discoveryOps {
 		})
 	}
 	return ops
+}
+
+func symlinkFreeTempDir(t *testing.T) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	return resolved
 }
 
 func writeFile(t *testing.T, root, name, body string) string {
