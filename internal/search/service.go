@@ -185,7 +185,9 @@ func buildMapping() mapping.IndexMapping {
 
 	searchableText := bleve.NewTextFieldMapping()
 	searchableText.Store = true
-	searchableText.IncludeInAll = true
+	// Nothing queries bleve's composite _all field: every clause Search builds
+	// names an explicit field. Composing into it would index every token twice.
+	searchableText.IncludeInAll = false
 	searchableText.Analyzer = "en"
 
 	lineNumber := bleve.NewNumericFieldMapping()
@@ -193,6 +195,11 @@ func buildMapping() mapping.IndexMapping {
 	lineNumber.IncludeInAll = false
 
 	chunkMapping := bleve.NewDocumentMapping()
+	// Index exactly the fields declared below. Dynamic mapping would also index
+	// the Chunk fields with no entry here — section_fragment, fragment, part,
+	// part_count — under the standard analyzer, where no query reads them and
+	// their tokens leak into _all past the IncludeInAll settings above.
+	chunkMapping.Dynamic = false
 	for _, field := range []string{
 		domain.FieldChunkID,
 		domain.FieldSourceID,
