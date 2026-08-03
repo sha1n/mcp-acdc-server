@@ -79,6 +79,19 @@ func goldenServiceWith(t *testing.T, settings config.SearchSettings, corpora ...
 	return service
 }
 
+// goldenServiceFuzzy indexes a corpus and then overrides the edit distance
+// applied to every field, so the harness can measure the ranking model at
+// settings other than the shipped one. Fuzziness is a query-time property, so
+// overriding it after indexing is safe; call it before any Search.
+//
+//nolint:unused // seam for #85's fuzziness-policy measurements, adopted by a later commit.
+func goldenServiceFuzzy(t *testing.T, fuzziness int, corpora ...string) *Service {
+	t.Helper()
+	service := goldenService(t, corpora...)
+	service.fuzziness = func(string) int { return fuzziness }
+	return service
+}
+
 // rankOf returns the best 1-based rank at which uri appears, or 0 when absent.
 func rankOf(results []SearchResult, uri string) int {
 	for rank, result := range results {
@@ -410,6 +423,49 @@ func TestGolden_HeadingBoostInfluenceIsBounded(t *testing.T) {
 			reportRanking(t, query, results)
 			require.Equal(t, tt.wantHeading, rankOf(results, headingOnly), "heading-only document at heading_boost %g", tt.boost)
 			require.Equal(t, tt.wantBody, rankOf(results, bodyOnly), "body-only document at heading_boost %g", tt.boost)
+		})
+	}
+}
+
+// TestGolden_FuzzinessPollutesThroughPathLabels measures the cost side of
+// edit-distance matching, isolated to the field that causes it. The corpus has
+// exactly one document about readiness probes. The README has no bearing on
+// the query, but its path label "readme" stems to a term one edit from the
+// query's "readi", so fuzzing path_labels retrieves it on a term it does not
+// contain.
+//
+// Expectations are measured, not desired. A change means the ranking model
+// moved.
+func TestGolden_FuzzinessPollutesThroughPathLabels(t *testing.T) {
+	const (
+		query   = "readiness"
+		correct = "acdc://docs/deployment/kubernetes#readiness"
+		junk    = "acdc://README"
+	)
+
+	tests := []struct {
+		name string
+		// fuzziness resolves the edit distance per field, mirroring
+		// Service.fuzziness.
+		fuzziness func(string) int
+		// wantJunk is the README's best rank, or 0 when it is absent.
+		wantJunk int
+	}{
+		{name: "every field", fuzziness: func(string) int { return 1 }, wantJunk: 2},
+		{name: "no field", fuzziness: func(string) int { return 0 }, wantJunk: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := goldenService(t, zeroConfigCorpus)
+			service.fuzziness = tt.fuzziness
+
+			results, err := service.Search(query, goldenCandidates)
+			require.NoError(t, err)
+			reportRanking(t, query, results)
+
+			require.Equal(t, 1, rankOf(results, correct), "the page that answers the query must lead")
+			require.Equal(t, tt.wantJunk, rankOf(results, junk), "README rank with fuzziness %q", tt.name)
 		})
 	}
 }

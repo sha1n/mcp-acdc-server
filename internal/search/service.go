@@ -60,8 +60,12 @@ type searchIndex interface {
 type Service struct {
 	mu       sync.RWMutex
 	settings config.SearchSettings
-	index    searchIndex
-	indexDir string
+	// fuzziness resolves the edit distance applied to a field's match clause.
+	// A field rather than a direct call so tests can measure the ranking model
+	// at other settings without exporting anything.
+	fuzziness func(field string) int
+	index     searchIndex
+	indexDir  string
 }
 
 // Ensure Service implements Searcher
@@ -70,7 +74,8 @@ var _ Searcher = (*Service)(nil)
 // NewService creates a new search service
 func NewService(settings config.SearchSettings) *Service {
 	return &Service{
-		settings: settings,
+		settings:  settings,
+		fuzziness: fieldFuzziness,
 	}
 }
 
@@ -291,17 +296,22 @@ func (s *Service) boostedFieldQueries(queryStr string) []query.Query {
 		if f.boost <= 0 {
 			continue
 		}
-		queries = append(queries, fieldQuery(queryStr, f.name, f.boost))
+		queries = append(queries, fieldQuery(queryStr, f.name, f.boost, s.fuzziness(f.name)))
 	}
 	return queries
 }
 
-func fieldQuery(queryStr, field string, boost float64) *query.MatchQuery {
+func fieldQuery(queryStr, field string, boost float64, fuzziness int) *query.MatchQuery {
 	fieldQuery := bleve.NewMatchQuery(queryStr)
 	fieldQuery.SetField(field)
-	fieldQuery.SetFuzziness(1)
+	fieldQuery.SetFuzziness(fuzziness)
 	fieldQuery.SetBoost(boost)
 	return fieldQuery
+}
+
+// fieldFuzziness returns the edit distance applied to a field's match clause.
+func fieldFuzziness(string) int {
+	return 1
 }
 
 func fieldString(fields map[string]interface{}, field string) string {
