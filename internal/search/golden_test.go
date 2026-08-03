@@ -83,8 +83,6 @@ func goldenServiceWith(t *testing.T, settings config.SearchSettings, corpora ...
 // applied to every field, so the harness can measure the ranking model at
 // settings other than the shipped one. Fuzziness is a query-time property, so
 // overriding it after indexing is safe; call it before any Search.
-//
-//nolint:unused // seam for #85's fuzziness-policy measurements, adopted by a later commit.
 func goldenServiceFuzzy(t *testing.T, fuzziness int, corpora ...string) *Service {
 	t.Helper()
 	service := goldenService(t, corpora...)
@@ -466,6 +464,97 @@ func TestGolden_FuzzinessPollutesThroughPathLabels(t *testing.T) {
 
 			require.Equal(t, 1, rankOf(results, correct), "the page that answers the query must lead")
 			require.Equal(t, tt.wantJunk, rankOf(results, junk), "README rank with fuzziness %q", tt.name)
+		})
+	}
+}
+
+// TestGolden_FuzzinessRecallProbes measures the benefit side of edit-distance
+// matching: what a mistyped query retrieves with it and without it.
+//
+// A probe is only meaningful if it stems to a term within edit distance 1 of
+// its target — the analyzer runs before the fuzzy searcher, and stemming a
+// misspelling is not predictable. Verify any new probe with an analyzer dump
+// before adding it; a probe that misses measures nothing while still passing.
+func TestGolden_FuzzinessRecallProbes(t *testing.T) {
+	tests := []struct {
+		name  string
+		probe string
+		// wantFuzzy is the chunk URI required at rank 1 with edit distance 1 on
+		// every field, or "" when the probe must retrieve nothing at all.
+		wantFuzzy string
+		// wantExact is the same with edit-distance matching off everywhere.
+		wantExact string
+		rationale string
+	}{
+		{
+			name:      "a dropped character is rescued",
+			probe:     "authentcation",
+			wantFuzzy: "acdc://docs/authentication#authentication",
+			wantExact: "",
+			rationale: "authentcation stems to authentc, one edit from authentication's authent.",
+		},
+		{
+			name:      "a dropped character mid-word is rescued",
+			probe:     "compation",
+			wantFuzzy: "acdc://docs/internals/indexing#segment-compaction",
+			wantExact: "",
+			rationale: "compation stems to compat, one edit from compaction's compact.",
+		},
+		{
+			name:      "a dropped character in a heading term is rescued",
+			probe:     "cheksums",
+			wantFuzzy: "acdc://docs/internals/indexing#checksums",
+			wantExact: "",
+			rationale: "cheksums stems to cheksum, one edit from checksums' checksum.",
+		},
+		{
+			name:      "the stemmer alone handles a plural near-miss",
+			probe:     "kubernets",
+			wantFuzzy: "acdc://docs/deployment/kubernetes#running-ledger-on-kubernetes",
+			wantExact: "acdc://docs/deployment/kubernetes#running-ledger-on-kubernetes",
+			rationale: "Both kubernets and kubernetes stem to kubernet, so this costs no fuzziness. Control: without it the table reads as though fuzziness were the only thing rescuing near-misses.",
+		},
+		{
+			name:      "a two-edit typo is beyond rescue",
+			probe:     "deploymnet",
+			wantFuzzy: "",
+			wantExact: "",
+			rationale: "deploymnet does not stem at all, leaving it four edits from deployment's deploy. Control: edit distance 1 is a narrow safety net, not typo correction.",
+		},
+		{
+			name:      "a British spelling is beyond rescue",
+			probe:     "authorisation",
+			wantFuzzy: "",
+			wantExact: "",
+			rationale: "The stemmer takes authorization to author but authorisation only to authoris — two edits apart. Control: fuzziness is not a spelling-variant mechanism.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Log(tt.rationale)
+			for _, setting := range []struct {
+				label     string
+				fuzziness int
+				want      string
+			}{
+				{"fuzzy", 1, tt.wantFuzzy},
+				{"exact", 0, tt.wantExact},
+			} {
+				t.Run(setting.label, func(t *testing.T) {
+					service := goldenServiceFuzzy(t, setting.fuzziness, zeroConfigCorpus)
+
+					results, err := service.Search(tt.probe, goldenCandidates)
+					require.NoError(t, err)
+					reportRanking(t, tt.probe, results)
+
+					if setting.want == "" {
+						require.Empty(t, results, "%s\n%q must retrieve nothing at fuzziness %d", tt.rationale, tt.probe, setting.fuzziness)
+						return
+					}
+					require.Equal(t, 1, rankOf(results, setting.want), "%s\n%q at fuzziness %d", tt.rationale, tt.probe, setting.fuzziness)
+				})
+			}
 		})
 	}
 }
