@@ -98,7 +98,7 @@ func (s *Service) Index(ctx context.Context, chunks <-chan domain.Chunk) error {
 	if err != nil {
 		return err
 	}
-	if err := batchIndex(ctx, index, chunks); err != nil {
+	if err := batchIndex(ctx, index, chunks, defaultBatchSize); err != nil {
 		_ = index.Close()
 		if indexDir != "" {
 			_ = removeAll(indexDir)
@@ -143,9 +143,14 @@ func (s *Service) newIndex() (searchIndex, string, error) {
 	return index, indexDir, nil
 }
 
-func batchIndex(ctx context.Context, index BatchIndexer, chunks <-chan domain.Chunk) error {
+// defaultBatchSize is how many chunks Service.Index accumulates before
+// introducing a segment. In memory scorch runs no merger goroutine
+// (scorch.go gates both background loops on a non-empty path), so this
+// also fixes the number of segments a query fans out across.
+const defaultBatchSize = 100
+
+func batchIndex(ctx context.Context, index BatchIndexer, chunks <-chan domain.Chunk, batchSize int) error {
 	batch := index.NewBatch()
-	batchSize := 100
 	count := 0
 
 	for {

@@ -422,14 +422,14 @@ func TestService_BatchIndexFailures(t *testing.T) {
 		stream := make(chan domain.Chunk, 1)
 		stream <- domain.Chunk{Content: "invalid"}
 		close(stream)
-		require.ErrorContains(t, batchIndex(context.Background(), index, stream), "failed to add chunk to batch")
+		require.ErrorContains(t, batchIndex(context.Background(), index, stream, defaultBatchSize), "failed to add chunk to batch")
 	})
 	t.Run("reports final batch failure", func(t *testing.T) {
 		stream := make(chan domain.Chunk, 1)
 		stream <- domain.Chunk{ID: "chunk", Content: "valid"}
 		close(stream)
 		mock := &mockBatchIndexer{realIndex: index, batchErr: errors.New("batch failed")}
-		require.ErrorContains(t, batchIndex(context.Background(), mock, stream), "failed to execute final batch index")
+		require.ErrorContains(t, batchIndex(context.Background(), mock, stream, defaultBatchSize), "failed to execute final batch index")
 	})
 	t.Run("reports full batch failure", func(t *testing.T) {
 		stream := make(chan domain.Chunk, 100)
@@ -438,7 +438,7 @@ func TestService_BatchIndexFailures(t *testing.T) {
 		}
 		close(stream)
 		mock := &mockBatchIndexer{realIndex: index, batchErr: errors.New("batch failed")}
-		require.ErrorContains(t, batchIndex(context.Background(), mock, stream), "failed to execute batch index")
+		require.ErrorContains(t, batchIndex(context.Background(), mock, stream, defaultBatchSize), "failed to execute batch index")
 	})
 }
 
@@ -552,7 +552,7 @@ func searchThrough(t *testing.T, idx searchIndex, chunks []domain.Chunk, query s
 		stream <- chunk
 	}
 	close(stream)
-	require.NoError(t, batchIndex(context.Background(), idx, stream))
+	require.NoError(t, batchIndex(context.Background(), idx, stream, defaultBatchSize))
 
 	service := NewService(testSettings())
 	service.index = idx
