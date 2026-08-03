@@ -44,6 +44,7 @@ make build-docker
 | `make build-docker` | Build Docker image |
 | `make test` | Run all tests |
 | `make coverage` | Run tests with coverage report |
+| `make bench` | Run the search measurement benchmarks |
 | `make lint` | Run linters (go vet, golangci-lint, format check) |
 | `make format` | Format source files |
 | `make clean` | Remove build artifacts |
@@ -57,6 +58,37 @@ make test
 # Run tests with coverage
 make coverage
 ```
+
+## Search Benchmarks
+
+`make bench` reports index build time, query latency, segment count and Go
+heap for the in-memory and on-disk indexes at several batch sizes. It is a
+measurement instrument, not a regression gate — it asserts nothing about
+timings or sizes.
+
+The default corpus (`internal/search/testdata/corpus`) is far too small to
+compare anything: every batch size collapses into a single batch, so both
+index kinds report one segment. Point it at a real corpus instead, and
+optionally repeat that corpus to reach a larger scale:
+
+```bash
+make bench BENCHFLAGS="-corpus=$HOME/docs -corpus-dup=2"
+```
+
+`BENCHFLAGS` is forwarded to the test binary. When invoking `go test`
+directly, the package path must come **before** these flags:
+
+```bash
+# Works
+go test ./internal/search/ -run '^$' -bench=. -corpus-dup=2
+
+# Fails with a misleading "no Go files in ."
+go test -corpus-dup=2 ./internal/search/
+```
+
+`-corpus` and `-corpus-dup` are registered by the test binary rather than by
+`go test`, so `go test` consumes the unknown flag itself and never sees the
+package path that follows it.
 
 ## Code Style
 
