@@ -240,6 +240,15 @@ func ValidateSettings(s *Settings) error {
 	return nil
 }
 
+// maxBoost is a conservative sanity cap on search boosts, not a guarantee
+// that scoring stays sound below it. Bleve's term weight squares boost × idf,
+// not the boost alone, so a value well under this cap can already collapse
+// every score to zero on a corpus whose idf is large enough. The true
+// overflow threshold depends on corpus statistics and clause count, neither
+// known at configuration-validation time, so this cap only rejects
+// magnitudes no meaningful ranking could ever use.
+var maxBoost = math.Sqrt(math.MaxFloat64)
+
 // validateBoosts rejects boost values Bleve cannot score meaningfully. An
 // individual zero is legal and disables that field's clause; all five at zero
 // is not, because the resulting clauseless disjunction answers every query
@@ -260,12 +269,15 @@ func validateBoosts(s SearchSettings) error {
 		if math.IsNaN(boost.value) || math.IsInf(boost.value, 0) || boost.value < 0 {
 			return fmt.Errorf("%s must be a finite, non-negative number, got: %v", boost.key, boost.value)
 		}
+		if boost.value > maxBoost {
+			return fmt.Errorf("%s must not exceed %v, a sanity cap on search boosts, got: %v", boost.key, maxBoost, boost.value)
+		}
 		if boost.value > 0 {
 			anyPositive = true
 		}
 	}
 	if !anyPositive {
-		return errors.New("at least one search boost must be positive; all five at zero disables search entirely")
+		return errors.New("at least one of search.keywords_boost, search.heading_boost, search.title_boost, search.path_boost, or search.content_boost must be positive; all five at zero disables search entirely")
 	}
 	return nil
 }

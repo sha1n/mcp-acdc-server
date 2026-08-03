@@ -62,9 +62,14 @@ zero-config mode, `--search-heading-boost`, `--search-path-boost`, and `--search
 are the three boosts that discriminate between documents; `--search-keywords-boost` and
 `--search-title-boost` have nothing to act on until a document supplies frontmatter.
 
-Negative, `NaN`, infinite and unparseable boost values are rejected at startup. Setting *all
-five* boosts to `0` is also rejected: the query would carry no clauses at all, so every search
-would return nothing while reporting success. Zeroing any subset of the five remains supported.
+Negative, `NaN`, infinite and unparseable boost values are rejected at startup, as are values
+above roughly `1.34e154`. That cap is a conservative sanity check, not a guarantee that scoring
+stays sound below it: Bleve squares boost × idf, not the boost alone, so on a real corpus a
+boost far below the cap can already collapse every score to zero. The cap only rejects
+magnitudes no meaningful ranking could use; the boundary itself is accepted, and only values
+strictly above it are rejected. Setting *all five* boosts to `0` is also rejected: the query
+would carry no clauses at all, so every search would return nothing while reporting success.
+Zeroing any subset of the five remains supported.
 
 ## Authentication Settings
 
@@ -127,6 +132,8 @@ The server validates configuration at startup and will fail with a clear error i
 - `--uri-scheme` is empty or doesn't match RFC 3986 (must start with a letter, then letters/digits/`+`/`-`/`.`)
 - `--search-result-mode` is set to anything other than `references` or `content`
 - every search boost is `0`, which would leave the query with no clauses and silently return no results
+- a search boost exceeds `1.34e154`, a conservative sanity cap beyond which no meaningful ranking
+  could use the value (smaller boosts can still degenerate scoring — see above)
 - `--auth-type=basic` is set without username/password
 - `--auth-type=apikey` is set without API keys
 - `--auth-type=none` is set with auth credentials (conflicting intent)
