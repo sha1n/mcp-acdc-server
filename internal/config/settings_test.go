@@ -918,6 +918,65 @@ func TestValidateSettings_RejectsAllZeroBoosts(t *testing.T) {
 	require.Contains(t, err.Error(), "at least one")
 }
 
+// Above sqrt(MaxFloat64) the squared weight overflows to +Inf inside bleve's
+// sumOfSquaredWeights, queryNorm collapses to zero, every score becomes
+// exactly zero, and ranking degenerates to the sort tiebreak. Such a value is
+// finite and non-negative, so the pre-existing checks let it through.
+func TestValidateSettings_RejectsBoostsBleveCannotSquare(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*SearchSettings)
+		wantErr string
+	}{
+		{"overflowing keywords", func(s *SearchSettings) { s.KeywordsBoost = 1e200 }, "search.keywords_boost"},
+		{"overflowing heading", func(s *SearchSettings) { s.HeadingBoost = 1e200 }, "search.heading_boost"},
+		{"largest float content", func(s *SearchSettings) { s.ContentBoost = math.MaxFloat64 }, "search.content_boost"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			search := defaultSearchSettings()
+			tt.mutate(&search)
+			s := &Settings{Transport: "stdio", Scheme: "acdc", Search: search, Auth: AuthSettings{Type: AuthTypeNone}}
+
+			err := ValidateSettings(s)
+
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+// The bound exists to stop overflow, not to cap how far an operator may push a
+// field. A large value bleve can still square stays legal.
+func TestValidateSettings_AcceptsLargeButSquarableBoosts(t *testing.T) {
+	search := defaultSearchSettings()
+	search.HeadingBoost = 1e150
+	s := &Settings{
+		Transport: "stdio",
+		Scheme:    "acdc",
+		Search:    search,
+		Auth:      AuthSettings{Type: AuthTypeNone},
+	}
+
+	require.NoError(t, ValidateSettings(s))
+}
+
+// The check is strict (>), so the cap itself is a legal boost value. Only
+// values strictly greater than maxBoost are rejected.
+func TestValidateSettings_AcceptsBoostAtExactCap(t *testing.T) {
+	search := defaultSearchSettings()
+	search.HeadingBoost = maxBoost
+	s := &Settings{
+		Transport: "stdio",
+		Scheme:    "acdc",
+		Search:    search,
+		Auth:      AuthSettings{Type: AuthTypeNone},
+	}
+
+	require.NoError(t, ValidateSettings(s))
+}
+
 // A malformed boost fails to decode rather than coercing to zero, which would
 // silently disable the field. Pinned because validateBoosts cannot catch a
 // value that has already become a legal 0.
