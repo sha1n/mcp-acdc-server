@@ -310,7 +310,19 @@ func fieldQuery(queryStr, field string, boost float64, fuzziness int) *query.Mat
 }
 
 // fieldFuzziness returns the edit distance applied to a field's match clause.
-func fieldFuzziness(string) int {
+//
+// path_labels is matched exactly. It holds a small vocabulary of short path
+// segments, and unlike every other field its terms are duplicated nowhere
+// else — heading text is also indexed as content, but a path label comes from
+// the file path alone. Nearly every segment therefore has a neighbour within
+// one edit, and fuzzing the field retrieves documents on terms they do not
+// contain: the label "readme" stems to one edit from a query for "readiness",
+// which filled ranks 2 through 5 of the result page with README chunks that
+// never mention it.
+func fieldFuzziness(field string) int {
+	if field == domain.FieldPathLabels {
+		return 0
+	}
 	return 1
 }
 

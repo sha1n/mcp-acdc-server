@@ -26,6 +26,12 @@ turns a measurement into a tautology that still passes:
 - `curated/docs/observability.md` declares `dashboards` as a keyword and never
   writes the word; `corpus/docs/troubleshooting.md` mentions one dashboard in
   passing. The pair isolates `keywords` against `content`.
+- `README.md`'s path label `readme` must stay within one edit distance of the
+  query `readiness`; the golden cases that measure fuzzy matching through
+  `path_labels` depend on that stem overlap.
+- No corpus document may match the negative-control probes `deploymnet` or
+  `authorisation`; the golden cases that pin what edit-distance-1 matching
+  does *not* rescue depend on both terms coming back empty.
 
 Adding documents is safe. Removing or renaming one of the above needs the
 matching golden case updated in the same change.

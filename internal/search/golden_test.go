@@ -79,17 +79,6 @@ func goldenServiceWith(t *testing.T, settings config.SearchSettings, corpora ...
 	return service
 }
 
-// goldenServiceFuzzy indexes a corpus and then overrides the edit distance
-// applied to every field, so the harness can measure the ranking model at
-// settings other than the shipped one. Fuzziness is a query-time property, so
-// overriding it after indexing is safe; call it before any Search.
-func goldenServiceFuzzy(t *testing.T, fuzziness int, corpora ...string) *Service {
-	t.Helper()
-	service := goldenService(t, corpora...)
-	service.fuzziness = func(string) int { return fuzziness }
-	return service
-}
-
 // rankOf returns the best 1-based rank at which uri appears, or 0 when absent.
 func rankOf(results []SearchResult, uri string) int {
 	for rank, result := range results {
@@ -213,15 +202,15 @@ func TestGolden_ZeroConfigRanking(t *testing.T) {
 			absent:    []string{"acdc://docs/deployment/docker"},
 		},
 		{
-			name:    "fuzziness admits an unrelated document",
+			name:    "path labels no longer admit an unrelated document",
 			corpora: corpus,
 			query:   "readiness",
 			rationale: "README has no bearing on readiness probes, and the corpus contains one obviously correct answer. " +
-				"Measured: every README chunk matches, taking ranks 2-5, because the path label 'readme' stems to a term within edit distance 1 of the query. " +
-				"Fuzziness is applied to every field with no prefix_length, so a document is retrieved on a term it does not contain.",
-			top:     "acdc://docs/deployment/kubernetes#readiness",
-			ranks:   map[string]int{"acdc://README": 2},
-			finding: "#85 — fuzziness=1 with no prefix_length",
+				"Edit-distance matching is applied to content and headings but not to path_labels, so the label 'readme' — " +
+				"which stems to within one edit of the query — no longer retrieves the file on a term it does not contain. " +
+				"Both leading chunks now come from the page that answers the query; the README is demoted, not excluded.",
+			top:   "acdc://docs/deployment/kubernetes#readiness",
+			ranks: map[string]int{"acdc://README": 3},
 		},
 	}
 
@@ -451,6 +440,7 @@ func TestGolden_FuzzinessPollutesThroughPathLabels(t *testing.T) {
 	}{
 		{name: "every field", fuzziness: func(string) int { return 1 }, wantJunk: 2},
 		{name: "no field", fuzziness: func(string) int { return 0 }, wantJunk: 0},
+		{name: "every field but path labels", fuzziness: fieldFuzziness, wantJunk: 3},
 	}
 
 	for _, tt := range tests {
@@ -484,49 +474,57 @@ func TestGolden_FuzzinessRecallProbes(t *testing.T) {
 		wantFuzzy string
 		// wantExact is the same with edit-distance matching off everywhere.
 		wantExact string
-		rationale string
+		// wantShipped is the same under the shipped per-field policy.
+		wantShipped string
+		rationale   string
 	}{
 		{
-			name:      "a dropped character is rescued",
-			probe:     "authentcation",
-			wantFuzzy: "acdc://docs/authentication#authentication",
-			wantExact: "",
-			rationale: "authentcation stems to authentc, one edit from authentication's authent.",
+			name:        "a dropped character is rescued",
+			probe:       "authentcation",
+			wantFuzzy:   "acdc://docs/authentication#authentication",
+			wantExact:   "",
+			wantShipped: "acdc://docs/authentication#authentication",
+			rationale:   "authentcation stems to authentc, one edit from authentication's authent.",
 		},
 		{
-			name:      "a dropped character mid-word is rescued",
-			probe:     "compation",
-			wantFuzzy: "acdc://docs/internals/indexing#segment-compaction",
-			wantExact: "",
-			rationale: "compation stems to compat, one edit from compaction's compact.",
+			name:        "a dropped character mid-word is rescued",
+			probe:       "compation",
+			wantFuzzy:   "acdc://docs/internals/indexing#segment-compaction",
+			wantExact:   "",
+			wantShipped: "acdc://docs/internals/indexing#segment-compaction",
+			rationale:   "compation stems to compat, one edit from compaction's compact.",
 		},
 		{
-			name:      "a dropped character in a heading term is rescued",
-			probe:     "cheksums",
-			wantFuzzy: "acdc://docs/internals/indexing#checksums",
-			wantExact: "",
-			rationale: "cheksums stems to cheksum, one edit from checksums' checksum.",
+			name:        "a dropped character in a heading term is rescued",
+			probe:       "cheksums",
+			wantFuzzy:   "acdc://docs/internals/indexing#checksums",
+			wantExact:   "",
+			wantShipped: "acdc://docs/internals/indexing#checksums",
+			rationale:   "cheksums stems to cheksum, one edit from checksums' checksum.",
 		},
 		{
-			name:      "the stemmer alone handles a plural near-miss",
-			probe:     "kubernets",
-			wantFuzzy: "acdc://docs/deployment/kubernetes#running-ledger-on-kubernetes",
-			wantExact: "acdc://docs/deployment/kubernetes#running-ledger-on-kubernetes",
-			rationale: "Both kubernets and kubernetes stem to kubernet, so this costs no fuzziness. Control: without it the table reads as though fuzziness were the only thing rescuing near-misses.",
+			name:        "the stemmer alone handles a plural near-miss",
+			probe:       "kubernets",
+			wantFuzzy:   "acdc://docs/deployment/kubernetes#running-ledger-on-kubernetes",
+			wantExact:   "acdc://docs/deployment/kubernetes#running-ledger-on-kubernetes",
+			wantShipped: "acdc://docs/deployment/kubernetes#running-ledger-on-kubernetes",
+			rationale:   "Both kubernets and kubernetes stem to kubernet, so this costs no fuzziness. Control: without it the table reads as though fuzziness were the only thing rescuing near-misses.",
 		},
 		{
-			name:      "a two-edit typo is beyond rescue",
-			probe:     "deploymnet",
-			wantFuzzy: "",
-			wantExact: "",
-			rationale: "deploymnet does not stem at all, leaving it four edits from deployment's deploy. Control: edit distance 1 is a narrow safety net, not typo correction.",
+			name:        "a two-edit typo is beyond rescue",
+			probe:       "deploymnet",
+			wantFuzzy:   "",
+			wantExact:   "",
+			wantShipped: "",
+			rationale:   "deploymnet does not stem at all, leaving it four edits from deployment's deploy. Control: edit distance 1 is a narrow safety net, not typo correction.",
 		},
 		{
-			name:      "a British spelling is beyond rescue",
-			probe:     "authorisation",
-			wantFuzzy: "",
-			wantExact: "",
-			rationale: "The stemmer takes authorization to author but authorisation only to authoris — two edits apart. Control: fuzziness is not a spelling-variant mechanism.",
+			name:        "a British spelling is beyond rescue",
+			probe:       "authorisation",
+			wantFuzzy:   "",
+			wantExact:   "",
+			wantShipped: "",
+			rationale:   "The stemmer takes authorization to author but authorisation only to authoris — two edits apart. Control: fuzziness is not a spelling-variant mechanism.",
 		},
 	}
 
@@ -535,24 +533,26 @@ func TestGolden_FuzzinessRecallProbes(t *testing.T) {
 			t.Log(tt.rationale)
 			for _, setting := range []struct {
 				label     string
-				fuzziness int
+				fuzziness func(string) int
 				want      string
 			}{
-				{"fuzzy", 1, tt.wantFuzzy},
-				{"exact", 0, tt.wantExact},
+				{"fuzzy", func(string) int { return 1 }, tt.wantFuzzy},
+				{"exact", func(string) int { return 0 }, tt.wantExact},
+				{"shipped", fieldFuzziness, tt.wantShipped},
 			} {
 				t.Run(setting.label, func(t *testing.T) {
-					service := goldenServiceFuzzy(t, setting.fuzziness, zeroConfigCorpus)
+					service := goldenService(t, zeroConfigCorpus)
+					service.fuzziness = setting.fuzziness
 
 					results, err := service.Search(tt.probe, goldenCandidates)
 					require.NoError(t, err)
 					reportRanking(t, tt.probe, results)
 
 					if setting.want == "" {
-						require.Empty(t, results, "%s\n%q must retrieve nothing at fuzziness %d", tt.rationale, tt.probe, setting.fuzziness)
+						require.Empty(t, results, "%s\n%q must retrieve nothing under the %s policy", tt.rationale, tt.probe, setting.label)
 						return
 					}
-					require.Equal(t, 1, rankOf(results, setting.want), "%s\n%q at fuzziness %d", tt.rationale, tt.probe, setting.fuzziness)
+					require.Equal(t, 1, rankOf(results, setting.want), "%s\n%q under the %s policy", tt.rationale, tt.probe, setting.label)
 				})
 			}
 		})

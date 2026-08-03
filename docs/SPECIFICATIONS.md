@@ -150,7 +150,7 @@ Performs a full-text search over indexed chunks and returns chunk citations, opt
     }
     ```
 *   **Behavior:**
-    *   Searches against `source_title`, `path_labels`, `heading_path`, `content`, and `keywords` fields using fuzzy matching (distance 1) and stemming.
+    *   Searches against `source_title`, `path_labels`, `heading_path`, `content`, and `keywords` fields, with stemming throughout; fuzzy matching (distance 1) applies to all but `path_labels`, which is matched exactly.
     *   Applies boosting: `keywords` (3.0, configurable), `heading_path` (2.5), `source_title` (2.0, configurable), `path_labels` (1.25), `content` (1.0, configurable).
     *   Applies per-source-document result diversity — see [Chunking and Fragment URIs](#3-chunking-and-fragment-uris-both-modes).
 *   **Output:**
@@ -239,7 +239,7 @@ Used for remote connections.
 *   **Engine**: Bleve (Go) full-text search engine.
 *   **Indexing**: Indexes document chunks (not whole documents), in-memory or in a temporary directory — no persistence across restarts. Built in full at startup, and rebuilt in full again mid-session whenever a debounced refresh detects a content change; see [Content Refresh](#content-refresh) for the trigger, debounce interval, and concurrency cost.
 *   **Features**:
-    *   **Fuzzy Search**: Matches terms with an edit distance of 1.
+    *   **Fuzzy Search**: Matches terms with an edit distance of 1 on four of the five indexed fields; `path_labels` is matched exactly.
     *   **Stemming**: Uses the standard English analyzer for language-aware matching.
     *   **Highlighting**: Generates dynamic snippets with search term context.
     *   **Result Diversity**: Caps results per source document (1 in `references` mode, 2 in `content` mode) so results aren't dominated by a single document.
