@@ -9,6 +9,7 @@ import (
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
+	bleveindex "github.com/blevesearch/bleve_index_api"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
 	"github.com/stretchr/testify/require"
@@ -523,5 +524,93 @@ func TestSearch_ReadsHeadingAndPathBoostsFromSettings(t *testing.T) {
 		results, err := service.Search("oauth", 10)
 		require.NoError(t, err)
 		require.Empty(t, results, "no clause can match once path and content boosts are zero")
+	})
+}
+
+// rankedScore is a ranking projection: the identity of a hit and its score,
+// without the snippet, whose highlight fragments are allowed to differ.
+type rankedScore struct {
+	URI   string
+	Score float64
+}
+
+func rankedScores(results []SearchResult) []rankedScore {
+	out := make([]rankedScore, 0, len(results))
+	for _, result := range results {
+		out = append(out, rankedScore{URI: result.ChunkURI, Score: result.Score})
+	}
+	return out
+}
+
+// searchThrough runs the production query shape against a caller-supplied
+// index, bypassing Service.newIndex so a test can choose the index kind.
+func searchThrough(t *testing.T, idx searchIndex, chunks []domain.Chunk, query string) []rankedScore {
+	t.Helper()
+
+	stream := make(chan domain.Chunk, len(chunks))
+	for _, chunk := range chunks {
+		stream <- chunk
+	}
+	close(stream)
+	require.NoError(t, batchIndex(context.Background(), idx, stream))
+
+	service := NewService(testSettings())
+	service.index = idx
+	t.Cleanup(service.Close)
+
+	results, err := service.Search(query, 10)
+	require.NoError(t, err)
+	require.NotEmpty(t, results, "query %q retrieved nothing", query)
+	return rankedScores(results)
+}
+
+// TestSearch_MemoryAndDiskIndexesHonourTheSameMapping pins the invariant that
+// search.in_memory selects storage and never relevance: both index kinds must
+// apply the same index mapping.
+//
+// The probe is BM25 scoring, which scorch implements and upsidedown does not.
+// bleve does not report an error for a scoring model the index kind cannot
+// support — it silently scores TF-IDF instead, because bm25ScoreMetrics leaves
+// avgDocLength at 0 when the reader is not an index.BM25Reader and the scorer
+// branches on avgDocLength > 0. ACDC does not ship BM25; it is used here only
+// because it is a mapping feature whose absence is otherwise invisible.
+//
+// This asserts on Score, which the golden harness conventions forbid. That
+// convention exists because absolute scores move with library upgrades and
+// with corpus size. The assertion here is that two index kinds agree with each
+// other, on one corpus and one library version, which is invariant to both.
+func TestSearch_MemoryAndDiskIndexesHonourTheSameMapping(t *testing.T) {
+	chunks := corpusChunks(t, zeroConfigCorpus)
+
+	t.Run("a mapping feature only one index kind supports", func(t *testing.T) {
+		bm25Mapping := func(t *testing.T) mapping.IndexMapping {
+			t.Helper()
+			m, ok := buildMapping().(*mapping.IndexMappingImpl)
+			require.True(t, ok, "buildMapping must return *mapping.IndexMappingImpl")
+			m.ScoringModel = bleveindex.BM25Scoring
+			return m
+		}
+
+		memIndex, err := newMemoryIndex(bm25Mapping(t))
+		require.NoError(t, err)
+		diskIndex, err := newDiskIndex(filepath.Join(t.TempDir(), "idx"), bm25Mapping(t))
+		require.NoError(t, err)
+
+		require.Equal(t,
+			searchThrough(t, diskIndex, chunks, "authentication"),
+			searchThrough(t, memIndex, chunks, "authentication"),
+			"the in-memory index ignored the mapping's scoring model")
+	})
+
+	t.Run("the shipped mapping", func(t *testing.T) {
+		memIndex, err := newMemoryIndex(buildMapping())
+		require.NoError(t, err)
+		diskIndex, err := newDiskIndex(filepath.Join(t.TempDir(), "idx"), buildMapping())
+		require.NoError(t, err)
+
+		require.Equal(t,
+			searchThrough(t, diskIndex, chunks, "authentication"),
+			searchThrough(t, memIndex, chunks, "authentication"),
+			"search.in_memory changed the ranking, which it must never do")
 	})
 }
