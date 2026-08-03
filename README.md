@@ -117,6 +117,7 @@ readinessProbe:
 | `--search-max-results` | `-m` | `ACDC_MCP_SEARCH_MAX_RESULTS` | `10` |
 | `--search-keywords-boost` | — | `ACDC_MCP_SEARCH_KEYWORDS_BOOST` | `3.0` |
 | `--search-result-mode` | — | `ACDC_MCP_SEARCH_RESULT_MODE` | `references` |
+| `--search-in-memory` | — | `ACDC_MCP_SEARCH_IN_MEMORY` | `true` |
 | `--auth-type` | `-a` | `ACDC_MCP_AUTH_TYPE` | `none` |
 
 For full configuration options including authentication, see [Configuration Reference](docs/configuration.md).

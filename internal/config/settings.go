@@ -151,6 +151,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 		_ = v.BindPFlag("search.title_boost", flags.Lookup("search-title-boost"))
 		_ = v.BindPFlag("search.content_boost", flags.Lookup("search-content-boost"))
 		_ = v.BindPFlag("search.result_mode", flags.Lookup("search-result-mode"))
+		_ = v.BindPFlag("search.in_memory", flags.Lookup("search-in-memory"))
 		_ = v.BindPFlag("auth.type", flags.Lookup("auth-type"))
 		_ = v.BindPFlag("auth.basic.username", flags.Lookup("auth-basic-username"))
 		_ = v.BindPFlag("auth.basic.password", flags.Lookup("auth-basic-password"))

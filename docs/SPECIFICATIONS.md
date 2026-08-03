@@ -29,6 +29,7 @@ The server is configured via environment variables, command-line flags, or a `.e
 | `ACDC_MCP_SEARCH_PATH_BOOST` | `--search-path-boost` | Boost factor for path label (`path_labels`) matches. | `1.25` |
 | `ACDC_MCP_SEARCH_CONTENT_BOOST` | `--search-content-boost` | Boost factor for content matches. | `1.0` |
 | `ACDC_MCP_SEARCH_RESULT_MODE` | `--search-result-mode` | Search output detail: `references` or `content`. | `references` |
+| `ACDC_MCP_SEARCH_IN_MEMORY` | `--search-in-memory` | Hold the search index in memory instead of on disk. | `true` |
 | `ACDC_MCP_AUTH_TYPE` | `--auth-type`, `-a` | Authentication mode for SSE: `none`, `basic`, `apikey`. | `none` |
 | `ACDC_MCP_AUTH_BASIC_USERNAME` | `--auth-basic-username`, `-u` | Username for Basic Auth. | - |
 | `ACDC_MCP_AUTH_BASIC_PASSWORD` | `--auth-basic-password`, `-P` | Password for Basic Auth. | - |
@@ -207,7 +208,7 @@ This applies identically to both discovery modes (legacy `mcp-resources/` and co
 
 A content-change rebuild holds the search index's write lock for its duration, so a concurrent `search` call briefly blocks until the rebuild finishes. For the zero-config, locally-indexed case this is on the order of milliseconds; for a large curated corpus served over SSE to many concurrent clients, it is a real (if brief) pause on every edit, with no configuration to opt out of it. Because the replacement index is built before the previous one is released, a rebuild also holds two complete indexes at once — under the default in-memory mode, that is twice the index's memory for its duration.
 
-Persistence across restarts is still not part of this release: the catalog and index are rebuilt from scratch every time the process starts, independent of the mid-session refresh described here. The index is held in memory by default; under `ACDC_MCP_SEARCH_IN_MEMORY=false` it is written to a temporary directory that is discarded on shutdown, so neither mode survives a restart.
+Persistence across restarts is still not part of this release: the catalog and index are rebuilt from scratch every time the process starts, independent of the mid-session refresh described here. The index is held in memory by default; under `--search-in-memory=false` (or `ACDC_MCP_SEARCH_IN_MEMORY=false`) it is written to a temporary directory that is discarded on shutdown, so neither mode survives a restart.
 
 ---
 

@@ -165,3 +165,30 @@ func TestCLI_FlagParsing_SearchPathBoost(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 7.5, settings.Search.PathBoost)
 }
+
+func TestCLI_FlagParsing_SearchInMemory(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	RegisterFlags(flags)
+	require.NoError(t, flags.Set("search-in-memory", "false"))
+
+	settings, err := config.LoadSettingsWithFlags(flags)
+
+	require.NoError(t, err)
+	require.False(t, settings.Search.InMemory)
+}
+
+// TestCLI_SearchInMemoryDefaultsToTrueWhenFlagIsNotPassed pins the priority
+// this setting depends on: registering a bool flag must not itself decide the
+// index kind. Viper reads a bound flag only once pflag reports it changed, and
+// falls back to SetDefault before the flag's own default value — measured, so
+// the flag's default is cosmetic and shows only in --help. Registering the
+// flag would otherwise be a silent way to flip a default set elsewhere.
+func TestCLI_SearchInMemoryDefaultsToTrueWhenFlagIsNotPassed(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	RegisterFlags(flags)
+
+	settings, err := config.LoadSettingsWithFlags(flags)
+
+	require.NoError(t, err)
+	require.True(t, settings.Search.InMemory)
+}
