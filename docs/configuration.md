@@ -109,12 +109,16 @@ persisting it to disk buys nothing back.
 Set `ACDC_MCP_SEARCH_IN_MEMORY=false` to build it on disk instead, under a
 temporary directory. That is worth doing for a large curated catalog. The
 in-memory index builds about twice as fast at every size measured and answers
-queries faster up to at least a thousand chunks, but by roughly ten thousand
-the on-disk index has overtaken it and answers about twice as fast — and it
-holds its data in memory-mapped segments the operating system can reclaim
-under pressure, where the in-memory index costs a few hundred megabytes of Go
-heap at that size. Where the two cross over depends on the shape of the
-corpus.
+queries faster up to at least a thousand chunks, but by roughly fifteen
+thousand the on-disk index has overtaken it and answers about twice as fast —
+and it holds its data in memory-mapped segments the operating system can
+reclaim under pressure, where the in-memory index costs a couple of hundred
+megabytes of Go heap at that size. Where the two cross over depends on the
+shape of the corpus.
+
+Size a deployment for twice that figure. A refresh builds the replacement
+index in full before releasing the previous one, so a content change briefly
+holds two complete indexes at once.
 
 ## Authentication Settings
 
