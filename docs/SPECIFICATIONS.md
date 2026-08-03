@@ -129,7 +129,7 @@ Chunking is not specific to configured indexing: regardless of which discovery m
 -   **Chunk boundaries**: A new chunk starts at *every* heading, of any level — a chunk's content never includes its subsections' content, though its `heading_path` still records the full ancestry (e.g. `["Configuration", "Authentication"]`). Content before the first heading forms its own chunk, addressed with the reserved fragment `document`. A heading whose text has no letters or digits (e.g. `# !!!`) falls back to the fragment `section`.
 -   **Soft splitting**: A section exceeding a soft limit of **4,000 Unicode code points** is further split along block boundaries into multiple parts, each still tagged with the section's full heading path.
 -   **Fragment URIs**: An unsplit section is `<document-uri>#<heading-slug>` (or `<document-uri>#document` for the pre-heading preamble). A split section's parts are `<document-uri>#<heading-slug>~1`, `~2`, ... — every part, including the first, carries the suffix. Reading the bare `#<heading-slug>` of a split section reconstructs the full section by joining its parts. Duplicate heading text produces de-duplicated slugs (`#overview-1`, `#overview-2`, ...).
--   **Result diversity**: `search` fetches up to `ACDC_MCP_SEARCH_MAX_RESULTS` × 5 candidates internally, then caps results per source document before returning up to the configured limit: 1 chunk per document in `references` mode, 2 in `content` mode.
+-   **Result diversity**: `search` caps results per source document before returning up to `ACDC_MCP_SEARCH_MAX_RESULTS`: 1 chunk per document in `references` mode, 2 in `content` mode. Because the cap discards candidates, the internal candidate window adapts — it starts at `ACDC_MCP_SEARCH_MAX_RESULTS` × 5 and widens ×4 for up to two further retrievals (×20, ×80) while the page is short and candidates remain, so a document with many matching sections does not shorten the page.
 -   **Path labels**: Each chunk is also ranked on path labels derived from the document's relative path (split on `/`, `-`, `_`, whitespace, and camelCase boundaries; lowercased; deduplicated), indexed with a 1.25x boost — see `path_labels` below.
 -   **Duplicate identity**: Startup fails if two discovered documents or chunks resolve to the same URI or ID — for example, `guide.md` and `guide.markdown` selected side by side both produce the URI `<scheme>://guide`. This applies to both discovery modes.
 
@@ -243,7 +243,7 @@ Used for remote connections.
     *   **Fuzzy Search**: Matches terms with an edit distance of 1 on four of the five indexed fields; `path_labels` is matched exactly.
     *   **Stemming**: Uses the standard English analyzer for language-aware matching.
     *   **Highlighting**: Generates dynamic snippets with search term context.
-    *   **Result Diversity**: Caps results per source document (1 in `references` mode, 2 in `content` mode) so results aren't dominated by a single document.
+    *   **Result Diversity**: Caps results per source document (1 in `references` mode, 2 in `content` mode) so results aren't dominated by a single document, over-fetching candidates — and widening that window when the cap discards them — so the cap does not shorten the page instead.
 *   **Indexed Fields (Default Boosts)**:
     *   `chunk_id`, `source_id`, `source_uri`, `chunk_uri`, `source_path` (Stored, Identifier)
     *   `source_title` (Stored, Indexed, Boost x2.0)
