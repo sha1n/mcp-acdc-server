@@ -47,7 +47,7 @@ whether the same words also live in another indexed field:
 
 - `--search-path-boost 0` genuinely removes a retrieval route. Path labels come from the file
   path and are not duplicated anywhere else, so documents matched only by their path stop
-  being returned. This is the practical way to suppress path-label noise.
+  being returned.
 - `--search-heading-boost 0` demotes rather than hides. A chunk's body text begins at its own
   heading line, so heading words are also indexed as content and the document is still
   retrieved — lower down. That holds only for a section's first chunk: when a long section is
@@ -70,6 +70,34 @@ magnitudes no meaningful ranking could use; the boundary itself is accepted, and
 strictly above it are rejected. Setting *all five* boosts to `0` is also rejected: the query
 would carry no clauses at all, so every search would return nothing while reporting success.
 Zeroing any subset of the five remains supported.
+
+### How closely a query has to match
+
+Four of the five indexed fields tolerate a single-character difference between a query term and
+an indexed term, so a mistyped `authentcation` still finds the authentication page. `path_labels`
+does not: it is matched exactly.
+
+The asymmetry is deliberate. Path labels are a small vocabulary of short path segments, and they
+are the only field whose terms appear nowhere else in the index — heading text is also indexed as
+content, but a path label comes from the file path alone. Nearly every segment therefore has a
+neighbour within one edit, so tolerating differences there retrieves documents on words they do
+not contain: a query for `readiness` matched the path label `readme` and filled ranks 2 through 5
+of the result page with README chunks that never mention it.
+
+Tolerance is narrow, and it applies to *stems* rather than to the words you typed — the English
+analyzer reduces both the query term and the indexed term before they are compared. How much a
+given misspelling gets rescued therefore depends on whether it still stems. `authentcation`
+finds the authentication page and `cheksums` finds the checksums section, but `deploymnet` does
+not find `deployment`: it fails to stem at all, which leaves it four edits from that word's
+`deploy` stem rather than the one edit the raw spellings suggest. Bleve measures plain
+Levenshtein distance, so swapping two adjacent characters costs two edits, not one. Nor does
+this tolerance bridge spelling variants such as `authorisation` against `authorization`. Plural
+and tense differences are handled by the analyzer before matching, not by this tolerance at all.
+
+Two alternatives were measured and rejected. A minimum matching prefix does not help: the terms
+that collide here already share their first four characters. Bleve's automatic mode is worse — it
+raises the tolerance to two characters for any term longer than five, which widens exactly the
+problem described above.
 
 ## Authentication Settings
 
