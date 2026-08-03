@@ -28,6 +28,7 @@ When the same setting is specified in multiple places, the following priority ap
 | `--search-path-boost` | — | `ACDC_MCP_SEARCH_PATH_BOOST` | Boost for path label (`path_labels`) matches | `1.25` |
 | `--search-content-boost` | — | `ACDC_MCP_SEARCH_CONTENT_BOOST` | Boost for content matches | `1.0` |
 | `--search-result-mode` | — | `ACDC_MCP_SEARCH_RESULT_MODE` | Search output detail: `references` (chunk citations only) or `content` (citations plus the full matched chunk body) | `references` |
+| — | — | `ACDC_MCP_SEARCH_IN_MEMORY` | Hold the search index in memory instead of on disk | `true` |
 
 ### What the search boosts actually do
 
@@ -98,6 +99,22 @@ Two alternatives were measured and rejected. A minimum matching prefix does not 
 that collide here already share their first four characters. Bleve's automatic mode is worse — it
 raises the tolerance to two characters for any term longer than five, which widens exactly the
 problem described above.
+
+### Where the index lives
+
+The search index is held in memory by default. It is rebuilt from the content
+directory at startup and on every refresh, and it is never reopened, so
+persisting it to disk buys nothing back.
+
+Set `ACDC_MCP_SEARCH_IN_MEMORY=false` to build it on disk instead, under a
+temporary directory. That is worth doing for a large curated catalog. The
+in-memory index builds about twice as fast at every size measured and answers
+queries faster up to at least a thousand chunks, but by roughly ten thousand
+the on-disk index has overtaken it and answers about twice as fast — and it
+holds its data in memory-mapped segments the operating system can reclaim
+under pressure, where the in-memory index costs a few hundred megabytes of Go
+heap at that size. Where the two cross over depends on the shape of the
+corpus.
 
 ## Authentication Settings
 
