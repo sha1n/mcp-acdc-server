@@ -122,19 +122,31 @@ directory at startup and on every refresh, and it is never reopened, so
 persisting it to disk buys nothing back.
 
 Pass `--search-in-memory=false`, or set `ACDC_MCP_SEARCH_IN_MEMORY=false`, to
-build it on disk instead, under a temporary directory. That is worth doing for
-a large curated catalog. The in-memory index builds roughly two to three times
-as fast at every size measured and answers queries faster up to at least a
-thousand chunks, but by roughly fifteen thousand the on-disk index has
-overtaken it and answers roughly 1.6–1.75× faster (about 9 ms against 16 ms at
-that size) — and it holds its data in memory-mapped segments the operating
-system can reclaim under pressure, where the in-memory index costs a bit over
-a hundred megabytes of Go heap at that size. Exactly where the two cross over
-has not been measured, and neither has the reason.
+build it on disk instead, under a temporary directory. An in-memory index
+accumulates one segment per indexing batch and never compacts them; raising
+the default batch size from 100 to 1000 cut segment count roughly 10× (207
+segments to 21) and roughly halved in-memory query latency (9.21 ms to
+4.87 ms). At 20,678 chunks — a 10,339-chunk corpus duplicated, which doubles
+posting-list length but leaves the term dictionary at its original size —
+in-memory builds about 1.3× faster than on disk (1.90 s against 2.42 s) and
+answers queries only about 10% slower (4.87 ms against 4.41 ms). On-disk's
+remaining edge is its merger, which leaves it with fewer segments still (10
+against 21); at equal segment counts the two kinds measure
+indistinguishably. These figures time the search engine answering one
+query, below the MCP tool clients call. That tool retries — up to twice,
+with a wider candidate window — only if the result page is still short and
+the candidate set was truncated; treat these figures as a floor, not an
+end-to-end number.
 
-Size a deployment for twice that figure. A refresh builds the replacement
-index in full before releasing the previous one, so a content change briefly
-holds two complete indexes at once.
+`--search-in-memory=false` also pays off when Go heap matters more than
+query speed: the on-disk index holds its data in memory-mapped segments the
+operating system can reclaim under pressure, where in-memory's Go heap runs
+roughly 100 MiB at that size against single-digit MiB on disk.
+
+Size a deployment for twice the index's own memory footprint — twice that
+roughly 100 MiB at the scale above, for an in-memory index. A refresh builds the
+replacement index in full before releasing the previous one, so a content
+change briefly holds two complete indexes at once.
 
 ## Authentication Settings
 
