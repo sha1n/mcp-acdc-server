@@ -119,6 +119,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	// BindEnv only returns an error if the key is empty, which cannot happen
 	// with hardcoded keys. Errors are intentionally discarded here.
 	_ = v.BindEnv("search.max_results", "ACDC_MCP_SEARCH_MAX_RESULTS")
+	_ = v.BindEnv("search.in_memory", "ACDC_MCP_SEARCH_IN_MEMORY")
 	_ = v.BindEnv("search.keywords_boost", "ACDC_MCP_SEARCH_KEYWORDS_BOOST")
 	_ = v.BindEnv("search.heading_boost", "ACDC_MCP_SEARCH_HEADING_BOOST")
 	_ = v.BindEnv("search.path_boost", "ACDC_MCP_SEARCH_PATH_BOOST")

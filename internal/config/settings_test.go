@@ -989,3 +989,27 @@ func TestLoadSettings_MalformedBoostIsRejected(t *testing.T) {
 	require.Nil(t, settings)
 	require.Contains(t, err.Error(), "search.heading_boost")
 }
+
+// TestLoadSettings_InMemoryEnvVarOverridesDefault covers both directions
+// deliberately. search.in_memory has no CLI flag, so this env var is the only
+// supported way to choose the index kind, and it must work whichever way the
+// default points.
+func TestLoadSettings_InMemoryEnvVarOverridesDefault(t *testing.T) {
+	tests := []struct {
+		value    string
+		expected bool
+	}{
+		{value: "true", expected: true},
+		{value: "false", expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			t.Setenv("ACDC_MCP_SEARCH_IN_MEMORY", tt.value)
+
+			settings, err := LoadSettings()
+			require.NoError(t, err)
+			require.Equal(t, tt.expected, settings.Search.InMemory)
+		})
+	}
+}
