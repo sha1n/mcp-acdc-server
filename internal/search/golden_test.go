@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blevesearch/bleve/v2"
+	bleveQuery "github.com/blevesearch/bleve/v2/search/query"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/content"
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
@@ -217,6 +219,17 @@ func TestGolden_ZeroConfigRanking(t *testing.T) {
 				"Both leading chunks now come from the page that answers the query; the README is demoted, not excluded.",
 			top:   "acdc://docs/deployment/kubernetes#readiness",
 			ranks: map[string]int{"acdc://README": 3},
+		},
+		{
+			name:    "one term of a multi-word query is enough to retrieve",
+			corpora: corpus,
+			query:   "helm chart readiness",
+			rationale: "No chunk carries all three terms. Every field clause is a MatchQuery left at its default OR operator, " +
+				"so the Helm section leads on two terms and the Readiness section still reaches rank 2 on one. " +
+				"Requiring every term instead returns nothing at all for this query: the operator applies within a single field, " +
+				"and no field here holds the whole query. Measured and declined in #92.",
+			top:    "acdc://docs/deployment/kubernetes#helm-chart",
+			within: map[string]int{"acdc://docs/deployment/kubernetes#readiness": 2},
 		},
 	}
 
@@ -561,6 +574,68 @@ func TestGolden_FuzzinessRecallProbes(t *testing.T) {
 					require.Equal(t, 1, rankOf(results, setting.want), "%s\n%q under the %s policy", tt.rationale, tt.probe, setting.label)
 				})
 			}
+		})
+	}
+}
+
+// fieldClauseCandidates counts what one field's clause retrieves on its own,
+// built the way Service.Search builds it.
+func fieldClauseCandidates(t *testing.T, service *Service, field, queryStr string, operator bleveQuery.MatchQueryOperator) int {
+	t.Helper()
+
+	clause := bleve.NewMatchQuery(queryStr)
+	clause.SetField(field)
+	clause.SetFuzziness(service.fuzziness(field))
+	clause.SetOperator(operator)
+
+	request := bleve.NewSearchRequest(clause)
+	request.Size = 100
+
+	result, err := service.index.Search(request)
+	require.NoError(t, err)
+	return len(result.Hits)
+}
+
+// TestGolden_RequiringEveryTermEmptiesTheShortFields measures why #92 declined
+// MatchQueryOperatorAnd, and is the regression gate on that decision together
+// with the golden case above.
+//
+// The operator applies inside a field clause, not across a document, so
+// requiring every term requires them all in one field. heading_path,
+// source_title and path_labels are short by construction — a file path is a
+// handful of labels, a heading path a handful of words — and cannot hold a
+// whole query. On a query every field retrieves under the shipped operator,
+// requiring every term takes all four to zero and leaves a five-field ranking
+// model with nothing to rank.
+//
+// Expectations are measured, not desired. A change means the retrieval model
+// moved.
+func TestGolden_RequiringEveryTermEmptiesTheShortFields(t *testing.T) {
+	const probe = "401 unauthorized troubleshooting"
+
+	service := goldenService(t, zeroConfigCorpus)
+
+	tests := []struct {
+		field string
+		// wantAny is the candidate count under the shipped OR operator.
+		wantAny int
+		// wantAll is the count when every term is required instead.
+		wantAll int
+	}{
+		{domain.FieldHeadingPath, 5, 0},
+		{domain.FieldSourceTitle, 5, 0},
+		{domain.FieldPathLabels, 5, 0},
+		{domain.FieldContent, 6, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.field, func(t *testing.T) {
+			anyTerm := fieldClauseCandidates(t, service, tt.field, probe, bleveQuery.MatchQueryOperatorOr)
+			everyTerm := fieldClauseCandidates(t, service, tt.field, probe, bleveQuery.MatchQueryOperatorAnd)
+			t.Logf("%s — any term: %d candidates, every term: %d", tt.field, anyTerm, everyTerm)
+
+			require.Equal(t, tt.wantAny, anyTerm, "%s under the shipped operator", tt.field)
+			require.Equal(t, tt.wantAll, everyTerm, "%s when every term is required", tt.field)
 		})
 	}
 }
