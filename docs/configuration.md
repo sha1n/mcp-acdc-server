@@ -62,7 +62,9 @@ zero-config mode, `--search-heading-boost`, `--search-path-boost`, and `--search
 are the three boosts that discriminate between documents; `--search-keywords-boost` and
 `--search-title-boost` have nothing to act on until a document supplies frontmatter.
 
-Negative, `NaN`, infinite and unparseable boost values are rejected at startup.
+Negative, `NaN`, infinite and unparseable boost values are rejected at startup. Setting *all
+five* boosts to `0` is also rejected: the query would carry no clauses at all, so every search
+would return nothing while reporting success. Zeroing any subset of the five remains supported.
 
 ## Authentication Settings
 
@@ -124,6 +126,7 @@ The server validates configuration at startup and will fail with a clear error i
 
 - `--uri-scheme` is empty or doesn't match RFC 3986 (must start with a letter, then letters/digits/`+`/`-`/`.`)
 - `--search-result-mode` is set to anything other than `references` or `content`
+- every search boost is `0`, which would leave the query with no clauses and silently return no results
 - `--auth-type=basic` is set without username/password
 - `--auth-type=apikey` is set without API keys
 - `--auth-type=none` is set with auth credentials (conflicting intent)

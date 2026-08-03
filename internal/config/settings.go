@@ -240,8 +240,10 @@ func ValidateSettings(s *Settings) error {
 	return nil
 }
 
-// validateBoosts rejects boost values Bleve cannot score meaningfully. Zero is
-// legal and disables the field's clause.
+// validateBoosts rejects boost values Bleve cannot score meaningfully. An
+// individual zero is legal and disables that field's clause; all five at zero
+// is not, because the resulting clauseless disjunction answers every query
+// with nothing while reporting no error.
 func validateBoosts(s SearchSettings) error {
 	boosts := []struct {
 		key   string
@@ -253,10 +255,17 @@ func validateBoosts(s SearchSettings) error {
 		{"search.path_boost", s.PathBoost},
 		{"search.content_boost", s.ContentBoost},
 	}
+	anyPositive := false
 	for _, boost := range boosts {
 		if math.IsNaN(boost.value) || math.IsInf(boost.value, 0) || boost.value < 0 {
 			return fmt.Errorf("%s must be a finite, non-negative number, got: %v", boost.key, boost.value)
 		}
+		if boost.value > 0 {
+			anyPositive = true
+		}
+	}
+	if !anyPositive {
+		return errors.New("at least one search boost must be positive; all five at zero disables search entirely")
 	}
 	return nil
 }
