@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/blevesearch/bleve/v2 v2.6.0
+	github.com/blevesearch/bleve_index_api v1.3.11
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/spf13/cobra v1.10.2
@@ -47,7 +48,6 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.24.2 // indirect
 	github.com/bkielbasa/cyclop v1.2.3 // indirect
-	github.com/blevesearch/bleve_index_api v1.3.11 // indirect
 	github.com/blevesearch/geo v0.2.5 // indirect
 	github.com/blevesearch/go-faiss v1.1.0 // indirect
 	github.com/blevesearch/go-porterstemmer v1.0.3 // indirect

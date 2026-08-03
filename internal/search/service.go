@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/blevesearch/bleve/v2"
+	"github.com/blevesearch/bleve/v2/index/scorch"
 	"github.com/blevesearch/bleve/v2/mapping"
 	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
@@ -14,10 +15,19 @@ import (
 )
 
 var (
-	newMemoryIndex = bleve.NewMemOnly
-	makeTempDir    = os.MkdirTemp
-	removeAll      = os.RemoveAll
-	newDiskIndex   = bleve.New
+	// The in-memory index is scorch with an empty path, not bleve.NewMemOnly,
+	// which builds an upsidedown index. Two engines meant a mapping feature
+	// scorch supports could be silently ignored in memory — bleve reports no
+	// error for a scoring model an index kind cannot honour — so the in-memory
+	// mode could rank differently from the on-disk mode. An empty path makes
+	// scorch skip persistence entirely, which is safe here because the index
+	// is always rebuilt from source and never reopened.
+	newMemoryIndex = func(m mapping.IndexMapping) (bleve.Index, error) {
+		return bleve.NewUsing("", m, scorch.Name, scorch.Name, nil)
+	}
+	makeTempDir  = os.MkdirTemp
+	removeAll    = os.RemoveAll
+	newDiskIndex = bleve.New
 )
 
 // SearchResult is a chunk returned by a search.

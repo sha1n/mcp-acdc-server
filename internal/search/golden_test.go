@@ -61,7 +61,10 @@ func goldenService(t *testing.T, corpora ...string) *Service {
 	return goldenServiceWith(t, testSettings(), corpora...)
 }
 
-func goldenServiceWith(t *testing.T, settings config.SearchSettings, corpora ...string) *Service {
+// corpusChunks discovers chunks through the production discovery and chunking
+// path, so tests measure the scorer against the documents it actually sees
+// rather than against hand-built chunks.
+func corpusChunks(t *testing.T, corpora ...string) []domain.Chunk {
 	t.Helper()
 
 	index := &domain.IndexMetadata{Include: []string{"**/*.md"}}
@@ -72,10 +75,15 @@ func goldenServiceWith(t *testing.T, settings config.SearchSettings, corpora ...
 		require.NotEmpty(t, result.Chunks, "corpus %s produced no chunks", corpus)
 		chunks = append(chunks, result.Chunks...)
 	}
+	return chunks
+}
+
+func goldenServiceWith(t *testing.T, settings config.SearchSettings, corpora ...string) *Service {
+	t.Helper()
 
 	service := NewService(settings)
 	t.Cleanup(service.Close)
-	indexChunks(t, service, chunks)
+	indexChunks(t, service, corpusChunks(t, corpora...))
 	return service
 }
 
