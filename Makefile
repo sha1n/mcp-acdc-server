@@ -24,6 +24,10 @@ GOARCH_ARM := "arm"
 
 MODFLAGS=-mod=readonly
 
+# Extra flags forwarded to the benchmark binary, e.g.
+# make bench BENCHFLAGS="-corpus=$HOME/docs -corpus-dup=2"
+BENCHFLAGS ?=
+
 # Use linker flags to provide version/build settings
 LDFLAGS=-ldflags "-w -s -X=main.Version=$(VERSION) -X=main.Build=$(BUILD) -X=main.ProgramName=$(PROGRAMNAME)"
 
@@ -79,6 +83,12 @@ coverage: install
 .PHONY: coverage-html
 coverage-html: coverage
 	go tool cover -html=coverage.out
+
+## bench: Runs the search measurement benchmarks (not a regression gate). Pass BENCHFLAGS="-corpus=... -corpus-dup=..." to measure a real corpus
+.PHONY: bench
+bench: install
+	@echo "  >  Running search benchmarks..."
+	go test $(MODFLAGS) -timeout=0 -run '^$$' -bench=. -benchmem ./internal/search/ $(BENCHFLAGS)
 
 ## clean: Removes build artifacts
 .PHONY: clean
