@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -188,6 +189,56 @@ func TestACDCService_StartExit(t *testing.T) {
 	_, err := service.Start()
 	if err == nil || err.Error() != "server exited unexpectedly: exit early" {
 		t.Errorf("Expected exit early error, got %v", err)
+	}
+}
+
+func TestACDCService_StdioStartFailureClosesThePipesWithTheStartupError(t *testing.T) {
+	flags := NewTestFlags(t, t.TempDir(), &FlagOptions{Transport: "stdio"})
+
+	service := NewACDCService("stdio-start-failure", flags)
+	acdc := service.(*acdcService)
+	startErr := errors.New("startup failed")
+	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error {
+		return startErr
+	}
+
+	props, err := service.Start()
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = service.Stop() }()
+
+	stdin := props["acdc.stdin"].(io.WriteCloser)
+	stdout := props["acdc.stdout"].(io.ReadCloser)
+
+	// A client writes its request before reading the response, so both directions
+	// must fail rather than block on a server that is no longer running.
+	writeErr := make(chan error, 1)
+	go func() {
+		_, err := stdin.Write([]byte("{}\n"))
+		writeErr <- err
+	}()
+	readErr := make(chan error, 1)
+	go func() {
+		_, err := stdout.Read(make([]byte, 1))
+		readErr <- err
+	}()
+
+	for _, c := range []struct {
+		direction string
+		errs      chan error
+	}{
+		{"stdin write", writeErr},
+		{"stdout read", readErr},
+	} {
+		select {
+		case err := <-c.errs:
+			if !errors.Is(err, startErr) {
+				t.Errorf("%s: expected the startup error, got %v", c.direction, err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Errorf("%s: still blocked after the server failed to start", c.direction)
+		}
 	}
 }
 
