@@ -66,18 +66,25 @@ changelog:
       - '^docs:'
       - '^test:'
 
-brews:
+homebrew_casks:
   - name: acdc-mcp
+    ids:
+      - nix
+    binaries:
+      - acdc-mcp
     repository:
       owner: sha1n
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
 
-    # Homepage placeholder
     homepage: "https://github.com/sha1n/mcp-acdc-server"
-
-    # Description placeholder
     description: "MCP ACDC Server"
 
-    # Directory in the repository to put the formula.
-    directory: Formula
+    # Released binaries are neither signed nor notarized, so Gatekeeper would
+    # otherwise refuse to run them.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/acdc-mcp"]
+          end
