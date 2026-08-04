@@ -85,8 +85,10 @@ acdc-mcp --transport sse --content-dir ./content
 ```
 
 ### Docker
+The image defaults to the `stdio` transport, so serving over HTTP requires setting `ACDC_MCP_TRANSPORT=sse` — publishing the port alone is not enough:
 ```bash
 docker run -p 8080:8080 \
+  -e ACDC_MCP_TRANSPORT=sse \
   -v $(pwd)/content:/app/content \
   sha1n/mcp-acdc-server:latest
 ```
@@ -190,4 +192,4 @@ See [Development Guide](docs/development.md) for building, testing, and contribu
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) for details.
+Apache License 2.0 - see [LICENSE](LICENSE) for details.
