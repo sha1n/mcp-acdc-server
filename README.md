@@ -32,7 +32,7 @@ cd examples/docker-local-content
 docker-compose up -d
 ```
 
-**Homebrew:**
+**Homebrew (macOS):**
 ```bash
 brew install sha1n/tap/acdc-mcp
 acdc-mcp
@@ -59,10 +59,11 @@ acdc-mcp --content-dir ./content
 docker pull sha1n/mcp-acdc-server:latest
 ```
 
-### Homebrew
+### Homebrew (macOS)
 ```bash
 brew install sha1n/tap/acdc-mcp
 ```
+Linux and Windows users can download a release archive or use the Docker image.
 
 ### Build from Source
 See [Development Guide](docs/development.md) for build instructions.
