@@ -12,11 +12,12 @@ import (
 
 func TestLoadSettings_Defaults(t *testing.T) {
 	// Clear env vars to ensure defaults are used
-	// Note: Can't use t.Setenv to clear, so we still need os.Unsetenv here
-	_ = os.Unsetenv("ACDC_MCP_PORT")
-	_ = os.Unsetenv("ACDC_MCP_AUTH_TYPE")
-	_ = os.Unsetenv("ACDC_MCP_URI_SCHEME")
-	_ = os.Unsetenv("ACDC_MCP_SEARCH_IN_MEMORY")
+	unsetEnvForTest(t,
+		"ACDC_MCP_PORT",
+		"ACDC_MCP_AUTH_TYPE",
+		"ACDC_MCP_URI_SCHEME",
+		"ACDC_MCP_SEARCH_IN_MEMORY",
+	)
 
 	settings, err := LoadSettings()
 	if err != nil {
@@ -123,6 +124,10 @@ func TestLoadSettings_APIKeys_EnvVar_ViperSingleElement(t *testing.T) {
 }
 
 func TestLoadSettings_EnvFile(t *testing.T) {
+	// Environment variables outrank a config file in viper, so the keys under
+	// assertion have to be absent for the file to be observable at all.
+	unsetEnvForTest(t, "ACDC_MCP_HOST", "ACDC_MCP_PORT")
+
 	// Create temporary .env file
 	// Note: Viper config files use keys matching the mapstructure tags (or lowercase),
 	// NOT the environment variable keys with prefixes.
@@ -200,7 +205,7 @@ func TestLoadSettingsWithFlags_EnvOverridesDefault(t *testing.T) {
 
 // TestLoadSettingsWithFlags_NilFlags is same as LoadSettings behavior
 func TestLoadSettingsWithFlags_NilFlags(t *testing.T) {
-	_ = os.Unsetenv("ACDC_MCP_PORT")
+	unsetEnvForTest(t, "ACDC_MCP_PORT")
 
 	settings, err := LoadSettingsWithFlags(nil)
 	if err != nil {
@@ -217,14 +222,7 @@ func TestLoadSettingsWithFlags_NilFlags(t *testing.T) {
 // default: with no flag and no env var, content_dir is the process working
 // directory itself, not a "content" subdirectory beneath it.
 func TestLoadSettings_ContentDirDefaultsToWorkingDirectory(t *testing.T) {
-	// Note: Can't use t.Setenv to clear, so restore manually.
-	prevContentDir, hadContentDir := os.LookupEnv("ACDC_MCP_CONTENT_DIR")
-	_ = os.Unsetenv("ACDC_MCP_CONTENT_DIR")
-	t.Cleanup(func() {
-		if hadContentDir {
-			_ = os.Setenv("ACDC_MCP_CONTENT_DIR", prevContentDir)
-		}
-	})
+	unsetEnvForTest(t, "ACDC_MCP_CONTENT_DIR")
 
 	wd, err := os.Getwd()
 	require.NoError(t, err)
@@ -1014,6 +1012,66 @@ func TestLoadSettings_InMemoryEnvVarOverridesDefault(t *testing.T) {
 			settings, err := LoadSettings()
 			require.NoError(t, err)
 			require.Equal(t, tt.expected, settings.Search.InMemory)
+		})
+	}
+}
+
+// unsetEnvForTest clears the named environment variables for the duration of the
+// test and restores each one that was set beforehand. testing.T offers Setenv but
+// no counterpart that clears, so the capture and restore have to be explicit.
+func unsetEnvForTest(t testing.TB, keys ...string) {
+	t.Helper()
+
+	for _, key := range keys {
+		prev, had := os.LookupEnv(key)
+		_ = os.Unsetenv(key)
+		if had {
+			t.Cleanup(func() { _ = os.Setenv(key, prev) })
+		}
+	}
+}
+
+// TestUnsetEnvForTest_RestoresOnlyPreviouslySetVariables pins both halves of the
+// contract: a variable that was set comes back with its original value, and one
+// that was absent stays absent rather than reappearing as an empty string, which
+// LoadSettings cannot distinguish from unset for every key.
+func TestUnsetEnvForTest_RestoresOnlyPreviouslySetVariables(t *testing.T) {
+	const key = "ACDC_MCP_TEST_UNSET_HELPER"
+	const value = "original"
+
+	tests := []struct {
+		name       string
+		setUpfront bool
+	}{
+		{name: "restores a variable that was set", setUpfront: true},
+		{name: "leaves a variable that was unset alone", setUpfront: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// t.Setenv establishes a known baseline and undoes itself, so the
+			// arrangement never depends on the helper under test.
+			t.Setenv(key, value)
+			if !tt.setUpfront {
+				require.NoError(t, os.Unsetenv(key))
+			}
+
+			cleared := false
+			t.Run("under the helper", func(t *testing.T) {
+				unsetEnvForTest(t, key)
+
+				_, present := os.LookupEnv(key)
+				require.False(t, present, "helper must clear the variable")
+				cleared = true
+			})
+			require.True(t, cleared, "the subtest asserting the cleared state must have run")
+
+			// Subtest cleanups have run by the time t.Run returns.
+			restored, present := os.LookupEnv(key)
+			require.Equal(t, tt.setUpfront, present)
+			if tt.setUpfront {
+				require.Equal(t, value, restored)
+			}
 		})
 	}
 }
