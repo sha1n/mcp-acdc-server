@@ -21,6 +21,7 @@ jobs:
     outputs:
       src: ${{ steps.filter.outputs.src }}
       docker: ${{ steps.filter.outputs.docker }}
+      dockerhub_description: ${{ steps.filter.outputs.dockerhub_description }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
@@ -35,6 +36,11 @@ jobs:
             docker:
               - '**'
               - '!({README.md,GEMINI.md,LICENSE,.gitignore,.goreleaser.yaml,.github/**,docs/**,examples/**,tests/**,bin/**,build/**,dist/**,*.out})'
+            # The 'docker' job builds and pushes the image but never publishes the
+            # repository overview, so the description needs its own trigger.
+            dockerhub_description:
+              - 'docs/dockerhub-overview.md'
+              - '.github/workflows/ci.yml'
 
   test:
     needs: changes
@@ -100,6 +106,37 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Publishes docs/dockerhub-overview.md as the Docker Hub repository overview.
+  # Deliberately not a dependency of status-check: it only runs on the default
+  # branch, so a Docker Hub API failure should not retroactively fail CI.
+  # The overview duplicates the configuration tables in docs/configuration.md and
+  # the two must stay in sync.
+  # Docker Hub's Markdown renderer supports neither GitHub alert syntax ([!NOTE],
+  # [!IMPORTANT], ...) nor raw HTML, so the overview must stick to plain Markdown
+  # and plain blockquotes.
+  dockerhub-description:
+    needs: changes
+    if: |
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/master' &&
+      needs.changes.outputs.dockerhub_description == 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+      - name: Update Docker Hub repository overview
+        uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          # Requires a Docker Hub PAT with read/write/delete scope; the
+          # read/write scope that suffices for image pushes is rejected here.
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ secrets.DOCKERHUB_USERNAME }}/mcp-acdc-server
+          readme-filepath: ./docs/dockerhub-overview.md
+          short-description: "Agent Content Discovery Companion (ACDC) — MCP server for searchable AI-agent access to Markdown"
 
   # This job acts as a bridge for documentation-only PRs to satisfy status checks
   status-check:
