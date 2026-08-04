@@ -2,6 +2,9 @@ package testkit
 
 import (
 	"context"
+	"fmt"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -131,15 +134,46 @@ type clientMockTB struct {
 
 func (m *clientMockTB) Fatalf(format string, args ...any) {
 	m.failed = true
-	m.fatalMsg = format
+	m.fatalMsg = fmt.Sprintf(format, args...)
 	// Panic to stop execution like real Fatalf does
-	panic(fatalPanic{msg: format})
+	panic(fatalPanic{msg: m.fatalMsg})
 }
 
 func (m *clientMockTB) Helper() {}
 
 func (m *clientMockTB) TempDir() string {
 	return m.tempDir
+}
+
+func TestNewStdioTestClient_StartError(t *testing.T) {
+	mockT := &clientMockTB{TB: t, tempDir: t.TempDir()}
+	missingContentDir := filepath.Join(t.TempDir(), "missing")
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() {
+			if r := recover(); r != nil {
+				if _, ok := r.(fatalPanic); !ok {
+					panic(r)
+				}
+			}
+		}()
+		NewStdioTestClientForDir(mockT, missingContentDir)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Expected the startup failure to be reported without waiting for the connect deadline")
+	}
+
+	if !mockT.failed {
+		t.Fatal("Expected NewStdioTestClientForDir to fail for a missing content directory")
+	}
+	if !strings.Contains(mockT.fatalMsg, "not found or not a directory") {
+		t.Errorf("Expected the reported failure to name the startup error, got %q", mockT.fatalMsg)
+	}
 }
 
 func TestNewSSETestClient_StartError(t *testing.T) {

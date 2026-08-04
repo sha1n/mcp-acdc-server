@@ -77,7 +77,9 @@ func (s *acdcService) Start() (map[string]any, error) {
 	}
 
 	go func() {
-		s.errChan <- s.runner(ctx, params, s.flags, "testkit")
+		err := s.runner(ctx, params, s.flags, "testkit")
+		s.closeStdioPipes(err)
+		s.errChan <- err
 	}()
 
 	if transport == "stdio" {
@@ -118,6 +120,19 @@ func (s *acdcService) Start() (map[string]any, error) {
 	}
 
 	return nil, fmt.Errorf("server failed to start after %v", s.StartTimeout)
+}
+
+// closeStdioPipes hands the reason the server stopped to whoever is on the other end of
+// the pipes. A server that failed before reaching its transport never reads stdin nor
+// writes stdout, and io.Pipe has no buffer, so a client would otherwise block on its
+// first write instead of learning why startup failed.
+func (s *acdcService) closeStdioPipes(cause error) {
+	if s.stdinReader != nil {
+		_ = s.stdinReader.CloseWithError(cause)
+	}
+	if s.stdoutWriter != nil {
+		_ = s.stdoutWriter.CloseWithError(cause)
+	}
 }
 
 func (s *acdcService) Stop() error {
