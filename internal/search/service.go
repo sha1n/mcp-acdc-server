@@ -152,6 +152,10 @@ func (s *Service) newIndex() (searchIndex, string, error) {
 // one, so the batch size only needs to keep the segment count small, not
 // minimize it. Raising it further buys little further query latency for a
 // steep rise in build-time heap, since a batch is held in memory whole.
+//
+// Changing this invalidates the segment counts and latencies quoted in
+// docs/configuration.md under "Where the index lives"; re-measure with
+// `make bench` against a real corpus and update them together.
 const defaultBatchSize = 1000
 
 func batchIndex(ctx context.Context, index BatchIndexer, chunks <-chan domain.Chunk, batchSize int) error {

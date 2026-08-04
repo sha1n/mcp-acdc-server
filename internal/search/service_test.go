@@ -550,9 +550,10 @@ func rankedScores(results []SearchResult) []rankedScore {
 	return out
 }
 
-// searchThrough runs the production query shape against a caller-supplied
-// index, bypassing Service.newIndex so a test can choose the index kind.
-func searchThrough(t *testing.T, idx searchIndex, chunks []domain.Chunk, query string) []rankedScore {
+// indexInto indexes chunks into idx at the given batch size and attaches the
+// result to a Service, bypassing Service.newIndex so a test can choose the
+// index kind and the batch size independently.
+func indexInto(t *testing.T, idx searchIndex, chunks []domain.Chunk, batchSize int) *Service {
 	t.Helper()
 
 	stream := make(chan domain.Chunk, len(chunks))
@@ -560,11 +561,20 @@ func searchThrough(t *testing.T, idx searchIndex, chunks []domain.Chunk, query s
 		stream <- chunk
 	}
 	close(stream)
-	require.NoError(t, batchIndex(context.Background(), idx, stream, defaultBatchSize))
+	require.NoError(t, batchIndex(context.Background(), idx, stream, batchSize))
 
 	service := NewService(testSettings())
 	service.index = idx
 	t.Cleanup(service.Close)
+	return service
+}
+
+// searchThrough runs the production query shape against a caller-supplied
+// index, bypassing Service.newIndex so a test can choose the index kind.
+func searchThrough(t *testing.T, idx searchIndex, chunks []domain.Chunk, query string) []rankedScore {
+	t.Helper()
+
+	service := indexInto(t, idx, chunks, defaultBatchSize)
 
 	results, err := service.Search(query, 10)
 	require.NoError(t, err)
@@ -648,26 +658,13 @@ func syntheticCorpusChunks(n int) []domain.Chunk {
 }
 
 // batchIndexedService indexes chunks into a fresh in-memory index at the
-// given batch size and attaches it to a Service the way searchThrough does,
-// but keeping the batch size a parameter rather than fixing it at
-// defaultBatchSize.
+// given batch size.
 func batchIndexedService(t *testing.T, chunks []domain.Chunk, batchSize int) *Service {
 	t.Helper()
 
 	idx, err := newMemoryIndex(buildMapping())
 	require.NoError(t, err)
-
-	stream := make(chan domain.Chunk, len(chunks))
-	for _, chunk := range chunks {
-		stream <- chunk
-	}
-	close(stream)
-	require.NoError(t, batchIndex(context.Background(), idx, stream, batchSize))
-
-	service := NewService(testSettings())
-	service.index = idx
-	t.Cleanup(service.Close)
-	return service
+	return indexInto(t, idx, chunks, batchSize)
 }
 
 // serviceRootSegments counts the segments a query against service fans out
@@ -685,10 +682,10 @@ func serviceRootSegments(t *testing.T, service *Service) int {
 // TestSearch_RankingIsIndependentOfBatchSize pins the invariant defaultBatchSize
 // depends on: the batch size only bounds how many segments the in-memory index
 // ends up with, and must never influence which documents match or how they
-// score. The golden harness's corpus is 41 chunks, which forms a single batch
-// at any batch size of 100 or larger, so a golden-report diff across the
-// batch-size change is empty for a trivial reason — it never exercises more
-// than one segment. This test builds a synthetic corpus of 300 chunks with
+// score. The golden harness's corpus is far smaller than defaultBatchSize and
+// so forms a single batch, which makes a golden-report diff across a
+// batch-size change empty for a trivial reason — it never exercises more than
+// one segment. This test builds a synthetic corpus of 300 chunks with
 // varied content instead, so that the two sides genuinely differ in segment
 // count, and checks that they agree anyway.
 //
