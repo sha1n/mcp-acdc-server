@@ -122,21 +122,29 @@ directory at startup and on every refresh, and it is never reopened, so
 persisting it to disk buys nothing back.
 
 Pass `--search-in-memory=false`, or set `ACDC_MCP_SEARCH_IN_MEMORY=false`, to
-build it on disk instead, under a temporary directory. An in-memory index
-accumulates one segment per indexing batch and never compacts them; raising
-the default batch size from 100 to 1000 cut segment count roughly 10× (207
-segments to 21) and roughly halved in-memory query latency (9.21 ms to
-4.87 ms). At 20,678 chunks — a 10,339-chunk corpus duplicated, which doubles
-posting-list length but leaves the term dictionary at its original size —
-in-memory builds about 1.3× faster than on disk (1.90 s against 2.42 s) and
-answers queries only about 10% slower (4.87 ms against 4.41 ms). On-disk's
-remaining edge is its merger, which leaves it with fewer segments still (10
-against 21); at equal segment counts the two kinds measure
-indistinguishably. These figures time the search engine answering one
-query, below the MCP tool clients call. That tool retries — up to twice,
-with a wider candidate window — only if the result page is still short and
-the candidate set was truncated; treat these figures as a floor, not an
-end-to-end number.
+build it on disk instead, under a temporary directory.
+
+The figures below were measured at 20,678 chunks — a 10,339-chunk corpus
+duplicated, which doubles posting-list length but leaves the term dictionary at
+its original size.
+
+A segment is an independent sub-index that every query must search in turn, so
+query latency grows with how many an index holds. An in-memory index
+accumulates one per indexing batch and never merges them, which is why the
+batch size is tuned to keep that count small: it settles at 21 segments and a
+4.87 ms query, against 207 segments and 9.21 ms had batches been ten times
+smaller.
+
+At that size in-memory builds about 1.3× faster than on disk (1.90 s against
+2.42 s) and answers queries only about 10% slower (4.87 ms against 4.41 ms).
+On-disk's remaining edge is its merger, which leaves it with fewer segments
+still (10 against 21); at equal segment counts the two kinds measure
+indistinguishably.
+
+These figures time the search engine answering one query, below the MCP tool
+clients call. That tool retries — up to twice, with a wider candidate window —
+only if the result page is still short and the candidate set was truncated;
+treat these figures as a floor, not an end-to-end number.
 
 `--search-in-memory=false` also pays off when Go heap matters more than
 query speed: the on-disk index holds its data in memory-mapped segments the
