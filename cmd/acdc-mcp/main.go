@@ -35,6 +35,10 @@ func Execute(version, build, programName string, args []string) error {
 		Short:   "ACDC MCP Server",
 		Long:    "Agent Content Discovery Companion (ACDC) MCP Server",
 		Version: version,
+		// A startup error (e.g. the legacy-layout refusal) is the operator's
+		// entire actionable message; cobra's default flag-usage dump after it
+		// buries that message under ~25 lines of help text.
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runWithFlags(cmd.Flags(), version)
 		},
