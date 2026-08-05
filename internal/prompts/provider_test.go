@@ -13,7 +13,7 @@ import (
 func TestDiscoverPrompts(t *testing.T) {
 	t.Run("ValidPrompt", func(t *testing.T) {
 		tempDir := t.TempDir()
-		promptsDir := filepath.Join(tempDir, "mcp-prompts")
+		promptsDir := content.NewContentProvider(tempDir).PromptsDir
 		_ = os.MkdirAll(promptsDir, 0755)
 		mdContent := `---
 name: test-prompt
@@ -37,7 +37,7 @@ Hello {{.arg1}}`
 
 	t.Run("InvalidTemplate", func(t *testing.T) {
 		tempDir := t.TempDir()
-		promptsDir := filepath.Join(tempDir, "mcp-prompts")
+		promptsDir := content.NewContentProvider(tempDir).PromptsDir
 		_ = os.MkdirAll(promptsDir, 0755)
 		mdContent := `---
 name: bad-template
@@ -62,7 +62,7 @@ Hello {{.unclosed`
 
 	t.Run("SubDirAndNonMd", func(t *testing.T) {
 		tempDir := t.TempDir()
-		promptsDir := filepath.Join(tempDir, "mcp-prompts")
+		promptsDir := content.NewContentProvider(tempDir).PromptsDir
 		_ = os.MkdirAll(promptsDir, 0755)
 		subDir := filepath.Join(promptsDir, "sub")
 		_ = os.MkdirAll(subDir, 0755)
@@ -78,7 +78,7 @@ Hello {{.unclosed`
 
 	t.Run("MissingMetadata", func(t *testing.T) {
 		tempDir := t.TempDir()
-		promptsDir := filepath.Join(tempDir, "mcp-prompts")
+		promptsDir := content.NewContentProvider(tempDir).PromptsDir
 		_ = os.MkdirAll(promptsDir, 0755)
 		// Missing name
 		_ = os.WriteFile(filepath.Join(promptsDir, "no_name.md"), []byte("---\ndescription: d\n---\nHello"), 0644)
@@ -93,7 +93,7 @@ Hello {{.unclosed`
 
 	t.Run("InvalidArgumentFormats", func(t *testing.T) {
 		tempDir := t.TempDir()
-		promptsDir := filepath.Join(tempDir, "mcp-prompts")
+		promptsDir := content.NewContentProvider(tempDir).PromptsDir
 		_ = os.MkdirAll(promptsDir, 0755)
 		// Args not a slice
 		_ = os.WriteFile(filepath.Join(promptsDir, "bad_args1.md"), []byte("---\nname: n1\ndescription: d1\narguments: not-a-slice\n---\nHello"), 0644)
@@ -122,7 +122,7 @@ Hello {{.unclosed`
 
 	t.Run("InvalidFrontmatter", func(t *testing.T) {
 		tempDir := t.TempDir()
-		promptsDir := filepath.Join(tempDir, "mcp-prompts")
+		promptsDir := content.NewContentProvider(tempDir).PromptsDir
 		_ = os.MkdirAll(promptsDir, 0755)
 		_ = os.WriteFile(filepath.Join(promptsDir, "invalid_fm.md"), []byte("---\n: broken\n---\nHello"), 0644)
 
@@ -134,7 +134,7 @@ Hello {{.unclosed`
 
 	t.Run("WalkDirError", func(t *testing.T) {
 		tempDir := t.TempDir()
-		promptsDir := filepath.Join(tempDir, "mcp-prompts")
+		promptsDir := content.NewContentProvider(tempDir).PromptsDir
 		_ = os.MkdirAll(promptsDir, 0755)
 
 		// Create a subdirectory and make it unreadable
@@ -165,7 +165,7 @@ Hello {{.unclosed`
 func TestPromptProvider_GetPrompt(t *testing.T) {
 	tempDir := t.TempDir()
 	cp := content.NewContentProvider(tempDir)
-	promptsDir := filepath.Join(tempDir, "mcp-prompts")
+	promptsDir := content.NewContentProvider(tempDir).PromptsDir
 	_ = os.MkdirAll(promptsDir, 0755)
 
 	t.Run("Success", func(t *testing.T) {

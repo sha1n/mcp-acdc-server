@@ -32,6 +32,8 @@ docker run -i --rm \
   sha1n/mcp-acdc-server:latest
 ```
 
+> **Important:** Since 0.8.0, the on-disk content convention moved from `mcp-metadata.yaml`, `mcp-prompts/`, and `mcp-resources/` to a single `.acdc/` directory; the server refuses to start on the old layout. See [Migrating](https://github.com/sha1n/mcp-acdc-server/blob/master/docs/authoring-resources.md#migrating).
+
 ### Zero-config content
 
 No manifest required. Mount any repository and the server indexes `README.md` and `docs/**/*.md` using built-in server identity and instructions:
@@ -41,7 +43,7 @@ docker run -d -p 8080:8080 -e ACDC_MCP_TRANSPORT=sse \
   -v "$(pwd):/app/content:ro" sha1n/mcp-acdc-server:latest
 ```
 
-Add an `mcp-metadata.yaml` to the content root to override the defaults — customize server identity and instructions, and add an `index` block to select Markdown by glob pattern. See the [Authoring Resources Guide](https://github.com/sha1n/mcp-acdc-server/blob/master/docs/authoring-resources.md).
+Add a `.acdc/config.yaml` to the content root to override the defaults — customize server identity and instructions, and add an `index` block to select Markdown by glob pattern. See the [Authoring Resources Guide](https://github.com/sha1n/mcp-acdc-server/blob/master/docs/authoring-resources.md).
 
 ---
 

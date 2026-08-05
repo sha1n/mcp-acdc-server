@@ -27,7 +27,7 @@ This example demonstrates how to use a pre-built content image (`sha1n/mcp-acdc-
 ### 3. Repository Docs (Configured Chunk Indexing)
 **Location:** [`repository-docs/`](repository-docs/)
 
-This example indexes an existing repository's `docs/` directory directly via the `index` block in `mcp-metadata.yaml`, instead of curating a dedicated `mcp-resources/` tree. No Docker required — run `acdc-mcp` directly against the target repository.
+This example indexes an existing repository's `docs/` directory directly via the `index` block in `.acdc/config.yaml`, instead of curating a dedicated `.acdc/resources/` tree. No Docker required — run `acdc-mcp` directly against the target repository.
 
 - **Pattern**: Configured chunk indexing (`index.include`/`index.exclude`) over an arbitrary directory.
 - **Guide**: [Repository Docs Guide](repository-docs/README.md)
@@ -36,10 +36,10 @@ This example indexes an existing repository's `docs/` directory directly via the
 
 ## 📂 Sample Content
 
-The Docker examples (`docker-local-content/` and `docker-image-content/`) use the sample content found in the [**`sample-content/`**](sample-content/) directory:
-- `mcp-metadata.yaml`: Server identity, instructions, and tool-description overrides.
-- `mcp-resources/`: Markdown files (with frontmatter and keywords) that the agent can search and read.
-- `mcp-prompts/`: Parameterised prompt templates the agent can invoke.
+The Docker examples (`docker-local-content/` and `docker-image-content/`) use the sample content found in the [**`sample-content/`**](sample-content/) directory, under its `.acdc/` subdirectory:
+- `.acdc/config.yaml`: Server identity, instructions, and tool-description overrides.
+- `.acdc/resources/`: Markdown files (with frontmatter and keywords) that the agent can search and read.
+- `.acdc/prompts/`: Parameterised prompt templates the agent can invoke.
 
 `repository-docs/` is self-contained and instead points at an existing repository's own `docs/` directory — see its guide for setup.
 

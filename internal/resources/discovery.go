@@ -56,7 +56,7 @@ type DiscoverOption func(*discoverPolicy)
 // WithLenientIndex tolerates an empty selection and skips files that cannot be read
 // or parsed, instead of failing startup. Used when the index configuration is
 // defaulted rather than declared by an operator. It has no effect in legacy
-// mcp-resources mode (index == nil), which resolves before any policy is applied.
+// .acdc/resources mode (index == nil), which resolves before any policy is applied.
 func WithLenientIndex() DiscoverOption {
 	return func(p *discoverPolicy) { p.lenient = true }
 }
@@ -93,7 +93,7 @@ func shouldPruneDir(name string, lenient bool) bool {
 	return lenient && lenientPrunedDirs[name]
 }
 
-// Discover loads configured Markdown sources, or legacy mcp-resources when
+// Discover loads configured Markdown sources, or legacy .acdc/resources when
 // index is nil. By default it applies today's strict behavior: an empty
 // selection or an unreadable/unparsable configured file fails discovery.
 // Pass WithLenientIndex to tolerate repository content issues instead.
@@ -229,7 +229,7 @@ func selectConfiguredFiles(ctx context.Context, cp *content.ContentProvider, ind
 	return root, selected, nil
 }
 
-// DiscoverResources returns legacy mcp-resources definitions for callers that
+// DiscoverResources returns legacy .acdc/resources definitions for callers that
 // only need source metadata.
 func DiscoverResources(cp *content.ContentProvider, scheme string) ([]ResourceDefinition, error) {
 	result, err := Discover(context.Background(), cp, nil, scheme)

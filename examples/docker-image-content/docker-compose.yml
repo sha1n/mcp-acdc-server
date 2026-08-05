@@ -2,7 +2,10 @@ services:
   # Init container to populate content from the pre-packaged content image
   content-init:
     image: sha1n/mcp-acdc-content:latest
-    command: sh -c "rm -rf /dest/* && cp -r /content/* /dest/"
+    # Operates on the directory itself rather than a `*` glob, so dotfiles and
+    # dot-directories such as .acdc/ survive: POSIX shell globs never match
+    # leading dots.
+    command: sh -c "find /dest -mindepth 1 -delete && cp -a /content/. /dest/"
     volumes:
       - content-data:/dest
     restart: "no"

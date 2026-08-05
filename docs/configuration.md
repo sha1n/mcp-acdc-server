@@ -15,7 +15,7 @@ When the same setting is specified in multiple places, the following priority ap
 
 | CLI Flag | Short | Environment Variable | Description | Default |
 |----------|-------|---------------------|-------------|---------|
-| `--content-dir` | `-c` | `ACDC_MCP_CONTENT_DIR` | Path to content directory. May point at a repository root with no `mcp-metadata.yaml` — see [Authoring Resources Guide](authoring-resources.md#zero-config-defaults-no-manifest). | current working directory |
+| `--content-dir` | `-c` | `ACDC_MCP_CONTENT_DIR` | Path to content directory. May point at a repository root with no `.acdc/config.yaml` — see [Authoring Resources Guide](authoring-resources.md#zero-config-defaults-no-manifest). | current working directory |
 | `--transport` | `-t` | `ACDC_MCP_TRANSPORT` | Transport type: `stdio` or `sse` | `stdio` |
 | `--host` | `-H` | `ACDC_MCP_HOST` | Host for SSE server (SSE mode only) | `0.0.0.0` |
 | `--port` | `-p` | `ACDC_MCP_PORT` | Port for SSE server (SSE mode only) | `8080` |

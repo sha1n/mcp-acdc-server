@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/sha1n/mcp-acdc-server/internal/content"
 	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -21,7 +22,7 @@ const defaultInstructionsFormat = `Documentation for the %s repository: guides, 
 Search here before answering questions about this repository's conventions, architecture, decisions, or planned work. Prefer these documents over assumptions drawn from source code alone.`
 
 // TestZeroConfig_RepoWithDocs drives a real server, over the in-process stdio
-// transport, rooted at a temp directory with no mcp-metadata.yaml but with the
+// transport, rooted at a temp directory with no .acdc/config.yaml but with the
 // default zero-config layout (README.md plus docs/**/*.md). It proves the seam
 // from defaults through discovery, chunking, indexing, and the MCP surface: the
 // derived server identity, chunk-scoped search, bare and fragment reads, and the
@@ -107,16 +108,17 @@ func TestZeroConfig_RepoWithNoDocs(t *testing.T) {
 }
 
 // TestZeroConfig_LegacyResourcesLayoutIsNotDiscovered verifies that a content
-// root laid out for legacy discovery (mcp-resources/**.md) but missing
-// mcp-metadata.yaml does not fall back to legacy discovery. Zero-config
+// root laid out for legacy discovery (.acdc/resources/**.md) but missing
+// .acdc/config.yaml does not fall back to legacy discovery. Zero-config
 // defaults always set a non-nil Index, which routes discovery to the
 // configured-index path (README.md and docs/**) instead of scanning
-// mcp-resources. The fixture file carries valid frontmatter, so it would have
-// been discovered under legacy mode - proving the file is discoverable in
-// principle, and still isn't found.
+// .acdc/resources. The fixture file carries valid frontmatter, so it would
+// have been discovered under legacy mode - proving the file is discoverable
+// in principle, and still isn't found.
 func TestZeroConfig_LegacyResourcesLayoutIsNotDiscovered(t *testing.T) {
 	contentDir := t.TempDir()
-	writeFile(t, contentDir, "mcp-resources/guide.md", "---\nname: Guide\ndescription: A guide.\n---\n"+
+	resourcesDir := content.NewContentProvider(contentDir).ResourcesDir
+	writeFile(t, resourcesDir, "guide.md", "---\nname: Guide\ndescription: A guide.\n---\n"+
 		"# Guide\n\nContent for the guide.\n")
 
 	client := testkit.NewStdioTestClientForDir(t, contentDir)

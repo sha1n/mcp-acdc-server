@@ -7,7 +7,7 @@ The ACDC (Agent Content Discovery Companion) MCP Server is designed to serve org
 ### Core Principles
 1.  **Centralized Content**: Operates on a local directory (typically a mounted volume) containing static Markdown resources.
 2.  **Zero-Config Client**: Clients discover capabilities dynamically via MCP tool definitions.
-3.  **Metadata-Driven**: Server identity, tool exposure, and indexing use built-in defaults, optionally overridden by an `mcp-metadata.yaml` manifest in the content root.
+3.  **Metadata-Driven**: Server identity, tool exposure, and indexing use built-in defaults, optionally overridden by a `.acdc/config.yaml` manifest in the content root.
 4.  **Transport Agnostic**: Supports both `stdio` (local process) and `sse` (HTTP) transports.
 
 ---
@@ -18,7 +18,7 @@ The server is configured via environment variables, command-line flags, or a `.e
 
 | Environment Variable | CLI Flag | Description | Default |
 | :--- | :--- | :--- | :--- |
-| `ACDC_MCP_CONTENT_DIR` | `--content-dir`, `-c` | Root directory to serve; an `mcp-metadata.yaml` there is optional (see Content Repository Structure). | current working directory |
+| `ACDC_MCP_CONTENT_DIR` | `--content-dir`, `-c` | Root directory to serve; a `.acdc/config.yaml` there is optional (see Content Repository Structure). | current working directory |
 | `ACDC_MCP_TRANSPORT` | `--transport`, `-t` | Communication transport: `stdio` or `sse`. | `stdio` |
 | `ACDC_MCP_HOST` | `--host`, `-H` | Host interface to bind for SSE transport. | `0.0.0.0` |
 | `ACDC_MCP_PORT` | `--port`, `-p` | Port to listen on for SSE transport. | `8080` |
@@ -40,20 +40,21 @@ The server is configured via environment variables, command-line flags, or a `.e
 
 ## Content Repository Structure
 
-`mcp-metadata.yaml` at the root of `ACDC_MCP_CONTENT_DIR` is optional. If it is absent, the server falls back to built-in zero-config defaults (see 0 below) rather than failing startup. If it is present, source documents are discovered in one of two mutually exclusive modes, selected by the presence of an `index` block in `mcp-metadata.yaml`:
+`.acdc/config.yaml` at the root of `ACDC_MCP_CONTENT_DIR` is optional. If it is absent, the server falls back to built-in zero-config defaults (see 0 below) rather than failing startup. If it is present, source documents are discovered in one of two mutually exclusive modes, selected by the presence of an `index` block in `.acdc/config.yaml`:
 
 ```text
 / (Content Root)
-├── mcp-metadata.yaml       # Server identity, tool, and index configuration (Optional — see 0. Zero-Config Defaults)
-└── mcp-resources/          # Legacy discovery: used when `index` is absent
-    ├── guide.md
-    └── subfolder/
-        └── details.md
+└── .acdc/
+    ├── config.yaml         # Server identity, tool, and index configuration (Optional — see 0. Zero-Config Defaults)
+    └── resources/          # Legacy discovery: used when `index` is absent
+        ├── guide.md
+        └── subfolder/
+            └── details.md
 ```
 
-### 0. Zero-Config Defaults (`mcp-metadata.yaml` absent)
+### 0. Zero-Config Defaults (`.acdc/config.yaml` absent)
 
--   **Activation**: Triggered only when `mcp-metadata.yaml` does not exist at the content root. A manifest that exists but cannot be read, fails to parse as YAML, or fails `Validate()` is still a fatal startup error — only a *missing* file falls back to defaults.
+-   **Activation**: Triggered only when `.acdc/config.yaml` does not exist at the content root. A manifest that exists but cannot be read, fails to parse as YAML, or fails `Validate()` is still a fatal startup error — only a *missing* file falls back to defaults.
 -   **Default index**: Equivalent to a manifest with `index.include: ["README.md", "docs/**/*.md"]` (no `exclude`), which selects the same configured chunk indexing path described in 2b, with the same optional-frontmatter metadata derivation.
 -   **Error handling (lenient)**: Unlike an explicit `index` block, the defaulted index tolerates conditions that would otherwise fail startup: zero matched files, and a per-file read, parse, or URI-construction failure, are logged as warnings and the file (or the whole selection) is skipped instead of failing the server. Configuration-shape errors — an invalid, absolute, or root-escaping glob pattern, a selected non-Markdown file, or a content root that cannot be resolved — remain fatal, exactly as in 2b.
 -   **Directory pruning**: `.git` is always skipped during traversal, in both this mode and 2b. Under this defaulted mode only, `node_modules`, `vendor`, `dist`, `build`, `target`, and `.venv` are also skipped, so a repository's dependency and build-output directories are never scanned for Markdown. The content root itself is never pruned, even if its name matches one of these.
@@ -63,9 +64,9 @@ The server is configured via environment variables, command-line flags, or a `.e
 
     Search here before answering questions about this repository's conventions, architecture, decisions, or planned work. Prefer these documents over assumptions drawn from source code alone.
     ```
--   **Startup log**: When defaults are used, the server logs `mcp-metadata.yaml not found, using built-in defaults` at info level, with the derived server name and default index patterns.
+-   **Startup log**: When defaults are used, the server logs `.acdc/config.yaml not found, using built-in defaults` at info level, with the derived server name and default index patterns.
 
-### 1. Metadata Manifest (`mcp-metadata.yaml`)
+### 1. Metadata Manifest (`.acdc/config.yaml`)
 
 Defines the server's identity, optional tool overrides, and optional configured indexing.
 
@@ -90,12 +91,12 @@ index:                  # Optional: switches discovery to configured chunk index
 ```
 *Note: If the `tools` section is omitted or a specific tool is not listed, the server provides high-quality default descriptions for the `search` and `read` tools.*
 
-### 2a. Legacy Resource Discovery (`mcp-resources/`, `index` absent)
+### 2a. Legacy Resource Discovery (`.acdc/resources/`, `index` absent)
 
--   **Discovery**: The server recursively scans `mcp-resources/` for `.md` and `.markdown` files. A missing directory yields zero resources (not an error).
+-   **Discovery**: The server recursively scans `.acdc/resources/` for `.md` and `.markdown` files. A missing directory yields zero resources (not an error).
 -   **URI Scheme**: `<scheme>://<relative_path_without_extension>` (default scheme: `acdc`)
-    -   Example: `mcp-resources/docs/guide.md` -> `acdc://docs/guide`
-    -   With `--uri-scheme myorg`: `mcp-resources/docs/guide.md` -> `myorg://docs/guide`
+    -   Example: `.acdc/resources/docs/guide.md` -> `acdc://docs/guide`
+    -   With `--uri-scheme myorg`: `.acdc/resources/docs/guide.md` -> `myorg://docs/guide`
     -   The scheme must be RFC 3986 compliant (starts with a letter, followed by letters/digits/`+`/`-`/`.`).
     -   Windows backslashes are normalized to forward slashes.
 -   **File Format**: Must be Markdown with YAML Frontmatter.
@@ -116,7 +117,7 @@ Markdown content follows...
 ### 2b. Configured Chunk Indexing (`index` present)
 
 -   **Discovery**: Files under the content root matching `index.include` (and not matching `index.exclude`) are indexed, using [doublestar](https://github.com/bmatcuk/doublestar) glob syntax where `**` matches zero or more path segments (`docs/**/*.md` matches both `docs/guide.md` and `docs/api/guide.md`). Patterns must be relative to the content root; absolute or root-escaping patterns fail startup. `exclude` always wins over `include`. `.git` is always skipped during traversal (see also the zero-config-only pruning in 0 above).
--   **URI Scheme**: Same construction as legacy discovery, relative to `--content-dir` instead of `mcp-resources/`.
+-   **URI Scheme**: Same construction as legacy discovery, relative to `--content-dir` instead of `.acdc/resources/`.
 -   **File Format**: Must be `.md` or `.markdown`. YAML frontmatter is **optional**; when present it must still be valid.
 -   **Metadata derivation**: `name` falls back to the first `#` (H1) heading, `description` to the first paragraph, when frontmatter omits them. `description` is always truncated to 200 Unicode characters, whether it came from frontmatter or the fallback paragraph. `keywords` has no fallback.
 -   **Error handling (strict)**: Any of the following fails server startup: `index.include` missing/empty, an invalid/absolute/root-escaping glob pattern, zero files matched, a matched file that is not Markdown, a matched file that cannot be read or parsed, a matched file whose URI cannot be constructed as a valid resource address (e.g. a relative path containing an ASCII control character), or the content root itself cannot be resolved (e.g. a broken symlink). The same conditions encountered on the mid-session refresh described in [Content Refresh](#content-refresh) are logged and skipped instead of fatal — a running server keeps serving its last-known-good catalog.
@@ -139,7 +140,7 @@ See the [Authoring Resources Guide](authoring-resources.md#chunking-and-fragment
 
 ## Tools
 
-The server always implements and registers the following MCP tools. Their descriptions can be customized via `mcp-metadata.yaml`, but sensible defaults are provided.
+The server always implements and registers the following MCP tools. Their descriptions can be customized via `.acdc/config.yaml`, but sensible defaults are provided.
 
 ### `search`
 Performs a full-text search over indexed chunks and returns chunk citations, optionally with the full chunk body.
@@ -204,7 +205,7 @@ The content root is re-checked for changes at the start of every `search` call, 
 
 A check is debounced to at most once every 2 seconds — a burst of requests inside that window is served from the previous result rather than re-walking the content root. The check itself is layered to keep the common case cheap: it first compares a digest of file paths, sizes, and modification times (no file contents are read) against the last check, and only when that digest changed does it re-discover and diff a content digest, and only when *that* digest also changed does it re-assemble the catalog, rebuild the Bleve search index, publish the new catalog, and reconcile registered resources — sending `notifications/resources/list_changed` to connected clients when the resource set actually changed. An untouched content root costs one cheap filesystem walk per debounce interval; the full rebuild only runs on an actual change.
 
-This applies identically to both discovery modes (legacy `mcp-resources/` and configured indexing) and to both transports — there is no way to scope refresh to one or disable it. Every error on this path (a failed walk, discovery, parse, or index rebuild) is logged and swallowed: the previously published catalog and index stay in place and the next debounce interval retries from scratch. This is deliberately different from the fatal startup errors listed elsewhere on this page — a malformed document must never take down a server that has already been serving successfully.
+This applies identically to both discovery modes (legacy `.acdc/resources/` and configured indexing) and to both transports — there is no way to scope refresh to one or disable it. Every error on this path (a failed walk, discovery, parse, or index rebuild) is logged and swallowed: the previously published catalog and index stay in place and the next debounce interval retries from scratch. This is deliberately different from the fatal startup errors listed elsewhere on this page — a malformed document must never take down a server that has already been serving successfully.
 
 A content-change rebuild holds the search index's write lock for its duration, so a concurrent `search` call briefly blocks until the rebuild finishes. For the zero-config, locally-indexed case this is on the order of milliseconds; for a large curated corpus served over SSE to many concurrent clients, it is a real (if brief) pause on every edit, with no configuration to opt out of it. Because the replacement index is built before the previous one is released, a rebuild also holds two complete indexes at once — under the default in-memory mode, that is twice the index's memory for its duration.
 

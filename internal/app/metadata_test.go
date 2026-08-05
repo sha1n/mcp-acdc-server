@@ -33,8 +33,9 @@ tools:
   - name: search
     description: custom search
 `
-	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(manifest), 0o644))
 	cp := content.NewContentProvider(contentDir)
+	require.NoError(t, os.MkdirAll(cp.ConfigDir, 0o755))
+	require.NoError(t, os.WriteFile(cp.ConfigFile, []byte(manifest), 0o644))
 
 	resolved, err := resolveMetadata(cp, "9.9.9")
 
@@ -48,8 +49,9 @@ tools:
 
 func TestResolveMetadata_MalformedYAMLReturnsError(t *testing.T) {
 	contentDir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte("not: valid: yaml: {{"), 0o644))
 	cp := content.NewContentProvider(contentDir)
+	require.NoError(t, os.MkdirAll(cp.ConfigDir, 0o755))
+	require.NoError(t, os.WriteFile(cp.ConfigFile, []byte("not: valid: yaml: {{"), 0o644))
 
 	_, err := resolveMetadata(cp, "1.0.0")
 
@@ -64,8 +66,9 @@ server:
   version: ""
   instructions: ""
 `
-	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(manifest), 0o644))
 	cp := content.NewContentProvider(contentDir)
+	require.NoError(t, os.MkdirAll(cp.ConfigDir, 0o755))
+	require.NoError(t, os.WriteFile(cp.ConfigFile, []byte(manifest), 0o644))
 
 	_, err := resolveMetadata(cp, "1.0.0")
 
@@ -77,11 +80,12 @@ func TestResolveMetadata_UnreadableManifestReturnsError(t *testing.T) {
 		t.Skip("root bypasses permission bits")
 	}
 	contentDir := t.TempDir()
-	manifestPath := filepath.Join(contentDir, "mcp-metadata.yaml")
+	cp := content.NewContentProvider(contentDir)
+	manifestPath := cp.ConfigFile
+	require.NoError(t, os.MkdirAll(cp.ConfigDir, 0o755))
 	require.NoError(t, os.WriteFile(manifestPath, []byte("server: {name: test, version: '1', instructions: i}"), 0o644))
 	require.NoError(t, os.Chmod(manifestPath, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(manifestPath, 0o644) })
-	cp := content.NewContentProvider(contentDir)
 
 	_, err := resolveMetadata(cp, "1.0.0")
 
@@ -94,7 +98,7 @@ func TestResolveMetadata_UnreadableManifestReturnsError(t *testing.T) {
 // skipped under root.
 func TestResolveMetadata_ManifestIsDirectoryReturnsError(t *testing.T) {
 	contentDir := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(contentDir, "mcp-metadata.yaml"), 0o755))
+	require.NoError(t, os.MkdirAll(content.NewContentProvider(contentDir).ConfigFile, 0o755))
 	cp := content.NewContentProvider(contentDir)
 
 	_, err := resolveMetadata(cp, "1.0.0")
@@ -103,7 +107,7 @@ func TestResolveMetadata_ManifestIsDirectoryReturnsError(t *testing.T) {
 }
 
 // TestResolveMetadata_NonexistentContentDirReturnsError pins the diagnostic
-// for a typo'd --content-dir: os.ReadFile("<typo>/mcp-metadata.yaml") also
+// for a typo'd --content-dir: os.ReadFile("<typo>/.acdc/config.yaml") also
 // satisfies fs.ErrNotExist, so without an explicit content-dir check the
 // server would log a misleading "using built-in defaults" for a directory
 // that was never resolved, then fail one step later on content root

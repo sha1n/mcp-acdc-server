@@ -11,10 +11,10 @@ ACDC turns a directory of Markdown files into a fully searchable MCP resource se
 
 ## Key Concepts
 
-- **Resources** — Markdown files with YAML frontmatter. They live under `mcp-resources/` and are exposed via the `resources/list` MCP method.
-- **Prompts** — Template files under `mcp-prompts/` that provide reusable, parameterised instructions an agent can invoke.
+- **Resources** — Markdown files with YAML frontmatter. They live under `.acdc/resources/` and are exposed via the `resources/list` MCP method.
+- **Prompts** — Template files under `.acdc/prompts/` that provide reusable, parameterised instructions an agent can invoke.
 - **Search** — Full-text search powered by Bleve. Every resource is indexed automatically; add `keywords` in frontmatter to boost discoverability.
-- **Metadata** — The `mcp-metadata.yaml` file at the content root defines server identity, instructions, and optional tool-description overrides.
+- **Metadata** — The `.acdc/config.yaml` file at the content root defines server identity, instructions, and optional tool-description overrides.
 
 ## Your First Steps
 

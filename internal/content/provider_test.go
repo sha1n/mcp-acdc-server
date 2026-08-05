@@ -282,3 +282,22 @@ func TestContentProvider_GetPath(t *testing.T) {
 		t.Errorf("Expected '%s', got '%s'", expected, path)
 	}
 }
+
+func TestNewContentProvider_ComposesLayoutPaths(t *testing.T) {
+	cp := NewContentProvider("/repo")
+
+	require.Equal(t, "/repo", cp.ContentDir)
+	require.Equal(t, filepath.Join("/repo", ".acdc"), cp.ConfigDir)
+	require.Equal(t, filepath.Join("/repo", ".acdc", "config.yaml"), cp.ConfigFile)
+	require.Equal(t, filepath.Join("/repo", ".acdc", "resources"), cp.ResourcesDir)
+	require.Equal(t, filepath.Join("/repo", ".acdc", "prompts"), cp.PromptsDir)
+}
+
+// The content directories must follow the config directory rather than the
+// content root, so relocating the base cannot leave them behind at the old root.
+func TestNewContentProvider_DerivesContentDirsFromConfigDir(t *testing.T) {
+	cp := NewContentProvider("/repo")
+
+	require.Equal(t, filepath.Join(cp.ConfigDir, ResourcesDirName), cp.ResourcesDir)
+	require.Equal(t, filepath.Join(cp.ConfigDir, PromptsDirName), cp.PromptsDir)
+}

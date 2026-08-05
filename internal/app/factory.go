@@ -146,9 +146,9 @@ func assembleResourceProvider(discovery resources.DiscoveryResult, crossRef bool
 
 // warnIfLegacyLayoutIgnored flags the likely cause of a silently empty
 // zero-config server: a manifest-less content root laid out for legacy
-// mcp-resources discovery. Zero-config defaults always set a non-nil Index,
+// .acdc/resources discovery. Zero-config defaults always set a non-nil Index,
 // which routes discovery to the configured-index path (README.md and
-// docs/**) rather than the legacy mcp-resources scan, so an mcp-resources/
+// docs/**) rather than the legacy .acdc/resources scan, so a .acdc/resources/
 // directory goes unindexed without any error. This is diagnostic only; it
 // does not change which discovery mode is selected or whether startup
 // succeeds.
@@ -156,14 +156,14 @@ func warnIfLegacyLayoutIgnored(cp *content.ContentProvider, defaulted bool, disc
 	if !shouldWarnLegacyLayoutIgnored(cp, defaulted, discovery) {
 		return
 	}
-	slog.Warn("Found mcp-resources/ directory but no mcp-metadata.yaml manifest; "+
-		"zero-config mode indexes only README.md and docs/**, so mcp-resources/ is not indexed",
+	slog.Warn("Found .acdc/resources/ directory but no .acdc/config.yaml manifest; "+
+		"zero-config mode indexes only README.md and docs/**, so .acdc/resources/ is not indexed",
 		"resources_dir", cp.ResourcesDir,
-		"manifest_path", cp.GetPath(metadataFileName))
+		"manifest_path", cp.ConfigFile)
 }
 
 // shouldWarnLegacyLayoutIgnored reports whether defaulted metadata produced
-// zero discovered sources while an mcp-resources/ directory sits unindexed
+// zero discovered sources while a .acdc/resources/ directory sits unindexed
 // at the content root.
 func shouldWarnLegacyLayoutIgnored(cp *content.ContentProvider, defaulted bool, discovery resources.DiscoveryResult) bool {
 	if !defaulted || len(discovery.Sources) > 0 {

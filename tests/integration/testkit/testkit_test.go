@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sha1n/mcp-acdc-server/internal/app"
+	"github.com/sha1n/mcp-acdc-server/internal/content"
 	"github.com/spf13/pflag"
 )
 
@@ -135,11 +136,11 @@ func TestTestEnv_StopError(t *testing.T) {
 func TestACDCService_Discovery(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
-	resourcesDir := filepath.Join(contentDir, "mcp-resources")
-	_ = os.MkdirAll(resourcesDir, 0755)
+	cp := content.NewContentProvider(contentDir)
+	_ = os.MkdirAll(cp.ResourcesDir, 0755)
 
 	metadataContent := `server: { name: test, version: 1.0, instructions: inst }`
-	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
+	_ = os.WriteFile(cp.ConfigFile, []byte(metadataContent), 0644)
 
 	port, _ := GetFreePort()
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
@@ -313,15 +314,16 @@ func TestMustGetFreePort(t *testing.T) {
 
 func TestCreateTestContentDir_Defaults(t *testing.T) {
 	contentDir := CreateTestContentDir(t, nil)
+	cp := content.NewContentProvider(contentDir)
 
 	// Verify directory structure
 	if _, err := os.Stat(contentDir); os.IsNotExist(err) {
 		t.Error("Content dir not created")
 	}
-	if _, err := os.Stat(filepath.Join(contentDir, "mcp-resources")); os.IsNotExist(err) {
+	if _, err := os.Stat(cp.ResourcesDir); os.IsNotExist(err) {
 		t.Error("Resources dir not created")
 	}
-	if _, err := os.Stat(filepath.Join(contentDir, "mcp-metadata.yaml")); os.IsNotExist(err) {
+	if _, err := os.Stat(cp.ConfigFile); os.IsNotExist(err) {
 		t.Error("Metadata file not created")
 	}
 }
@@ -337,9 +339,10 @@ func TestCreateTestContentDir_WithOptions(t *testing.T) {
 		},
 	}
 	contentDir := CreateTestContentDir(t, opts)
+	cp := content.NewContentProvider(contentDir)
 
 	// Verify custom metadata
-	data, err := os.ReadFile(filepath.Join(contentDir, "mcp-metadata.yaml"))
+	data, err := os.ReadFile(cp.ConfigFile)
 	if err != nil {
 		t.Fatalf("Failed to read metadata: %v", err)
 	}
@@ -348,12 +351,12 @@ func TestCreateTestContentDir_WithOptions(t *testing.T) {
 	}
 
 	// Verify resource file
-	if _, err := os.Stat(filepath.Join(contentDir, "mcp-resources", "test.md")); os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(cp.ResourcesDir, "test.md")); os.IsNotExist(err) {
 		t.Error("Resource file not created")
 	}
 
 	// Verify prompt file
-	if _, err := os.Stat(filepath.Join(contentDir, "mcp-prompts", "test-prompt.md")); os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(cp.PromptsDir, "test-prompt.md")); os.IsNotExist(err) {
 		t.Error("Prompt file not created")
 	}
 }
@@ -457,7 +460,8 @@ func TestCreateTestContentDir_PromptsMkdirError(t *testing.T) {
 	_ = os.MkdirAll(filepath.Join(contentDir, "content"), 0755)
 
 	// Create a file where a directory is expected to cause MkdirAll failure
-	promptsDir := filepath.Join(contentDir, "content", "mcp-prompts")
+	promptsDir := content.NewContentProvider(filepath.Join(contentDir, "content")).PromptsDir
+	_ = os.MkdirAll(filepath.Dir(promptsDir), 0755)
 	_ = os.WriteFile(promptsDir, []byte("not a directory"), 0644)
 
 	mt := &mockTB{T: t, tempDir: contentDir}
@@ -484,7 +488,7 @@ func TestCreateTestContentDir_PromptsWriteError(t *testing.T) {
 	}
 
 	// Create a directory where a file is expected to cause WriteFile failure
-	promptsDir := filepath.Join(contentDir, "content", "mcp-prompts")
+	promptsDir := content.NewContentProvider(filepath.Join(contentDir, "content")).PromptsDir
 	_ = os.MkdirAll(filepath.Join(promptsDir, "test.md"), 0755)
 
 	CreateTestContentDir(mt, opts)
@@ -497,9 +501,9 @@ func TestCreateTestContentDir_PromptsWriteError(t *testing.T) {
 func TestCreateTestContentDir_WithFiles(t *testing.T) {
 	opts := &ContentDirOptions{
 		Files: map[string]string{
-			"docs/platform/auth.md":    "# Authentication\n\nContent.\n",
-			"docs/generated/skip.md":   "# Generated\n\nContent.\n",
-			"mcp-metadata-sibling.txt": "not a resource",
+			"docs/platform/auth.md":  "# Authentication\n\nContent.\n",
+			"docs/generated/skip.md": "# Generated\n\nContent.\n",
+			"notes/sibling.txt":      "not a resource",
 		},
 	}
 	contentDir := CreateTestContentDir(t, opts)
@@ -515,9 +519,10 @@ func TestCreateTestContentDir_WithFiles(t *testing.T) {
 		}
 	}
 
-	// Files must be written beneath the content root, not mcp-resources.
-	if _, err := os.Stat(filepath.Join(contentDir, "mcp-resources", "docs")); !os.IsNotExist(err) {
-		t.Error("Files should not be written under mcp-resources")
+	// Files must be written beneath the content root, not under .acdc/resources.
+	resourcesDir := content.NewContentProvider(contentDir).ResourcesDir
+	if _, err := os.Stat(filepath.Join(resourcesDir, "docs")); !os.IsNotExist(err) {
+		t.Error("Files should not be written under .acdc/resources")
 	}
 }
 

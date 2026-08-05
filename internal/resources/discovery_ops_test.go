@@ -108,7 +108,7 @@ func TestDiscoverWithOps_ConfiguredFilesystemFailures(t *testing.T) {
 
 func TestDiscoverWithOps_LegacyTraversalAndCancellationFailures(t *testing.T) {
 	root := "/catalog"
-	resourcesRoot := root + "/mcp-resources"
+	resourcesRoot := content.NewContentProvider(root).ResourcesDir
 	file := resourcesRoot + "/guide.md"
 	walkErr := errors.New("legacy traversal failed")
 	infoErr := errors.New("legacy entry metadata unavailable")
@@ -226,7 +226,7 @@ func TestDiscoverWithOps_ConfiguredReadFailureLeniency(t *testing.T) {
 
 func TestDiscoverWithOps_LegacySkipsUnreadableAndNonregularEntries(t *testing.T) {
 	root := "/catalog"
-	resourcesRoot := root + "/mcp-resources"
+	resourcesRoot := content.NewContentProvider(root).ResourcesDir
 	file := resourcesRoot + "/guide.md"
 	readErr := errors.New("legacy file unreadable")
 
@@ -263,14 +263,15 @@ func TestDiscoverWithOps_LegacySkipsUnreadableAndNonregularEntries(t *testing.T)
 }
 
 func successfulDiscoveryOps(root string) discoveryOps {
+	resourcesDir := content.NewContentProvider(root).ResourcesDir
 	return discoveryOps{
 		canonicalPath: func(path string) (string, error) { return path, nil },
 		walkDir:       walkOne(root+"/docs/guide.md", regularEntry("guide.md")),
 		readFile: func(string) ([]byte, error) {
 			return []byte("---\nname: Guide\ndescription: Guide description\n---\n# Guide\n"), nil
 		},
-		relativePath: func(root, path string) (string, error) {
-			if root == "/catalog/mcp-resources" {
+		relativePath: func(walkRoot, path string) (string, error) {
+			if walkRoot == resourcesDir {
 				return "guide.md", nil
 			}
 			return "docs/guide.md", nil

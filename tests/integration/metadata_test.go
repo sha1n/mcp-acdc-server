@@ -11,7 +11,7 @@ import (
 )
 
 // TestInitializeReturnsServerInfo verifies that initialize response contains
-// server name and version from mcp-metadata.yaml (P-INIT-02, META-01)
+// server name and version from .acdc/config.yaml (P-INIT-02, META-01)
 func TestInitializeReturnsServerInfo(t *testing.T) {
 	metadata := `server:
   name: My Custom Server
@@ -57,7 +57,7 @@ func TestInitializeReturnsCapabilities(t *testing.T) {
 	assert.NotNil(t, caps.Prompts, "should advertise prompts capability")
 }
 
-// TestToolDescriptionOverride verifies that tool descriptions from mcp-metadata.yaml
+// TestToolDescriptionOverride verifies that tool descriptions from .acdc/config.yaml
 // override the defaults (META-02)
 func TestToolDescriptionOverride(t *testing.T) {
 	customSearchDesc := "My custom search description for testing override"

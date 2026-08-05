@@ -4,28 +4,29 @@ This guide explains how to create and structure markdown resource files for the 
 
 ## Zero-Config Defaults (No Manifest)
 
-`mcp-metadata.yaml` is optional. Point `--content-dir` at any repository that has no manifest and the server starts anyway, indexing `README.md` and `docs/**/*.md` with a built-in server name, version, and instructions naming the repository. Because the manifest is missing (not merely lacking an `index` block), this reuses the same discovery mechanism as [Configured Chunk Indexing](#configured-chunk-indexing-index) — frontmatter is optional — but tolerates conditions that would otherwise fail startup: an empty selection or a file that cannot be read or parsed is logged as a warning and skipped rather than failing the server. See [Content Repository Structure](SPECIFICATIONS.md#content-repository-structure) in the specification for the exact activation rule, default patterns, and derived identity.
+`.acdc/config.yaml` is optional. Point `--content-dir` at any repository that has no manifest and the server starts anyway, indexing `README.md` and `docs/**/*.md` with a built-in server name, version, and instructions naming the repository. Because the manifest is missing (not merely lacking an `index` block), this reuses the same discovery mechanism as [Configured Chunk Indexing](#configured-chunk-indexing-index) — frontmatter is optional — but tolerates conditions that would otherwise fail startup: an empty selection or a file that cannot be read or parsed is logged as a warning and skipped rather than failing the server. See [Content Repository Structure](SPECIFICATIONS.md#content-repository-structure) in the specification for the exact activation rule, default patterns, and derived identity.
 
-Add an `mcp-metadata.yaml` file to override any of this: give the server a custom name, version, and instructions, restrict or expand which files are indexed, or opt back into the stricter legacy layout described below. The rest of this guide assumes a manifest is present.
+Add a `.acdc/config.yaml` file to override any of this: give the server a custom name, version, and instructions, restrict or expand which files are indexed, or opt back into the stricter legacy layout described below. The rest of this guide assumes a manifest is present.
 
 ## File Location
 
-By default (when `mcp-metadata.yaml` has no `index` block — see [Configured Chunk Indexing](#configured-chunk-indexing-index)), place all resource markdown files inside the `mcp-resources/` subdirectory of your content directory:
+By default (when `.acdc/config.yaml` has no `index` block — see [Configured Chunk Indexing](#configured-chunk-indexing-index)), place all resource markdown files inside the `.acdc/resources/` subdirectory of your content directory:
 
 ```
 content/
-├── mcp-metadata.yaml
-└── mcp-resources/
-    ├── getting-started.md
-    ├── api/
-    │   └── endpoints.md
-    └── guides/
-        └── deployment.md
+└── .acdc/
+    ├── config.yaml
+    └── resources/
+        ├── getting-started.md
+        ├── api/
+        │   └── endpoints.md
+        └── guides/
+            └── deployment.md
 ```
 
-## Server Metadata (`mcp-metadata.yaml`)
+## Server Metadata (`.acdc/config.yaml`)
 
-The `mcp-metadata.yaml` file in the root of your content directory overrides the [built-in zero-config defaults](#zero-config-defaults-no-manifest): it defines server identity and instructions explicitly, and controls tool descriptions and indexing. The file is optional — omit it to run with defaults — but once present, the fields below are required within it, and an invalid or unreadable manifest fails startup.
+The `.acdc/config.yaml` file in the root of your content directory overrides the [built-in zero-config defaults](#zero-config-defaults-no-manifest): it defines server identity and instructions explicitly, and controls tool descriptions and indexing. The file is optional — omit it to run with defaults — but once present, the fields below are required within it, and an invalid or unreadable manifest fails startup.
 
 ### Structure
 
@@ -90,7 +91,7 @@ If you provide a tool in this section, it requires:
 
 ### Validation
 
-The server validates `mcp-metadata.yaml` at startup and will fail to start if:
+The server validates `.acdc/config.yaml` at startup and will fail to start if:
 - `server.name` is missing or empty
 - `server.version` is missing or empty
 - `server.instructions` is missing or empty
@@ -99,7 +100,7 @@ The server validates `mcp-metadata.yaml` at startup and will fail to start if:
 
 ## Chunking and Fragment URIs
 
-Every discovered document — whether found via legacy `mcp-resources/` scanning or a configured `index` (see below) — is split into chunks before indexing, and the `search` tool always returns chunk URIs (`<document-uri>#<fragment>`), never bare document URIs. This section applies to both discovery modes.
+Every discovered document — whether found via legacy `.acdc/resources/` scanning or a configured `index` (see below) — is split into chunks before indexing, and the `search` tool always returns chunk URIs (`<document-uri>#<fragment>`), never bare document URIs. This section applies to both discovery modes.
 
 ### How Documents Are Split
 
@@ -152,7 +153,7 @@ Regardless of discovery mode, server startup fails if two discovered documents o
 
 ## Configured Chunk Indexing (`index`)
 
-By default the server discovers documents under `mcp-resources/`, each requiring frontmatter (see [Resource Frontmatter Format](#resource-frontmatter-format) below). Adding an `index` block to `mcp-metadata.yaml` switches **document discovery** to configured indexing instead: any Markdown matched by glob patterns is discovered directly, without requiring the `mcp-resources/` layout or frontmatter. When `index` is present, it replaces `mcp-resources/` discovery entirely — the two modes are not combined. Discovered documents are chunked and searched identically either way — see [Chunking and Fragment URIs](#chunking-and-fragment-uris) above.
+By default the server discovers documents under `.acdc/resources/`, each requiring frontmatter (see [Resource Frontmatter Format](#resource-frontmatter-format) below). Adding an `index` block to `.acdc/config.yaml` switches **document discovery** to configured indexing instead: any Markdown matched by glob patterns is discovered directly, without requiring the `.acdc/resources/` layout or frontmatter. When `index` is present, it replaces `.acdc/resources/` discovery entirely — the two modes are not combined. Discovered documents are chunked and searched identically either way — see [Chunking and Fragment URIs](#chunking-and-fragment-uris) above.
 
 ### Schema
 
@@ -189,7 +190,7 @@ Frontmatter is **optional** for configured Markdown. When present, it is still p
 
 ### Strict Configured Discovery Errors
 
-Unlike legacy `mcp-resources/` discovery, configured indexing fails the server at startup — rather than skipping the offending file — if any of the following occur:
+Unlike legacy `.acdc/resources/` discovery, configured indexing fails the server at startup — rather than skipping the offending file — if any of the following occur:
 
 - `index.include` is missing or empty.
 - Any `include`/`exclude` pattern is absolute, escapes the content root, or is not a valid glob.
@@ -202,7 +203,7 @@ See also [Duplicate Identity](#duplicate-identity) above, which fails startup in
 
 ### Unchanged Legacy Behavior
 
-When `index` is absent from `mcp-metadata.yaml`, discovery keeps scanning `mcp-resources/` for `.md` and `.markdown` files exactly as before: frontmatter with `name` and `description` remains required per file, and files that are missing, invalid, or incomplete are skipped with a warning log rather than failing startup. A missing `mcp-resources/` directory yields zero resources, not an error.
+When `index` is absent from `.acdc/config.yaml`, discovery keeps scanning `.acdc/resources/` for `.md` and `.markdown` files exactly as before: frontmatter with `name` and `description` remains required per file, and files that are missing, invalid, or incomplete are skipped with a warning log rather than failing startup. A missing `.acdc/resources/` directory yields zero resources, not an error.
 
 ### Not Yet Supported
 
@@ -212,7 +213,7 @@ See [Configuration Reference](configuration.md) for the `--search-result-mode` f
 
 ## Resource Frontmatter Format
 
-Legacy `mcp-resources/` discovery (used when `index` is absent from `mcp-metadata.yaml`) requires each resource file to start with YAML frontmatter containing required metadata:
+Legacy `.acdc/resources/` discovery (used when `index` is absent from `.acdc/config.yaml`) requires each resource file to start with YAML frontmatter containing required metadata:
 
 ```yaml
 ---
@@ -318,24 +319,24 @@ Resource URIs are automatically generated from the file path using the configure
 
 | File Path                           | Generated URI              |
 | ----------------------------------- | -------------------------- |
-| `mcp-resources/guide.md`            | `acdc://guide`             |
-| `mcp-resources/api/endpoints.md`    | `acdc://api/endpoints`     |
-| `mcp-resources/docs/setup/intro.md` | `acdc://docs/setup/intro`  |
+| `.acdc/resources/guide.md`            | `acdc://guide`             |
+| `.acdc/resources/api/endpoints.md`    | `acdc://api/endpoints`     |
+| `.acdc/resources/docs/setup/intro.md` | `acdc://docs/setup/intro`  |
 
 The URI scheme can be customized via the `--uri-scheme` flag or `ACDC_MCP_URI_SCHEME` environment variable. For example, with `--uri-scheme myorg`:
 
 | File Path                           | Generated URI              |
 | ----------------------------------- | -------------------------- |
-| `mcp-resources/guide.md`            | `myorg://guide`            |
-| `mcp-resources/api/endpoints.md`    | `myorg://api/endpoints`    |
+| `.acdc/resources/guide.md`            | `myorg://guide`            |
+| `.acdc/resources/api/endpoints.md`    | `myorg://api/endpoints`    |
 
 See [Configuration Reference](configuration.md) for details.
 
-The same scheme applies to [configured chunk indexing](#configured-chunk-indexing-index), except the path is relative to `--content-dir` instead of `mcp-resources/` (e.g. `docs/setup/intro.md` → `acdc://docs/setup/intro`). Chunks within a document are addressed with a `#fragment` suffix on the document URI — see [Fragment Reads](#fragment-reads).
+The same scheme applies to [configured chunk indexing](#configured-chunk-indexing-index), except the path is relative to `--content-dir` instead of `.acdc/resources/` (e.g. `docs/setup/intro.md` → `acdc://docs/setup/intro`). Chunks within a document are addressed with a `#fragment` suffix on the document URI — see [Fragment Reads](#fragment-reads).
 
 ## Complete Example
 
-**File:** `content/mcp-resources/api/authentication.md`
+**File:** `content/.acdc/resources/api/authentication.md`
 
 ```yaml
 ---
@@ -380,15 +381,16 @@ Prompts provide a way to define reusable templates that AI agents can use to per
 
 ### File Location
 
-Place all prompt markdown files inside the `mcp-prompts/` subdirectory of your content directory:
+Place all prompt markdown files inside the `.acdc/prompts/` subdirectory of your content directory:
 
 ```
 content/
-├── mcp-metadata.yaml
-├── mcp-resources/
-└── mcp-prompts/
-    ├── code-review.md
-    └── explain-code.md
+└── .acdc/
+    ├── config.yaml
+    ├── resources/
+    └── prompts/
+        ├── code-review.md
+        └── explain-code.md
 ```
 
 ### Prompt Frontmatter Format
@@ -453,7 +455,7 @@ For example, a prompt named `code-review` can be triggered by typing `/code-revi
 
 ### Complete Example
 
-**File:** `content/mcp-prompts/code-review.md`
+**File:** `content/.acdc/prompts/code-review.md`
 
 ```yaml
 ---
@@ -494,3 +496,61 @@ Please provide feedback on architecture, bugs, and security.
 3. **Template Safety**: Remember that `mcp-acdc-server` uses the `missingkey=error` option. Ensure all keys used in the template are either defined in `arguments` or handled with conditional logic.
 4. **Markdown Formatting**: Since the output of a prompt is often markdown, use proper formatting in the template to help the agent structure its follow-up response.
 5. **Atomic Prompts**: Break complex tasks into smaller, focused prompts (e.g., instead of one "Refactor" prompt, have "Refactor for Performance" and "Refactor for Readability").
+
+## Migrating
+
+Releases before 0.8.0 used three separate `mcp-*` names at the content root.
+They are replaced by a single `.acdc/` directory:
+
+| Before              | After               |
+| ------------------- | ------------------- |
+| `mcp-metadata.yaml` | `.acdc/config.yaml` |
+| `mcp-prompts/`      | `.acdc/prompts/`    |
+| `mcp-resources/`    | `.acdc/resources/`  |
+
+Refusal fires on any subset of these names, so a repository need not have had
+all three — run only the lines that apply. In a git repository:
+
+```bash
+mkdir -p .acdc
+git mv mcp-metadata.yaml .acdc/config.yaml
+git mv mcp-prompts .acdc/prompts
+git mv mcp-resources .acdc/resources
+```
+
+The content directory need not be under git — a Docker-mounted volume or a
+plain directory built by a content pipeline, for instance. Outside a git
+repository, use `mv` instead:
+
+```bash
+mkdir -p .acdc
+mv mcp-metadata.yaml .acdc/config.yaml
+mv mcp-prompts .acdc/prompts
+mv mcp-resources .acdc/resources
+```
+
+The file format is unchanged — this is a move, not a rewrite.
+
+**Index patterns do not change.** `include` and `exclude` patterns have always
+resolved against the content root, not against the directory holding the
+manifest. `docs/**/*.md` still means `<content-root>/docs/**/*.md` now that the
+manifest lives in a subdirectory; do not add a `../` prefix. Patterns that try to
+escape the content root are rejected at startup, as before.
+
+The server refuses to start while any of `mcp-metadata.yaml` or `mcp-prompts/`
+remains at the content root, naming each one and its replacement. There is no
+fallback: a server that started on a stale layout would silently serve
+different content. `mcp-resources/` triggers the same refusal only when a
+manifest is also present, at `mcp-metadata.yaml` or `.acdc/config.yaml` —
+without one, zero-config discovery never scans `mcp-resources/` anyway, so a
+bare leftover directory changes nothing silently and does not block startup.
+
+**`.acdc/` is a dot-directory.** A deployment pipeline that copies content with
+a shell glob (`cp -r src/*`, `rsync src/*`) or a Docker `COPY ./content/*`
+silently drops it, because POSIX globs never match leading dots — copy the
+directory itself (`cp -a src/. dst/`, `COPY ./content /content`) instead of a
+glob within it. Similarly, a global gitignore may already list `.acdc/`; if
+it's ignored, `git add` silently skips a newly created `.acdc/` and the
+migration looks committed when it isn't — check with `git status`, and if
+needed, `git add -f .acdc` or add `!.acdc/` to the repository's own
+`.gitignore` (repo-level rules take precedence over the global excludes file).
