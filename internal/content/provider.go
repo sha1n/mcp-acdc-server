@@ -16,19 +16,34 @@ type MarkdownWithFrontmatter struct {
 	Content  string
 }
 
+// Layout names for the ACDC content convention. Every path ACDC resolves inside
+// a content root composes from these, so relocating the layout is a change to
+// this block alone.
+const (
+	ConfigDirName    = ".acdc"
+	ConfigFileName   = "config.yaml"
+	PromptsDirName   = "prompts"
+	ResourcesDirName = "resources"
+)
+
 // ContentProvider provider for loading content files
 type ContentProvider struct {
 	ContentDir   string
+	ConfigDir    string
+	ConfigFile   string
 	ResourcesDir string
 	PromptsDir   string
 }
 
 // NewContentProvider creates a new ContentProvider
 func NewContentProvider(contentDir string) *ContentProvider {
+	configDir := filepath.Join(contentDir, ConfigDirName)
 	return &ContentProvider{
 		ContentDir:   contentDir,
-		ResourcesDir: filepath.Join(contentDir, "mcp-resources"),
-		PromptsDir:   filepath.Join(contentDir, "mcp-prompts"),
+		ConfigDir:    configDir,
+		ConfigFile:   filepath.Join(configDir, ConfigFileName),
+		ResourcesDir: filepath.Join(configDir, ResourcesDirName),
+		PromptsDir:   filepath.Join(configDir, PromptsDirName),
 	}
 }
 

@@ -4,26 +4,26 @@ import (
 	"fmt"
 )
 
-// ServerMetadata represents the server section of mcp-metadata.yaml
+// ServerMetadata represents the server section of .acdc/config.yaml
 type ServerMetadata struct {
 	Name         string `yaml:"name"`
 	Version      string `yaml:"version"`
 	Instructions string `yaml:"instructions"`
 }
 
-// ToolMetadata represents a tool definition in mcp-metadata.yaml
+// ToolMetadata represents a tool definition in .acdc/config.yaml
 type ToolMetadata struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
 }
 
-// IndexMetadata represents the index section of mcp-metadata.yaml.
+// IndexMetadata represents the index section of .acdc/config.yaml.
 type IndexMetadata struct {
 	Include []string `yaml:"include"`
 	Exclude []string `yaml:"exclude,omitempty"`
 }
 
-// McpMetadata represents the root of mcp-metadata.yaml
+// McpMetadata represents the root of .acdc/config.yaml
 type McpMetadata struct {
 	Server ServerMetadata `yaml:"server"`
 	Tools  []ToolMetadata `yaml:"tools"`
@@ -59,7 +59,7 @@ const defaultInstructionsFormat = `Documentation for the %s repository: guides, 
 
 Search here before answering questions about this repository's conventions, architecture, decisions, or planned work. Prefer these documents over assumptions drawn from source code alone.`
 
-// DefaultMetadata builds the metadata used when the content root has no mcp-metadata.yaml.
+// DefaultMetadata builds the metadata used when the content root has no .acdc/config.yaml.
 // repoName identifies the indexed repository in the server's display name and instructions.
 func DefaultMetadata(repoName, version string) McpMetadata {
 	return McpMetadata{

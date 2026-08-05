@@ -148,15 +148,15 @@ func TestFingerprint_UnchangedForFilesOutsideSelection(t *testing.T) {
 }
 
 func TestFingerprint_LegacyMode(t *testing.T) {
-	t.Run("digests mcp-resources", func(t *testing.T) {
+	t.Run("digests .acdc/resources", func(t *testing.T) {
 		root := t.TempDir()
-		writeFile(t, root, "mcp-resources/guide.md", "# Guide\n")
 		cp := content.NewContentProvider(root)
+		writeFile(t, cp.ResourcesDir, "guide.md", "# Guide\n")
 
 		before, err := Fingerprint(context.Background(), cp, nil)
 		require.NoError(t, err)
 
-		writeFile(t, root, "mcp-resources/extra.md", "# Extra\n")
+		writeFile(t, cp.ResourcesDir, "extra.md", "# Extra\n")
 		after, err := Fingerprint(context.Background(), cp, nil)
 		require.NoError(t, err)
 
@@ -215,12 +215,12 @@ func TestFingerprint_ConfiguredCancelledContextReturnsError(t *testing.T) {
 }
 
 // The legacy walk observes cancellation from inside its per-entry callback,
-// so the mcp-resources fixture must contain at least one file for the walk
+// so the .acdc/resources fixture must contain at least one file for the walk
 // to reach that check rather than exiting beforehand for an unrelated reason.
 func TestFingerprint_LegacyCancelledContextReturnsError(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, "mcp-resources/guide.md", "# Guide\n")
 	cp := content.NewContentProvider(root)
+	writeFile(t, cp.ResourcesDir, "guide.md", "# Guide\n")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

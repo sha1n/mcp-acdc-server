@@ -159,10 +159,11 @@ func TestDiscover_RelativeContentDirUnderSymlinkedWorkingDirectory(t *testing.T)
 
 func TestDiscover_LegacySkipsInvalidFilesAndBuildsChunks(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, "mcp-resources/valid.md", "---\nname: Valid\ndescription: Valid description\n---\n# Valid\n\nBody.\n")
-	writeFile(t, root, "mcp-resources/broken.md", "---\nname: [\n---\n# Broken\n")
-	writeFile(t, root, "mcp-resources/missing.md", "---\nname: Missing description\n---\n# Missing\n")
-	writeFile(t, root, "mcp-resources/ignore.txt", "not a resource")
+	resourcesDir := content.NewContentProvider(root).ResourcesDir
+	writeFile(t, resourcesDir, "valid.md", "---\nname: Valid\ndescription: Valid description\n---\n# Valid\n\nBody.\n")
+	writeFile(t, resourcesDir, "broken.md", "---\nname: [\n---\n# Broken\n")
+	writeFile(t, resourcesDir, "missing.md", "---\nname: Missing description\n---\n# Missing\n")
+	writeFile(t, resourcesDir, "ignore.txt", "not a resource")
 
 	result, err := Discover(context.Background(), content.NewContentProvider(root), nil, "acdc")
 	require.NoError(t, err)
@@ -178,7 +179,7 @@ func TestDiscover_LegacyMissingDirectoryAndCancellation(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, definitions)
 
-	resourcesDir := filepath.Join(root, "mcp-resources")
+	resourcesDir := content.NewContentProvider(root).ResourcesDir
 	require.NoError(t, os.MkdirAll(resourcesDir, 0o755))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -188,8 +189,9 @@ func TestDiscover_LegacyMissingDirectoryAndCancellation(t *testing.T) {
 
 func TestDiscover_LegacyIgnoresLenientOption(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, "mcp-resources/valid.md", "---\nname: Valid\ndescription: Valid description\n---\n# Valid\n\nBody.\n")
-	writeFile(t, root, "mcp-resources/no-frontmatter.md", "# No Frontmatter\n\nBody.\n")
+	resourcesDir := content.NewContentProvider(root).ResourcesDir
+	writeFile(t, resourcesDir, "valid.md", "---\nname: Valid\ndescription: Valid description\n---\n# Valid\n\nBody.\n")
+	writeFile(t, resourcesDir, "no-frontmatter.md", "# No Frontmatter\n\nBody.\n")
 
 	strict, err := Discover(context.Background(), content.NewContentProvider(root), nil, "acdc")
 	require.NoError(t, err)
@@ -206,8 +208,9 @@ func TestDiscoverResources_FailsForUnresolvableLegacyRoot(t *testing.T) {
 		t.Skip("creating symlinks requires additional permissions on Windows")
 	}
 	root := t.TempDir()
-	resourcesDir := filepath.Join(root, "mcp-resources")
-	require.NoError(t, os.Symlink(resourcesDir, resourcesDir))
+	cp := content.NewContentProvider(root)
+	require.NoError(t, os.MkdirAll(cp.ConfigDir, 0o755))
+	require.NoError(t, os.Symlink(cp.ResourcesDir, cp.ResourcesDir))
 
 	_, err := DiscoverResources(content.NewContentProvider(root), "acdc")
 	require.ErrorContains(t, err, "resolve resources root")
@@ -289,8 +292,9 @@ func TestDiscover_LenientSkipsUnaddressableURIButIndexesSiblings(t *testing.T) {
 // way it already treats an unreadable or unparsable legacy resource file.
 func TestDiscover_LegacySkipsUnaddressableURI(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, "mcp-resources/valid.md", "---\nname: Valid\ndescription: Valid description\n---\n# Valid\n\nBody.\n")
-	badPath := writeFile(t, root, "mcp-resources/a\nb.md", "---\nname: Bad\ndescription: Bad description\n---\n# Bad\n")
+	resourcesDir := content.NewContentProvider(root).ResourcesDir
+	writeFile(t, resourcesDir, "valid.md", "---\nname: Valid\ndescription: Valid description\n---\n# Valid\n\nBody.\n")
+	badPath := writeFile(t, resourcesDir, "a\nb.md", "---\nname: Bad\ndescription: Bad description\n---\n# Bad\n")
 	_, statErr := os.Stat(badPath)
 	require.NoError(t, statErr, "fixture file with a control character in its name must exist")
 
@@ -570,6 +574,31 @@ func symlinkFreeTempDir(t *testing.T) string {
 	resolved, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	return resolved
+}
+
+// Index patterns resolve against the content root, never against the directory
+// holding the config file. The two coincided while the manifest sat at the root;
+// re-anchoring to the config file's directory would silently break every
+// docs/**/*.md selection in the wild.
+func TestDiscover_PatternsAnchorToContentRootNotConfigDir(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "docs/guide.md", "# Guide\n\nRoot-anchored body.\n")
+	writeFile(t, root, ".acdc/docs/decoy.md", "# Decoy\n\nConfig-anchored body.\n")
+	writeFile(t, root, ".acdc/config.yaml", "server:\n  name: test\n  version: \"1.0\"\n  instructions: test\n")
+
+	cp := content.NewContentProvider(root)
+	index := &domain.IndexMetadata{Include: []string{"docs/**/*.md"}}
+
+	result, err := Discover(context.Background(), cp, index, "acdc")
+	require.NoError(t, err)
+
+	var paths []string
+	for _, s := range result.Sources {
+		paths = append(paths, s.RelativePath)
+	}
+
+	require.Contains(t, paths, "docs/guide.md")
+	require.NotContains(t, paths, ".acdc/docs/decoy.md")
 }
 
 func writeFile(t *testing.T, root, name, body string) string {

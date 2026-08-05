@@ -10,7 +10,7 @@ This guide explains how to create resources and prompts that the ACDC server can
 
 ## Writing Resources
 
-Resources are Markdown files stored under `mcp-resources/`. Each file needs YAML frontmatter with at least `name` and `description`:
+Resources are Markdown files stored under `.acdc/resources/`. Each file needs YAML frontmatter with at least `name` and `description`:
 
 ```yaml
 ---
@@ -33,7 +33,7 @@ keywords: [optional, search, terms]
 Place resources in subdirectories to keep things tidy. The directory structure is reflected in the resource URI:
 
 ```
-mcp-resources/
+.acdc/resources/
   guides/getting-started.md    ->  acdc://guides/getting-started
   reference/configuration.md   ->  acdc://reference/configuration
 ```
@@ -48,7 +48,7 @@ See the [Configuration Reference](../reference/configuration.md) for details.
 
 ## Writing Prompts
 
-Prompts live under `mcp-prompts/` as Markdown files with special frontmatter:
+Prompts live under `.acdc/prompts/` as Markdown files with special frontmatter:
 
 ```yaml
 ---

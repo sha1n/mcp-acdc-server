@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/sha1n/mcp-acdc-server/internal/app"
+	"github.com/sha1n/mcp-acdc-server/internal/content"
 	"github.com/spf13/pflag"
 )
 
@@ -137,7 +138,8 @@ func CreateTestContentDir(t testing.TB, opts *ContentDirOptions) string {
 
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
-	resourcesDir := filepath.Join(contentDir, "mcp-resources")
+	cp := content.NewContentProvider(contentDir)
+	resourcesDir := cp.ResourcesDir
 
 	if err := os.MkdirAll(resourcesDir, 0755); err != nil {
 		t.Fatalf("Failed to create resources dir: %v", err)
@@ -148,7 +150,7 @@ func CreateTestContentDir(t testing.TB, opts *ContentDirOptions) string {
 		metadata = opts.Metadata
 	}
 
-	if err := os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadata), 0644); err != nil {
+	if err := os.WriteFile(cp.ConfigFile, []byte(metadata), 0644); err != nil {
 		t.Fatalf("Failed to write metadata: %v", err)
 	}
 
@@ -165,7 +167,7 @@ func CreateTestContentDir(t testing.TB, opts *ContentDirOptions) string {
 	}
 
 	if opts != nil && opts.Prompts != nil {
-		promptsDir := filepath.Join(contentDir, "mcp-prompts")
+		promptsDir := cp.PromptsDir
 		if err := os.MkdirAll(promptsDir, 0755); err != nil {
 			t.Fatalf("Failed to create prompts dir: %v", err)
 		}

@@ -21,7 +21,9 @@ import (
 func writeMetadataOnly(t *testing.T, metadata string) string {
 	t.Helper()
 	contentDir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadata), 0o600))
+	cp := content.NewContentProvider(contentDir)
+	require.NoError(t, os.MkdirAll(cp.ConfigDir, 0o755))
+	require.NoError(t, os.WriteFile(cp.ConfigFile, []byte(metadata), 0o600))
 	return contentDir
 }
 
@@ -57,47 +59,49 @@ func TestShouldWarnLegacyLayoutIgnored_ConditionMatrix(t *testing.T) {
 		wantWarn  bool
 	}{
 		{
-			name:      "defaulted, zero sources, mcp-resources dir exists",
+			name:      "defaulted, zero sources, .acdc/resources dir exists",
 			defaulted: true,
 			sources:   nil,
 			setupDir: func(t *testing.T, contentDir string) {
-				require.NoError(t, os.MkdirAll(filepath.Join(contentDir, "mcp-resources"), 0o755))
+				require.NoError(t, os.MkdirAll(content.NewContentProvider(contentDir).ResourcesDir, 0o755))
 			},
 			wantWarn: true,
 		},
 		{
-			name:      "not defaulted (explicit manifest), zero sources, mcp-resources dir exists",
+			name:      "not defaulted (explicit manifest), zero sources, .acdc/resources dir exists",
 			defaulted: false,
 			sources:   nil,
 			setupDir: func(t *testing.T, contentDir string) {
-				require.NoError(t, os.MkdirAll(filepath.Join(contentDir, "mcp-resources"), 0o755))
+				require.NoError(t, os.MkdirAll(content.NewContentProvider(contentDir).ResourcesDir, 0o755))
 			},
 			wantWarn: false,
 		},
 		{
-			name:      "defaulted, at least one source, mcp-resources dir exists",
+			name:      "defaulted, at least one source, .acdc/resources dir exists",
 			defaulted: true,
 			sources:   oneSource,
 			setupDir: func(t *testing.T, contentDir string) {
-				require.NoError(t, os.MkdirAll(filepath.Join(contentDir, "mcp-resources"), 0o755))
+				require.NoError(t, os.MkdirAll(content.NewContentProvider(contentDir).ResourcesDir, 0o755))
 			},
 			wantWarn: false,
 		},
 		{
-			name:      "defaulted, zero sources, no mcp-resources at all",
+			name:      "defaulted, zero sources, no .acdc/resources at all",
 			defaulted: true,
 			sources:   nil,
 			setupDir: func(t *testing.T, contentDir string) {
-				// no mcp-resources directory created
+				// no .acdc/resources directory created
 			},
 			wantWarn: false,
 		},
 		{
-			name:      "defaulted, zero sources, mcp-resources exists but is a regular file",
+			name:      "defaulted, zero sources, .acdc/resources exists but is a regular file",
 			defaulted: true,
 			sources:   nil,
 			setupDir: func(t *testing.T, contentDir string) {
-				require.NoError(t, os.WriteFile(filepath.Join(contentDir, "mcp-resources"), []byte("not a directory"), 0o644))
+				cp := content.NewContentProvider(contentDir)
+				require.NoError(t, os.MkdirAll(cp.ConfigDir, 0o755))
+				require.NoError(t, os.WriteFile(cp.ResourcesDir, []byte("not a directory"), 0o644))
 			},
 			wantWarn: false,
 		},
@@ -120,8 +124,8 @@ func TestShouldWarnLegacyLayoutIgnored_ConditionMatrix(t *testing.T) {
 func TestCreateMCPServer_Success(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
-	resourcesDir := filepath.Join(contentDir, "mcp-resources")
-	promptsDir := filepath.Join(contentDir, "mcp-prompts")
+	resourcesDir := content.NewContentProvider(contentDir).ResourcesDir
+	promptsDir := content.NewContentProvider(contentDir).PromptsDir
 	_ = os.MkdirAll(resourcesDir, 0755)
 	_ = os.MkdirAll(promptsDir, 0755)
 
@@ -132,7 +136,7 @@ server:
   instructions: inst
 tools: []
 `
-	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
+	_ = os.WriteFile(content.NewContentProvider(contentDir).ConfigFile, []byte(metadataContent), 0644)
 
 	resFile := filepath.Join(resourcesDir, "res.md")
 	_ = os.WriteFile(resFile, []byte("---\nname: res\ndescription: A test resource\n---\ncontent"), 0644)
@@ -161,7 +165,7 @@ tools: []
 }
 
 // TestCreateMCPServer_MissingManifestNoDefaultDocsSucceedsLeniently covers the
-// zero-config path: with no mcp-metadata.yaml and neither README.md nor docs/,
+// zero-config path: with no .acdc/config.yaml and neither README.md nor docs/,
 // the built-in defaults apply and the empty match is tolerated rather than
 // failing startup. This supersedes the pre-zero-config behavior where an
 // absent manifest was a hard configuration error.
@@ -205,9 +209,9 @@ func TestCreateMCPServer_MissingManifestWithDefaultDocsSucceeds(t *testing.T) {
 }
 
 // TestCreateMCPServer_MissingManifestOverLegacyLayoutSucceeds covers a
-// content root laid out for legacy discovery (mcp-resources/**.md) but
-// missing mcp-metadata.yaml. Zero-config defaults always set a non-nil Index,
-// so discovery never reaches the legacy mcp-resources scan; startup must
+// content root laid out for legacy discovery (.acdc/resources/**.md) but
+// missing .acdc/config.yaml. Zero-config defaults always set a non-nil Index,
+// so discovery never reaches the legacy .acdc/resources scan; startup must
 // still succeed, and the diagnostic warning this path is expected to emit
 // must not itself break server construction. The resulting zero indexed
 // source count is verified separately by
@@ -215,7 +219,7 @@ func TestCreateMCPServer_MissingManifestWithDefaultDocsSucceeds(t *testing.T) {
 // tests/integration/zero_config_test.go.
 func TestCreateMCPServer_MissingManifestOverLegacyLayoutSucceeds(t *testing.T) {
 	contentDir := t.TempDir()
-	resourcesDir := filepath.Join(contentDir, "mcp-resources")
+	resourcesDir := content.NewContentProvider(contentDir).ResourcesDir
 	require.NoError(t, os.MkdirAll(resourcesDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(resourcesDir, "guide.md"),
 		[]byte("---\nname: Guide\ndescription: A guide.\n---\ncontent"), 0o644))
@@ -255,10 +259,11 @@ func TestCreateMCPServer_DefaultedMetadataCarriesInjectedVersion(t *testing.T) {
 func TestCreateMCPServer_InvalidMetadataYAML(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
-	_ = os.MkdirAll(contentDir, 0755)
+	cp := content.NewContentProvider(contentDir)
+	_ = os.MkdirAll(cp.ConfigDir, 0755)
 
 	// Write invalid YAML
-	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte("not: valid: yaml: {{"), 0644)
+	_ = os.WriteFile(cp.ConfigFile, []byte("not: valid: yaml: {{"), 0644)
 
 	settings := &config.Settings{
 		ContentDir: contentDir,
@@ -280,7 +285,8 @@ func TestCreateMCPServer_InvalidMetadataYAML(t *testing.T) {
 func TestCreateMCPServer_MetadataValidationFails(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
-	_ = os.MkdirAll(contentDir, 0755)
+	cp := content.NewContentProvider(contentDir)
+	_ = os.MkdirAll(cp.ConfigDir, 0755)
 
 	// Empty metadata fails validation
 	metadataContent := `
@@ -289,7 +295,7 @@ server:
   version: ""
   instructions: ""
 `
-	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
+	_ = os.WriteFile(cp.ConfigFile, []byte(metadataContent), 0644)
 
 	settings := &config.Settings{
 		ContentDir: contentDir,
@@ -311,7 +317,7 @@ server:
 func TestCreateMCPServer_InvalidResourceIsSkipped(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
-	resourcesDir := filepath.Join(contentDir, "mcp-resources")
+	resourcesDir := content.NewContentProvider(contentDir).ResourcesDir
 	_ = os.MkdirAll(resourcesDir, 0755)
 
 	metadataContent := `
@@ -321,7 +327,7 @@ server:
   instructions: inst
 tools: []
 `
-	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
+	_ = os.WriteFile(content.NewContentProvider(contentDir).ConfigFile, []byte(metadataContent), 0644)
 
 	// Write an invalid resource file (invalid frontmatter) - should be skipped with warning
 	_ = os.WriteFile(filepath.Join(resourcesDir, "invalid.md"), []byte("---\n: broken\n---\ncontent"), 0644)
@@ -351,11 +357,11 @@ tools: []
 func TestCreateMCPServer_ResourceWithKeywords(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
-	resourcesDir := filepath.Join(contentDir, "mcp-resources")
+	resourcesDir := content.NewContentProvider(contentDir).ResourcesDir
 	_ = os.MkdirAll(resourcesDir, 0755)
 
 	metadataContent := `server: { name: test, version: 1.0, instructions: inst }`
-	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
+	_ = os.WriteFile(content.NewContentProvider(contentDir).ConfigFile, []byte(metadataContent), 0644)
 
 	// Resource with keywords
 	resFile := filepath.Join(resourcesDir, "res.md")
@@ -381,7 +387,7 @@ func TestCreateMCPServer_ResourceWithKeywords(t *testing.T) {
 func TestCreateMCPServer_NoResources(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
-	resourcesDir := filepath.Join(contentDir, "mcp-resources")
+	resourcesDir := content.NewContentProvider(contentDir).ResourcesDir
 	_ = os.MkdirAll(resourcesDir, 0755)
 
 	metadataContent := `
@@ -391,7 +397,7 @@ server:
   instructions: inst
 tools: []
 `
-	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
+	_ = os.WriteFile(content.NewContentProvider(contentDir).ConfigFile, []byte(metadataContent), 0644)
 
 	settings := &config.Settings{
 		ContentDir: contentDir,
@@ -518,7 +524,9 @@ tools: []
 index:
   include: ["docs/**"]
 `
-	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadata), 0o644))
+	cp := content.NewContentProvider(contentDir)
+	require.NoError(t, os.MkdirAll(cp.ConfigDir, 0o755))
+	require.NoError(t, os.WriteFile(cp.ConfigFile, []byte(metadata), 0o644))
 	require.NoError(t, os.MkdirAll(filepath.Join(contentDir, "docs"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "data.txt"), []byte("not markdown"), 0o644))
 
@@ -535,7 +543,9 @@ tools: []
 index:
   include: ["docs/*"]
 `
-	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadata), 0o644))
+	cp := content.NewContentProvider(contentDir)
+	require.NoError(t, os.MkdirAll(cp.ConfigDir, 0o755))
+	require.NoError(t, os.WriteFile(cp.ConfigFile, []byte(metadata), 0o644))
 	require.NoError(t, os.MkdirAll(filepath.Join(contentDir, "docs"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "guide.md"), []byte("# Guide"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "guide.markdown"), []byte("# Guide duplicate"), 0o644))
@@ -548,7 +558,8 @@ index:
 func TestCreateMCPServer_InvalidToolMetadata_MissingName(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
-	_ = os.MkdirAll(contentDir, 0755)
+	cp := content.NewContentProvider(contentDir)
+	_ = os.MkdirAll(cp.ConfigDir, 0755)
 
 	metadataContent := `
 server: { name: test, version: 1.0, instructions: inst }
@@ -556,7 +567,7 @@ tools:
   - name: ""
     description: "desc"
 `
-	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
+	_ = os.WriteFile(cp.ConfigFile, []byte(metadataContent), 0644)
 
 	settings := &config.Settings{ContentDir: contentDir}
 	_, _, err := CreateMCPServer(context.Background(), settings, "test")
@@ -568,7 +579,8 @@ tools:
 func TestCreateMCPServer_InvalidToolMetadata_MissingDescription(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
-	_ = os.MkdirAll(contentDir, 0755)
+	cp := content.NewContentProvider(contentDir)
+	_ = os.MkdirAll(cp.ConfigDir, 0755)
 
 	metadataContent := `
 server: { name: test, version: 1.0, instructions: inst }
@@ -576,7 +588,7 @@ tools:
   - name: "search"
     description: ""
 `
-	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
+	_ = os.WriteFile(cp.ConfigFile, []byte(metadataContent), 0644)
 
 	settings := &config.Settings{ContentDir: contentDir}
 	_, _, err := CreateMCPServer(context.Background(), settings, "test")
@@ -588,7 +600,8 @@ tools:
 func TestCreateMCPServer_InvalidToolMetadata_DuplicateNames(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
-	_ = os.MkdirAll(contentDir, 0755)
+	cp := content.NewContentProvider(contentDir)
+	_ = os.MkdirAll(cp.ConfigDir, 0755)
 
 	metadataContent := `
 server: { name: test, version: 1.0, instructions: inst }
@@ -596,7 +609,7 @@ tools:
   - { name: search, description: d1 }
   - { name: search, description: d2 }
 `
-	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
+	_ = os.WriteFile(cp.ConfigFile, []byte(metadataContent), 0644)
 
 	settings := &config.Settings{ContentDir: contentDir}
 	_, _, err := CreateMCPServer(context.Background(), settings, "test")
@@ -607,18 +620,16 @@ tools:
 func TestCreateMCPServer_PromptDiscoveryError(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
-	_ = os.MkdirAll(contentDir, 0755)
-
-	metadataContent := `server: { name: test, version: 1.0, instructions: inst }`
-	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
+	cp := content.NewContentProvider(contentDir)
 
 	// Create resources dir so it doesn't fail here
-	resourcesDir := filepath.Join(contentDir, "mcp-resources")
-	_ = os.MkdirAll(resourcesDir, 0755)
+	_ = os.MkdirAll(cp.ResourcesDir, 0755)
+
+	metadataContent := `server: { name: test, version: 1.0, instructions: inst }`
+	_ = os.WriteFile(cp.ConfigFile, []byte(metadataContent), 0644)
 
 	// Create a symlink loop to cause os.Stat to fail with "too many levels of symbolic links"
-	promptsDir := filepath.Join(contentDir, "mcp-prompts")
-	_ = os.Symlink(promptsDir, promptsDir)
+	_ = os.Symlink(cp.PromptsDir, cp.PromptsDir)
 
 	settings := &config.Settings{
 		ContentDir: contentDir,
@@ -638,13 +649,13 @@ func TestCreateMCPServer_PromptDiscoveryError(t *testing.T) {
 func TestCreateMCPServer_CrossRefTransformation(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
-	resourcesDir := filepath.Join(contentDir, "mcp-resources")
+	resourcesDir := content.NewContentProvider(contentDir).ResourcesDir
 	guidesDir := filepath.Join(resourcesDir, "guides")
 	_ = os.MkdirAll(guidesDir, 0755)
-	_ = os.MkdirAll(filepath.Join(contentDir, "mcp-prompts"), 0755)
+	_ = os.MkdirAll(content.NewContentProvider(contentDir).PromptsDir, 0755)
 
 	metadataContent := `server: { name: test, version: 1.0, instructions: inst }`
-	_ = os.WriteFile(filepath.Join(contentDir, "mcp-metadata.yaml"), []byte(metadataContent), 0644)
+	_ = os.WriteFile(content.NewContentProvider(contentDir).ConfigFile, []byte(metadataContent), 0644)
 
 	// Resource A links to Resource B via relative markdown link
 	resA := filepath.Join(resourcesDir, "doc-a.md")
@@ -675,7 +686,7 @@ func TestCreateMCPServer_CrossRefTransformation(t *testing.T) {
 func TestCreateMCPServer_CrossRefTransformation_ContentVerification(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
-	resourcesDir := filepath.Join(contentDir, "mcp-resources")
+	resourcesDir := content.NewContentProvider(contentDir).ResourcesDir
 	guidesDir := filepath.Join(resourcesDir, "guides")
 	_ = os.MkdirAll(guidesDir, 0755)
 
@@ -728,7 +739,7 @@ func TestCreateMCPServer_CrossRefTransformation_ContentVerification(t *testing.T
 func TestCreateMCPServer_CrossRefDisabledByDefault(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
-	resourcesDir := filepath.Join(contentDir, "mcp-resources")
+	resourcesDir := content.NewContentProvider(contentDir).ResourcesDir
 	guidesDir := filepath.Join(resourcesDir, "guides")
 	_ = os.MkdirAll(guidesDir, 0755)
 
@@ -771,7 +782,7 @@ func TestCreateMCPServer_CrossRefDisabledByDefault(t *testing.T) {
 func TestCreateMCPServer_CrossRefTransformation_CustomScheme(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
-	resourcesDir := filepath.Join(contentDir, "mcp-resources")
+	resourcesDir := content.NewContentProvider(contentDir).ResourcesDir
 	_ = os.MkdirAll(resourcesDir, 0755)
 
 	resA := filepath.Join(resourcesDir, "a.md")

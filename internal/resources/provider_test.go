@@ -168,8 +168,9 @@ func TestResourceProvider_StreamsOrphanChunkWithSourceIdentity(t *testing.T) {
 
 func TestDiscoverResources_LegacyCompatibility(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, "mcp-resources/nested/guide.md", "---\nname: Guide\ndescription: Existing resource\n---\n# Guide\n")
-	writeFile(t, root, "mcp-resources/invalid.md", "# No required frontmatter\n")
+	resourcesDir := content.NewContentProvider(root).ResourcesDir
+	writeFile(t, resourcesDir, "nested/guide.md", "---\nname: Guide\ndescription: Existing resource\n---\n# Guide\n")
+	writeFile(t, resourcesDir, "invalid.md", "# No required frontmatter\n")
 
 	definitions, err := DiscoverResources(content.NewContentProvider(root), "acdc")
 	require.NoError(t, err)

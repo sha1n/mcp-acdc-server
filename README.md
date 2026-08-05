@@ -129,7 +129,7 @@ For full configuration options including authentication, see [Configuration Refe
 
 ### Per-Repository (Zero-Config)
 
-Because `--content-dir` defaults to the working directory and `mcp-metadata.yaml` is optional, `acdc-mcp` can be registered once at **user** scope, with no `--content-dir` — for clients that launch stdio servers with the repository as the working directory, as Claude Code and Gemini CLI do, this means it indexes whichever repository the client is running in each time it launches the server, and picks up edits made mid-session without needing a restart (see [Content Refresh](docs/SPECIFICATIONS.md#content-refresh)):
+Because `--content-dir` defaults to the working directory and `.acdc/config.yaml` is optional, `acdc-mcp` can be registered once at **user** scope, with no `--content-dir` — for clients that launch stdio servers with the repository as the working directory, as Claude Code and Gemini CLI do, this means it indexes whichever repository the client is running in each time it launches the server, and picks up edits made mid-session without needing a restart (see [Content Refresh](docs/SPECIFICATIONS.md#content-refresh)):
 
 ```bash
 claude mcp add --scope user --transport stdio acdc -- acdc-mcp
@@ -165,13 +165,16 @@ claude mcp add --scope user --transport sse acdc http://<host>:<port>/sse
 
 ## 📚 Content & Resources
 
-An `mcp-metadata.yaml` file in your content directory is optional. Point `acdc-mcp` at any repository with no manifest and it starts anyway, indexing `README.md` and `docs/**/*.md` with built-in server identity and instructions — no configuration required:
+> [!IMPORTANT]
+> Since 0.8.0, the on-disk content convention moved from `mcp-metadata.yaml`, `mcp-prompts/`, and `mcp-resources/` to a single `.acdc/` directory; the server refuses to start on the old layout. See [Migrating](https://github.com/sha1n/mcp-acdc-server/blob/master/docs/authoring-resources.md#migrating).
+
+A `.acdc/config.yaml` file in your content directory is optional. Point `acdc-mcp` at any repository with no manifest and it starts anyway, indexing `README.md` and `docs/**/*.md` with built-in server identity and instructions — no configuration required:
 
 ```bash
 acdc-mcp --content-dir /path/to/repository
 ```
 
-Add an `mcp-metadata.yaml` to override the defaults: customize server identity and instructions, and either add an `index` block to index any Markdown matched by glob patterns (e.g. `docs/**/*.md`, without needing frontmatter), or omit `index` to use the legacy `mcp-resources/` layout, which requires frontmatter on every file. Whichever mode selected the documents, they are split into heading-aware chunks for search.
+Add a `.acdc/config.yaml` to override the defaults: customize server identity and instructions, and either add an `index` block to index any Markdown matched by glob patterns (e.g. `docs/**/*.md`, without needing frontmatter), or omit `index` to use the legacy `.acdc/resources/` layout, which requires frontmatter on every file. Whichever mode selected the documents, they are split into heading-aware chunks for search.
 
 For details on authoring resource files, including frontmatter format and search keyword boosting, see the [Authoring Resources Guide](docs/authoring-resources.md).
 

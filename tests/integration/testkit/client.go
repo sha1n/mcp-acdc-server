@@ -37,7 +37,7 @@ func NewStdioTestClient(t testing.TB, contentOpts *ContentDirOptions) *TestClien
 // NewStdioTestClientForDir connects a test client to an ACDC server rooted at an
 // already-prepared content directory, via stdio transport. Unlike NewStdioTestClient,
 // it does not call CreateTestContentDir, so the caller controls the directory's base
-// name and whether mcp-metadata.yaml is present. Used by zero-config tests, where the
+// name and whether .acdc/config.yaml is present. Used by zero-config tests, where the
 // content root's base name drives the derived server name and no manifest must exist.
 func NewStdioTestClientForDir(t testing.TB, contentDir string) *TestClient {
 	t.Helper()
