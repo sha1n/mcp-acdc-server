@@ -40,6 +40,10 @@ func createMCPServer(ctx context.Context, settings *config.Settings, version str
 	// Initialize content provider
 	cp := content.NewContentProvider(settings.ContentDir)
 
+	if err := rejectLegacyContentLayout(cp); err != nil {
+		return nil, nil, err
+	}
+
 	resolved, err := resolveMetadata(cp, version)
 	if err != nil {
 		return nil, nil, err
