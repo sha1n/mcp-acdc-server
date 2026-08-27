@@ -20,7 +20,6 @@ func TestDiscoverWithOps_ConfiguredFilesystemFailures(t *testing.T) {
 	canonicalErr := errors.New("file disappeared")
 	containmentErr := "selected file escapes content root"
 	relativeErr := errors.New("cannot make relative path")
-	readErr := errors.New("cannot read selected file")
 	walkErr := errors.New("directory traversal failed")
 
 	tests := []struct {
@@ -79,13 +78,6 @@ func TestDiscoverWithOps_ConfiguredFilesystemFailures(t *testing.T) {
 			configure: func(ops *discoveryOps) {
 				ops.walkDir = walkOne(root+"/docs", directoryEntry("docs"))
 				ops.relativePath = func(_, _ string) (string, error) { return "", relativeErr }
-			},
-		},
-		{
-			name: "read error", wantErr: readErr,
-			configure: func(ops *discoveryOps) {
-				ops.walkDir = walkOne(file, regularEntry("guide.md"))
-				ops.readFile = func(string) ([]byte, error) { return nil, readErr }
 			},
 		},
 	}
@@ -185,7 +177,7 @@ func TestDiscoverWithOps_ConfiguredCancellationBeforeCatalogRead(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
-func TestDiscoverWithOps_ConfiguredReadFailureLeniency(t *testing.T) {
+func TestDiscoverWithOps_ConfiguredSkipsUnreadableFileAndIndexesSibling(t *testing.T) {
 	root := "/catalog"
 	readableFile := root + "/docs/good.md"
 	unreadableFile := root + "/docs/bad.md"
@@ -212,16 +204,9 @@ func TestDiscoverWithOps_ConfiguredReadFailureLeniency(t *testing.T) {
 	}
 	index := &domain.IndexMetadata{Include: []string{"docs/*.md"}}
 
-	t.Run("lenient skips the unreadable file and indexes its readable sibling", func(t *testing.T) {
-		result, err := discoverWithOps(context.Background(), content.NewContentProvider(root), index, "acdc", buildOps(), WithLenientIndex())
-		require.NoError(t, err)
-		require.Equal(t, []string{"acdc://docs/good"}, sourceURIs(result.Sources))
-	})
-
-	t.Run("strict fails discovery on the unreadable file", func(t *testing.T) {
-		_, err := discoverWithOps(context.Background(), content.NewContentProvider(root), index, "acdc", buildOps())
-		require.ErrorIs(t, err, readErr)
-	})
+	result, err := discoverWithOps(context.Background(), content.NewContentProvider(root), index, "acdc", buildOps(), WithLenientIndex())
+	require.NoError(t, err)
+	require.Equal(t, []string{"acdc://docs/good"}, sourceURIs(result.Sources))
 }
 
 func TestDiscoverWithOps_LegacySkipsUnreadableAndNonregularEntries(t *testing.T) {

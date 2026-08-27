@@ -42,10 +42,11 @@ func defaultDiscoveryOps() discoveryOps {
 	}
 }
 
-// discoverPolicy controls how the configured-index path tolerates repository
-// content. It never affects validation of the invocation itself (patterns,
-// content root, selected file containment or type), only how missing or
-// unreadable/unparsable repository files are handled.
+// discoverPolicy controls how the configured-index path treats a repository
+// whose shape the operator did not declare. It never affects validation of the
+// invocation itself (patterns, content root, selected file containment or
+// type), nor the handling of individual unreadable, unparsable or
+// unaddressable documents, which buildCatalog skips under every policy.
 type discoverPolicy struct {
 	lenient bool
 }
@@ -53,10 +54,12 @@ type discoverPolicy struct {
 // DiscoverOption configures discovery behavior.
 type DiscoverOption func(*discoverPolicy)
 
-// WithLenientIndex tolerates an empty selection and skips files that cannot be read
-// or parsed, instead of failing startup. Used when the index configuration is
-// defaulted rather than declared by an operator. It has no effect in legacy
-// .acdc/resources mode (index == nil), which resolves before any policy is applied.
+// WithLenientIndex tolerates an empty selection instead of failing startup, and
+// prunes dependency and build-output directories during traversal. Used when the
+// index configuration is defaulted rather than declared by an operator: nothing
+// was declared, so nothing about the repository's shape can be assumed wrong.
+// It has no effect in legacy .acdc/resources mode (index == nil), which resolves
+// before any policy is applied.
 func WithLenientIndex() DiscoverOption {
 	return func(p *discoverPolicy) { p.lenient = true }
 }
@@ -94,9 +97,9 @@ func shouldPruneDir(name string, lenient bool) bool {
 }
 
 // Discover loads configured Markdown sources, or legacy .acdc/resources when
-// index is nil. By default it applies today's strict behavior: an empty
-// selection or an unreadable/unparsable configured file fails discovery.
-// Pass WithLenientIndex to tolerate repository content issues instead.
+// index is nil. A selected file that cannot be read, parsed or addressed is
+// always skipped with a warning; an empty selection fails discovery unless
+// WithLenientIndex is passed.
 func Discover(ctx context.Context, cp *content.ContentProvider, index *domain.IndexMetadata, scheme string, opts ...DiscoverOption) (DiscoveryResult, error) {
 	return discoverWithOps(ctx, cp, index, scheme, defaultDiscoveryOps(), opts...)
 }
@@ -123,7 +126,7 @@ func discoverWithOps(ctx context.Context, cp *content.ContentProvider, index *do
 	for i, file := range selected {
 		paths[i] = file.path
 	}
-	return buildCatalog(ctx, root, paths, scheme, ops, policy)
+	return buildCatalog(ctx, root, paths, scheme, ops)
 }
 
 // selectedFile is a member of the file set a Discover call would select,
@@ -252,23 +255,23 @@ func discoverLegacy(ctx context.Context, cp *content.ContentProvider, scheme str
 		}
 		raw, err := ops.readFile(file.path)
 		if err != nil {
-			slog.Warn("Skipping invalid resource file", "file", filepath.Base(file.path), "error", err)
+			skipSelectedFile("Skipping invalid resource file", file.relativePath, err)
 			continue
 		}
 		parsed, err := content.ParseMarkdown(raw, content.FrontmatterRequired)
 		if err != nil {
-			slog.Warn("Skipping invalid resource file", "file", filepath.Base(file.path), "error", err)
+			skipSelectedFile("Skipping invalid resource file", file.relativePath, err)
 			continue
 		}
 		name, _ := parsed.Metadata["name"].(string)
 		description, _ := parsed.Metadata["description"].(string)
 		if name == "" || description == "" {
-			slog.Warn("Skipping resource with missing metadata", "file", filepath.Base(file.path))
+			slog.Warn("Skipping resource with missing metadata", "file", file.relativePath)
 			continue
 		}
 		uri := sourceURI(scheme, file.relativePath)
 		if _, err := url.Parse(uri); err != nil {
-			slog.Warn("Skipping invalid resource file", "file", filepath.Base(file.path), "error", err)
+			skipSelectedFile("Skipping invalid resource file", file.relativePath, err)
 			continue
 		}
 		source := buildParsedSource(parsed, content.SourceOptions{
@@ -345,8 +348,18 @@ func sortSelectedFiles(files []selectedFile) {
 	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
 }
 
-func buildCatalog(ctx context.Context, root string, files []string, scheme string, ops discoveryOps, policy discoverPolicy) (DiscoveryResult, error) {
+// buildCatalog separates how the index was configured from what it found. A
+// selection that names a non-Markdown file, or a root a selected path cannot
+// be made relative to, is a defect in the manifest itself and stays fatal. A
+// file that cannot be read, parsed or addressed is a defect in one document:
+// it is skipped with a warning regardless of policy, so one malformed file
+// costs one resource rather than the whole server. That distinction also keeps
+// a running server current -- Revalidate abandons an entire refresh cycle on
+// any error discovery returns, so a fatal per-file failure would silently
+// freeze the catalog until the file was repaired.
+func buildCatalog(ctx context.Context, root string, files []string, scheme string, ops discoveryOps) (DiscoveryResult, error) {
 	result := DiscoveryResult{}
+	skipped := 0
 	for _, filePath := range files {
 		if err := ctx.Err(); err != nil {
 			return DiscoveryResult{}, err
@@ -354,42 +367,51 @@ func buildCatalog(ctx context.Context, root string, files []string, scheme strin
 		if !isMarkdown(filePath) {
 			return DiscoveryResult{}, fmt.Errorf("configured index selected non-Markdown file: %s", filePath)
 		}
-		raw, err := ops.readFile(filePath)
-		if err != nil {
-			if policy.lenient {
-				slog.Warn("Skipping unreadable configured file", "file", filepath.Base(filePath), "error", err)
-				continue
-			}
-			return DiscoveryResult{}, fmt.Errorf("read configured file %s: %w", filePath, err)
-		}
-		parsed, err := content.ParseMarkdown(raw, content.FrontmatterOptional)
-		if err != nil {
-			if policy.lenient {
-				slog.Warn("Skipping invalid configured file", "file", filepath.Base(filePath), "error", err)
-				continue
-			}
-			return DiscoveryResult{}, fmt.Errorf("parse configured file %s: %w", filePath, err)
-		}
-		relativePath, err := ops.relativePath(root, filePath)
+		nativeRelativePath, err := ops.relativePath(root, filePath)
 		if err != nil {
 			return DiscoveryResult{}, err
 		}
+		relativePath := filepath.ToSlash(nativeRelativePath)
+
+		raw, err := ops.readFile(filePath)
+		if err != nil {
+			skipSelectedFile("Skipping unreadable configured file", relativePath, err)
+			skipped++
+			continue
+		}
+		parsed, err := content.ParseMarkdown(raw, content.FrontmatterOptional)
+		if err != nil {
+			skipSelectedFile("Skipping invalid configured file", relativePath, err)
+			skipped++
+			continue
+		}
 		uri := sourceURI(scheme, relativePath)
 		if _, err := url.Parse(uri); err != nil {
-			if policy.lenient {
-				slog.Warn("Skipping unaddressable configured file", "file", filepath.Base(filePath), "error", err)
-				continue
-			}
-			return DiscoveryResult{}, fmt.Errorf("address configured file %s: %w", filePath, err)
+			skipSelectedFile("Skipping unaddressable configured file", relativePath, err)
+			skipped++
+			continue
 		}
 		source := buildParsedSource(parsed, content.SourceOptions{
-			URI: uri, FilePath: filePath, RelativePath: filepath.ToSlash(relativePath), Raw: raw,
+			URI: uri, FilePath: filePath, RelativePath: relativePath, Raw: raw,
 		})
 		chunks := chunkParsedSource(source, parsed)
 		result.Sources = append(result.Sources, source)
 		result.Chunks = append(result.Chunks, chunks...)
 	}
+	if skipped > 0 {
+		slog.Warn("Skipped configured files that could not be indexed",
+			"skipped", skipped, "indexed", len(result.Sources), "root", root)
+	}
 	return result, nil
+}
+
+// skipSelectedFile reports a skipped document by its path relative to the root
+// the discovery mode walked -- the content root for a configured index, the
+// .acdc/resources directory for legacy. The base name alone is not actionable:
+// a large corpus holds many identically named files, and the operator needs to
+// know which one to repair.
+func skipSelectedFile(reason, relativePath string, err error) {
+	slog.Warn(reason, "file", relativePath, "error", err)
 }
 
 // ParseMarkdown returns a non-nil ParsedMarkdown with an AST on success.
