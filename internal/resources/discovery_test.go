@@ -726,3 +726,20 @@ func TestDiscover_ConfiguredStillFailsOnConfigurationErrors(t *testing.T) {
 		require.ErrorContains(t, err, "configured index matched no files")
 	})
 }
+
+// TestDiscover_AllSelectedFilesUnparsableYieldsEmptyCatalog covers the extreme
+// of the skip contract: a selection every one of whose documents is malformed
+// is still a valid, if empty, catalog. The manifest selected files, so the
+// "matched no files" configuration error does not apply.
+func TestDiscover_AllSelectedFilesUnparsableYieldsEmptyCatalog(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "docs/one.md", "---\ndescription: A series: what shipped\n---\n# One\n")
+	writeFile(t, root, "docs/two.md", "---\nname: [\n---\n# Two\n")
+
+	result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"docs/*.md"},
+	}, "acdc")
+	require.NoError(t, err)
+	require.Empty(t, result.Sources)
+	require.Empty(t, result.Chunks)
+}
