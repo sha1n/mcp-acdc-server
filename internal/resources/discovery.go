@@ -249,6 +249,7 @@ func discoverLegacy(ctx context.Context, cp *content.ContentProvider, scheme str
 	}
 
 	result := DiscoveryResult{}
+	claimed := make(map[string]string, len(files))
 	for _, file := range files {
 		if err := ctx.Err(); err != nil {
 			return DiscoveryResult{}, err
@@ -272,6 +273,9 @@ func discoverLegacy(ctx context.Context, cp *content.ContentProvider, scheme str
 		uri := sourceURI(scheme, file.relativePath)
 		if _, err := url.Parse(uri); err != nil {
 			skipSelectedFile("Skipping invalid resource file", file.relativePath, err)
+			continue
+		}
+		if !claimSourceURI(claimed, uri, file.relativePath) {
 			continue
 		}
 		source := buildParsedSource(parsed, content.SourceOptions{
@@ -348,22 +352,17 @@ func sortSelectedFiles(files []selectedFile) {
 	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
 }
 
-// buildCatalog separates how the index was configured from what it found. A
-// selection that names a non-Markdown file, or a root a selected path cannot
-// be made relative to, is a defect in the manifest itself and stays fatal. A
-// file that cannot be read, parsed or addressed is a defect in one document:
-// it is skipped with a warning regardless of policy, so one malformed file
-// costs one resource rather than the whole server. That distinction also keeps
-// a running server current -- Revalidate abandons an entire refresh cycle on
-// any error discovery returns, so a fatal per-file failure would silently
-// freeze the catalog until the file was repaired.
 func buildCatalog(ctx context.Context, root string, files []string, scheme string, ops discoveryOps) (DiscoveryResult, error) {
 	result := DiscoveryResult{}
+	claimed := make(map[string]string, len(files))
 	skipped := 0
 	for _, filePath := range files {
 		if err := ctx.Err(); err != nil {
 			return DiscoveryResult{}, err
 		}
+		// A non-Markdown selection is a defect in the manifest's patterns
+		// rather than in a document, so it stays fatal while every document
+		// defect below does not.
 		if !isMarkdown(filePath) {
 			return DiscoveryResult{}, fmt.Errorf("configured index selected non-Markdown file: %s", filePath)
 		}
@@ -373,6 +372,11 @@ func buildCatalog(ctx context.Context, root string, files []string, scheme strin
 		}
 		relativePath := filepath.ToSlash(nativeRelativePath)
 
+		// From here down a failure costs one document. Returning an error
+		// instead would cost the whole server at startup and, mid-session,
+		// freeze the catalog: Revalidate abandons an entire refresh cycle on
+		// any error discovery reports, so the running server would keep
+		// serving its last-known-good snapshot until the file was repaired.
 		raw, err := ops.readFile(filePath)
 		if err != nil {
 			skipSelectedFile("Skipping unreadable configured file", relativePath, err)
@@ -391,6 +395,10 @@ func buildCatalog(ctx context.Context, root string, files []string, scheme strin
 			skipped++
 			continue
 		}
+		if !claimSourceURI(claimed, uri, relativePath) {
+			skipped++
+			continue
+		}
 		source := buildParsedSource(parsed, content.SourceOptions{
 			URI: uri, FilePath: filePath, RelativePath: relativePath, Raw: raw,
 		})
@@ -405,13 +413,27 @@ func buildCatalog(ctx context.Context, root string, files []string, scheme strin
 	return result, nil
 }
 
-// skipSelectedFile reports a skipped document by its path relative to the root
-// the discovery mode walked -- the content root for a configured index, the
-// .acdc/resources directory for legacy. The base name alone is not actionable:
-// a large corpus holds many identically named files, and the operator needs to
-// know which one to repair.
 func skipSelectedFile(reason, relativePath string, err error) {
+	// Named relative to the root the discovery mode walked, never by base
+	// name: a large corpus holds many identically named files, and the
+	// operator needs to know which one to repair.
 	slog.Warn(reason, "file", relativePath, "error", err)
+}
+
+func claimSourceURI(claimed map[string]string, uri, relativePath string) bool {
+	// Both discovery modes present files in sorted canonical-path order, so
+	// the document that claims a URI first is the same one on every run: the
+	// document dropped here is stable across restarts, not arbitrary.
+	// Dropping it also keeps the collision out of NewResourceProvider, which
+	// rejects a duplicate URI outright and would otherwise take the whole
+	// catalog down over two files that merely share a name.
+	if owner, taken := claimed[uri]; taken {
+		slog.Warn("Skipping document whose resource URI is already claimed",
+			"file", relativePath, "uri", uri, "claimed_by", owner)
+		return false
+	}
+	claimed[uri] = relativePath
+	return true
 }
 
 // ParseMarkdown returns a non-nil ParsedMarkdown with an AST on success.

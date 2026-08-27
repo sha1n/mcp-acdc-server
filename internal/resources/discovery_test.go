@@ -611,9 +611,6 @@ func TestSortSelectedFiles_OrdersByNativePathNotSlashForm(t *testing.T) {
 	}
 }
 
-// captureDiscoveryLogs redirects the default slog logger to a buffer for the
-// duration of a test, so a skip decision can be verified through the operator-
-// facing signal it produces rather than only through the returned catalog.
 func captureDiscoveryLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buffer bytes.Buffer
@@ -742,4 +739,47 @@ func TestDiscover_AllSelectedFilesUnparsableYieldsEmptyCatalog(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, result.Sources)
 	require.Empty(t, result.Chunks)
+}
+
+// TestDiscover_ConfiguredSkipsDocumentWhoseURIIsAlreadyClaimed pins the
+// collision half of the skip contract. guide.md and guide.markdown both
+// resolve to acdc://docs/guide, which NewResourceProvider rejects outright, so
+// emitting both would take the catalog down over two files that merely share a
+// name.
+func TestDiscover_ConfiguredSkipsDocumentWhoseURIIsAlreadyClaimed(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "docs/guide.md", "# Guide\n\n## Setup\n\nMarkdown extension.\n")
+	writeFile(t, root, "docs/guide.markdown", "# Guide\n\n## Setup\n\nMarkdown extension, longer form.\n")
+
+	logs := captureDiscoveryLogs(t)
+	result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"docs/*"},
+	}, "acdc")
+	require.NoError(t, err)
+	require.Equal(t, []string{"acdc://docs/guide"}, sourceURIs(result.Sources))
+
+	// The surviving document must own every chunk: an orphaned chunk from the
+	// dropped document would collide in the provider and defeat the skip.
+	for _, chunk := range result.Chunks {
+		require.Equal(t, "acdc://docs/guide", chunk.SourceURI)
+	}
+
+	output := logs.String()
+	require.Contains(t, output, "docs/guide.md")
+	require.Contains(t, output, "docs/guide.markdown")
+	require.Contains(t, output, "level=WARN")
+}
+
+// TestDiscover_LegacySkipsDocumentWhoseURIIsAlreadyClaimed pins the same
+// collision handling in legacy .acdc/resources mode, which shares the
+// provider that rejects duplicates.
+func TestDiscover_LegacySkipsDocumentWhoseURIIsAlreadyClaimed(t *testing.T) {
+	root := t.TempDir()
+	resourcesDir := content.NewContentProvider(root).ResourcesDir
+	writeFile(t, resourcesDir, "guide.md", "---\nname: Guide\ndescription: Short form.\n---\n# Guide\n\nBody.\n")
+	writeFile(t, resourcesDir, "guide.markdown", "---\nname: Guide\ndescription: Long form.\n---\n# Guide\n\nBody.\n")
+
+	result, err := Discover(context.Background(), content.NewContentProvider(root), nil, "acdc")
+	require.NoError(t, err)
+	require.Equal(t, []string{"acdc://guide"}, sourceURIs(result.Sources))
 }

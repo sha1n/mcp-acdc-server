@@ -92,3 +92,47 @@ index:
 
 	require.Equal(t, []string{"acdc://docs/guide", "acdc://docs/new"}, resourceURIs(t, ctx, client))
 }
+
+// TestDuplicateURI_RefreshKeepsServingLaterEdits is the mid-session half of
+// the collision contract. Two documents resolving to one resource URI used to
+// fail catalog assembly, which Revalidate treats like any other refresh error:
+// the running server kept serving its last-known-good snapshot and silently
+// stopped picking up every later edit.
+func TestDuplicateURI_RefreshKeepsServingLaterEdits(t *testing.T) {
+	contentDir := testkit.CreateTestContentDir(t, &testkit.ContentDirOptions{
+		Metadata: `server:
+  name: repo-docs
+  version: "1"
+  instructions: search docs
+index:
+  include: ["docs/**/*"]
+`,
+		Files: map[string]string{
+			"docs/guide.md": "# Guide\n\n## Setup\n\nInstall dependencies before running the guide.\n",
+		},
+	})
+
+	client := testkit.NewStdioTestClientForDir(t, contentDir)
+	defer client.Close()
+	ctx := context.Background()
+
+	const term = "crystalburst"
+
+	searchText := callTextTool(t, ctx, client, "search", map[string]any{"query": term})
+	require.Equal(t, "No results found for '"+term+"'", searchText)
+
+	// guide.markdown collides with guide.md on acdc://docs/guide. It must cost
+	// only itself, leaving the refresh free to publish docs/new.md.
+	writeFile(t, contentDir, "docs/guide.markdown", "# Guide\n\n## Setup\n\nThe longer extension.\n")
+	writeFile(t, contentDir, "docs/new.md", "# New Document\n\n## Details\n\nThe unique term "+term+" only appears in this section.\n")
+
+	require.Eventually(t, func() bool {
+		result, err := client.CallTool(ctx, "search", map[string]any{"query": term})
+		if err != nil {
+			return false
+		}
+		return strings.Contains(firstTextContentOrEmpty(result), "docs/new.md")
+	}, refreshTimeout, refreshTick, "a colliding sibling must not stop the refresh from publishing docs/new.md")
+
+	require.Equal(t, []string{"acdc://docs/guide", "acdc://docs/new"}, resourceURIs(t, ctx, client))
+}

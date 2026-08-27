@@ -535,7 +535,7 @@ index:
 	require.ErrorContains(t, err, "configured index selected non-Markdown file")
 }
 
-func TestCreateMCPServer_FailsWhenDiscoveredSourcesShareURI(t *testing.T) {
+func TestCreateMCPServer_StartsWhenDiscoveredSourcesShareURI(t *testing.T) {
 	contentDir := t.TempDir()
 	metadata := `
 server: { name: test, version: 1.0, instructions: inst }
@@ -550,9 +550,10 @@ index:
 	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "guide.md"), []byte("# Guide"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "guide.markdown"), []byte("# Guide duplicate"), 0o644))
 
-	_, _, err := CreateMCPServer(context.Background(), &config.Settings{ContentDir: contentDir, Scheme: "acdc", Search: config.SearchSettings{InMemory: true}}, "test")
-	require.ErrorContains(t, err, "failed to create resource provider")
-	require.ErrorContains(t, err, "duplicate source URI: acdc://docs/guide")
+	server, cleanup, err := CreateMCPServer(context.Background(), &config.Settings{ContentDir: contentDir, Scheme: "acdc", Search: config.SearchSettings{InMemory: true}}, "test")
+	require.NoError(t, err)
+	require.NotNil(t, server)
+	t.Cleanup(cleanup)
 }
 
 func TestCreateMCPServer_InvalidToolMetadata_MissingName(t *testing.T) {
