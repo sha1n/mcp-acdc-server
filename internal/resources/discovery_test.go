@@ -1,9 +1,11 @@
 package resources
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io/fs"
-	"net/url"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -83,17 +85,6 @@ func TestDiscover_ConfiguredRejectsSelectedNonMarkdown(t *testing.T) {
 
 	_, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{Include: []string{"docs/**"}}, "acdc")
 	require.ErrorContains(t, err, "configured index selected non-Markdown file")
-}
-
-func TestDiscover_ConfiguredFailsForSelectedFileErrors(t *testing.T) {
-	t.Run("invalid explicit frontmatter", func(t *testing.T) {
-		root := t.TempDir()
-		writeFile(t, root, "docs/bad.md", "---\nname: [\n---\n# Bad\n")
-
-		_, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{Include: []string{"docs/*.md"}}, "acdc")
-		require.ErrorContains(t, err, "invalid YAML in frontmatter")
-	})
-
 }
 
 func TestDiscover_ConfiguredCancellation(t *testing.T) {
@@ -237,36 +228,6 @@ func TestDiscover_LenientSkipsUnparsableFilesButIndexesSiblings(t *testing.T) {
 	}, "acdc", WithLenientIndex())
 	require.NoError(t, err)
 	require.Equal(t, []string{"acdc://docs/good"}, sourceURIs(result.Sources))
-
-	_, err = Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
-		Include: []string{"docs/*.md"},
-	}, "acdc")
-	require.ErrorContains(t, err, "invalid YAML in frontmatter")
-}
-
-// TestDiscover_ConfiguredRejectsUnaddressableURI covers the strict-policy
-// side of a file selected by the index whose generated URI cannot be
-// registered as an MCP resource: the go-sdk's AddResource panics on a URI
-// that fails url.Parse, and an ASCII control character -- illegal in a URL
-// but legal in a relative file path on Linux and macOS -- is enough to
-// trigger it. An operator who declared an explicit index named this file;
-// one it cannot address is a configuration-level failure, not a warning.
-func TestDiscover_ConfiguredRejectsUnaddressableURI(t *testing.T) {
-	root := t.TempDir()
-	badPath := writeFile(t, root, "docs/a\nb.md", "# Bad\n")
-
-	// The fixture must actually reproduce the failure mode under test, not a
-	// weaker proxy: confirm the file exists on disk and that url.Parse
-	// genuinely rejects the URI discovery would build for it.
-	_, statErr := os.Stat(badPath)
-	require.NoError(t, statErr, "fixture file with a control character in its name must exist")
-	_, parseErr := url.Parse(sourceURI("acdc", "docs/a\nb"))
-	require.Error(t, parseErr, "fixture URI must fail url.Parse or this test proves nothing")
-
-	_, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
-		Include: []string{"docs/**/*.md"},
-	}, "acdc")
-	require.ErrorContains(t, err, badPath)
 }
 
 // TestDiscover_LenientSkipsUnaddressableURIButIndexesSiblings covers the
@@ -648,4 +609,177 @@ func TestSortSelectedFiles_OrdersByNativePathNotSlashForm(t *testing.T) {
 			require.Equal(t, []selectedFile{sibling, nested}, files)
 		})
 	}
+}
+
+func captureDiscoveryLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buffer bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buffer, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return &buffer
+}
+
+// TestDiscover_SkipsUnparsableFileUnderDeclaredIndex pins the contract change:
+// a document the operator's own manifest selected, whose frontmatter is
+// invalid, no longer fails discovery. A single malformed file costs one
+// resource, not the whole server.
+func TestDiscover_SkipsUnparsableFileUnderDeclaredIndex(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "docs/good.md", "# Good\n\nBody.\n")
+	writeFile(t, root, "docs/nested/bad.md", "---\ndescription: A series: what shipped\n---\n# Bad\n")
+
+	result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"docs/**/*.md"},
+	}, "acdc")
+	require.NoError(t, err)
+	require.Equal(t, []string{"acdc://docs/good"}, sourceURIs(result.Sources))
+}
+
+// TestDiscover_SkipLogIdentifiesFileByRelativePath pins the diagnostic that
+// makes the skip actionable: the log names the file by its path relative to
+// the content root, not by its base name, so it is locatable in a corpus where
+// many directories hold a file of the same name.
+func TestDiscover_SkipLogIdentifiesFileByRelativePath(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "docs/nested/bad.md", "---\ndescription: A series: what shipped\n---\n# Bad\n")
+	writeFile(t, root, "docs/good.md", "# Good\n\nBody.\n")
+
+	logs := captureDiscoveryLogs(t)
+	_, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"docs/**/*.md"},
+	}, "acdc")
+	require.NoError(t, err)
+
+	output := logs.String()
+	require.Contains(t, output, "docs/nested/bad.md")
+	require.Contains(t, output, "invalid YAML in frontmatter")
+	require.Contains(t, output, "level=WARN")
+}
+
+// TestDiscover_SkipsUnreadableFileUnderDeclaredIndex covers the second
+// content-level failure: an unreadable selected file is skipped, not fatal.
+func TestDiscover_SkipsUnreadableFileUnderDeclaredIndex(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "docs/good.md", "# Good\n\nBody.\n")
+	writeFile(t, root, "docs/bad.md", "# Bad\n")
+
+	// Matched on base name, not on the path writeFile returned: discovery
+	// canonicalizes every selected path, which on macOS rewrites the temp
+	// root's /var prefix to /private/var and would never compare equal.
+	ops := defaultDiscoveryOps()
+	ops.readFile = func(path string) ([]byte, error) {
+		if filepath.Base(path) == "bad.md" {
+			return nil, errors.New("permission denied")
+		}
+		return os.ReadFile(path)
+	}
+
+	result, err := discoverWithOps(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"docs/*.md"},
+	}, "acdc", ops)
+	require.NoError(t, err)
+	require.Equal(t, []string{"acdc://docs/good"}, sourceURIs(result.Sources))
+}
+
+// TestDiscover_SkipsUnaddressableFileUnderDeclaredIndex covers the third
+// content-level failure: a selected file whose relative path cannot form a
+// valid resource URI is skipped, not fatal.
+func TestDiscover_SkipsUnaddressableFileUnderDeclaredIndex(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "docs/good.md", "# Good\n\nBody.\n")
+	badPath := writeFile(t, root, "docs/a\nb.md", "# Bad\n")
+	_, statErr := os.Stat(badPath)
+	require.NoError(t, statErr, "fixture file with a control character in its name must exist")
+
+	result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"docs/*.md"},
+	}, "acdc")
+	require.NoError(t, err)
+	require.Equal(t, []string{"acdc://docs/good"}, sourceURIs(result.Sources))
+}
+
+// TestDiscover_ConfiguredStillFailsOnConfigurationErrors pins the other side
+// of the line the change draws: what the manifest *selected* stays fatal even
+// though what discovery *found* no longer is.
+func TestDiscover_ConfiguredStillFailsOnConfigurationErrors(t *testing.T) {
+	t.Run("selected non-Markdown file", func(t *testing.T) {
+		root := t.TempDir()
+		writeFile(t, root, "docs/readme.txt", "not markdown")
+
+		_, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+			Include: []string{"docs/**"},
+		}, "acdc")
+		require.ErrorContains(t, err, "configured index selected non-Markdown file")
+	})
+
+	t.Run("zero files matched", func(t *testing.T) {
+		root := t.TempDir()
+		writeFile(t, root, "docs/guide.md", "# Guide\n")
+
+		_, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+			Include: []string{"handbook/**/*.md"},
+		}, "acdc")
+		require.ErrorContains(t, err, "configured index matched no files")
+	})
+}
+
+// TestDiscover_AllSelectedFilesUnparsableYieldsEmptyCatalog covers the extreme
+// of the skip contract: a selection every one of whose documents is malformed
+// is still a valid, if empty, catalog. The manifest selected files, so the
+// "matched no files" configuration error does not apply.
+func TestDiscover_AllSelectedFilesUnparsableYieldsEmptyCatalog(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "docs/one.md", "---\ndescription: A series: what shipped\n---\n# One\n")
+	writeFile(t, root, "docs/two.md", "---\nname: [\n---\n# Two\n")
+
+	result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"docs/*.md"},
+	}, "acdc")
+	require.NoError(t, err)
+	require.Empty(t, result.Sources)
+	require.Empty(t, result.Chunks)
+}
+
+// TestDiscover_ConfiguredSkipsDocumentWhoseURIIsAlreadyClaimed pins the
+// collision half of the skip contract. guide.md and guide.markdown both
+// resolve to acdc://docs/guide, which NewResourceProvider rejects outright, so
+// emitting both would take the catalog down over two files that merely share a
+// name.
+func TestDiscover_ConfiguredSkipsDocumentWhoseURIIsAlreadyClaimed(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "docs/guide.md", "# Guide\n\n## Setup\n\nMarkdown extension.\n")
+	writeFile(t, root, "docs/guide.markdown", "# Guide\n\n## Setup\n\nMarkdown extension, longer form.\n")
+
+	logs := captureDiscoveryLogs(t)
+	result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		Include: []string{"docs/*"},
+	}, "acdc")
+	require.NoError(t, err)
+	require.Equal(t, []string{"acdc://docs/guide"}, sourceURIs(result.Sources))
+
+	// The surviving document must own every chunk: an orphaned chunk from the
+	// dropped document would collide in the provider and defeat the skip.
+	for _, chunk := range result.Chunks {
+		require.Equal(t, "acdc://docs/guide", chunk.SourceURI)
+	}
+
+	output := logs.String()
+	require.Contains(t, output, "docs/guide.md")
+	require.Contains(t, output, "docs/guide.markdown")
+	require.Contains(t, output, "level=WARN")
+}
+
+// TestDiscover_LegacySkipsDocumentWhoseURIIsAlreadyClaimed pins the same
+// collision handling in legacy .acdc/resources mode, which shares the
+// provider that rejects duplicates.
+func TestDiscover_LegacySkipsDocumentWhoseURIIsAlreadyClaimed(t *testing.T) {
+	root := t.TempDir()
+	resourcesDir := content.NewContentProvider(root).ResourcesDir
+	writeFile(t, resourcesDir, "guide.md", "---\nname: Guide\ndescription: Short form.\n---\n# Guide\n\nBody.\n")
+	writeFile(t, resourcesDir, "guide.markdown", "---\nname: Guide\ndescription: Long form.\n---\n# Guide\n\nBody.\n")
+
+	result, err := Discover(context.Background(), content.NewContentProvider(root), nil, "acdc")
+	require.NoError(t, err)
+	require.Equal(t, []string{"acdc://guide"}, sourceURIs(result.Sources))
 }
