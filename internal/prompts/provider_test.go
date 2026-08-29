@@ -120,6 +120,35 @@ Hello {{.unclosed`
 		}
 	})
 
+	t.Run("ArgumentRequiredByDefault", func(t *testing.T) {
+		tempDir := t.TempDir()
+		promptsDir := content.NewContentProvider(tempDir).PromptsDir
+		_ = os.MkdirAll(promptsDir, 0755)
+		mdContent := `---
+name: defaults
+description: d
+arguments:
+  - name: a1
+    description: d1
+  - name: a2
+    required: "yes"
+---
+Hello`
+		_ = os.WriteFile(filepath.Join(promptsDir, "defaults.md"), []byte(mdContent), 0644)
+
+		cp := content.NewContentProvider(tempDir)
+		defs, err := DiscoverPrompts(cp)
+		assert.NoError(t, err)
+		assert.Len(t, defs, 1)
+		assert.Equal(t, []PromptArgument{
+			{Name: "a1", Description: "d1", Required: true},
+			{Name: "a2", Required: true},
+		}, defs[0].Arguments)
+
+		_, err = NewPromptProvider(defs, cp).GetPrompt("defaults", map[string]string{})
+		assert.ErrorContains(t, err, "missing required argument: a1")
+	})
+
 	t.Run("InvalidFrontmatter", func(t *testing.T) {
 		tempDir := t.TempDir()
 		promptsDir := content.NewContentProvider(tempDir).PromptsDir
