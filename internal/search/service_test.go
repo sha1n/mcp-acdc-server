@@ -19,6 +19,8 @@ import (
 type mockBatchIndexer struct {
 	realIndex bleve.Index
 	batchErr  error
+	// Sizes of each submitted batch, in submission order.
+	batchSizes []int
 }
 
 type failingSearchIndex struct {
@@ -56,6 +58,7 @@ func (i *failingSearchIndex) DocCount() (uint64, error) {
 func (m *mockBatchIndexer) NewBatch() *bleve.Batch { return m.realIndex.NewBatch() }
 
 func (m *mockBatchIndexer) Batch(batch *bleve.Batch) error {
+	m.batchSizes = append(m.batchSizes, batch.Size())
 	if m.batchErr != nil {
 		return m.batchErr
 	}
@@ -445,6 +448,24 @@ func TestService_BatchIndexFailures(t *testing.T) {
 		mock := &mockBatchIndexer{realIndex: index, batchErr: errors.New("batch failed")}
 		require.ErrorContains(t, batchIndex(context.Background(), mock, stream, batchSize), "failed to execute batch index")
 	})
+}
+
+func TestService_BatchIndexStartsFreshBatchAfterEachFlush(t *testing.T) {
+	index, err := bleve.NewMemOnly(buildMapping())
+	require.NoError(t, err)
+	const batchSize = 2
+	const chunkCount = 5
+
+	stream := make(chan domain.Chunk, chunkCount)
+	for i := 0; i < chunkCount; i++ {
+		stream <- domain.Chunk{ID: fmt.Sprintf("chunk-%d", i), Content: "valid"}
+	}
+	close(stream)
+	mock := &mockBatchIndexer{realIndex: index}
+
+	require.NoError(t, batchIndex(context.Background(), mock, stream, batchSize))
+	// A batch carried past its flush would grow to 2, 4, 5 instead.
+	require.Equal(t, []int{2, 2, 1}, mock.batchSizes)
 }
 
 func TestService_IndexRebuildsAndBatchesChunks(t *testing.T) {
