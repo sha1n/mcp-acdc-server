@@ -72,6 +72,10 @@ build:
 .PHONY: test
 test: install go-test
 
+## test-race: Runs all Go tests under the race detector
+.PHONY: test-race
+test-race: install go-test-race
+
 ## coverage: Runs all Go tests and generates a coverage report
 .PHONY: coverage
 coverage: install
@@ -188,6 +192,11 @@ go-install:
 go-test:
 	@echo "  >  Running tests..."
 	go test $(MODFLAGS) ./...
+
+.PHONY: go-test-race
+go-test-race:
+	@echo "  >  Running tests with the race detector..."
+	go test $(MODFLAGS) -race ./...
 
 .PHONY: go-clean
 go-clean:
