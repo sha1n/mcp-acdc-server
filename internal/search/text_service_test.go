@@ -77,7 +77,7 @@ func testSettings() config.SearchSettings {
 	}
 }
 
-func indexChunks(t *testing.T, service *Service, chunks []domain.Chunk) {
+func indexChunks(t *testing.T, service *TextService, chunks []domain.Chunk) {
 	t.Helper()
 	stream := make(chan domain.Chunk, len(chunks))
 	for _, chunk := range chunks {
@@ -471,7 +471,7 @@ func TestService_BatchIndexStartsFreshBatchAfterEachFlush(t *testing.T) {
 func TestService_IndexRebuildsAndBatchesChunks(t *testing.T) {
 	service := NewService(testSettings())
 	defer service.Close()
-	// Indexed through Service.Index, which takes no batch-size argument and
+	// Indexed through TextService.Index, which takes no batch-size argument and
 	// always batches at defaultBatchSize: the corpus must exceed that constant
 	// for the rebuild below to flush more than one batch.
 	chunks := make([]domain.Chunk, defaultBatchSize+50)
@@ -501,7 +501,7 @@ func chunkIDs(results []SearchResult) []string {
 // heading_path clause from the query, letting a body-only match overtake a
 // heading-only one — the ordering TestSearch_ChunkFieldBoosts pins at defaults.
 func TestSearch_ReadsHeadingAndPathBoostsFromSettings(t *testing.T) {
-	newService := func(t *testing.T, mutate func(*config.SearchSettings)) *Service {
+	newService := func(t *testing.T, mutate func(*config.SearchSettings)) *TextService {
 		t.Helper()
 		settings := testSettings()
 		mutate(&settings)
@@ -572,9 +572,9 @@ func rankedScores(results []SearchResult) []rankedScore {
 }
 
 // indexInto indexes chunks into idx at the given batch size and attaches the
-// result to a Service, bypassing Service.newIndex so a test can choose the
+// result to a TextService, bypassing TextService.newIndex so a test can choose the
 // index kind and the batch size independently.
-func indexInto(t *testing.T, idx searchIndex, chunks []domain.Chunk, batchSize int) *Service {
+func indexInto(t *testing.T, idx searchIndex, chunks []domain.Chunk, batchSize int) *TextService {
 	t.Helper()
 
 	stream := make(chan domain.Chunk, len(chunks))
@@ -591,7 +591,7 @@ func indexInto(t *testing.T, idx searchIndex, chunks []domain.Chunk, batchSize i
 }
 
 // searchThrough runs the production query shape against a caller-supplied
-// index, bypassing Service.newIndex so a test can choose the index kind.
+// index, bypassing TextService.newIndex so a test can choose the index kind.
 func searchThrough(t *testing.T, idx searchIndex, chunks []domain.Chunk, query string) []rankedScore {
 	t.Helper()
 
@@ -680,7 +680,7 @@ func syntheticCorpusChunks(n int) []domain.Chunk {
 
 // batchIndexedService indexes chunks into a fresh in-memory index at the
 // given batch size.
-func batchIndexedService(t *testing.T, chunks []domain.Chunk, batchSize int) *Service {
+func batchIndexedService(t *testing.T, chunks []domain.Chunk, batchSize int) *TextService {
 	t.Helper()
 
 	idx, err := newMemoryIndex(buildMapping())
@@ -692,7 +692,7 @@ func batchIndexedService(t *testing.T, chunks []domain.Chunk, batchSize int) *Se
 // across. No settling is needed: these services index in memory, where scorch
 // runs neither the persister nor the merger, so the root snapshot is final the
 // moment batchIndex returns.
-func serviceRootSegments(t *testing.T, service *Service) int {
+func serviceRootSegments(t *testing.T, service *TextService) int {
 	t.Helper()
 
 	idx, ok := service.index.(bleve.Index)
@@ -828,4 +828,106 @@ func TestSearch_CompositeAllFieldIsEmpty(t *testing.T) {
 				"dynamic mapping must not index Chunk fields with no explicit mapping")
 		}
 	})
+}
+
+func TestTextService_FetchReturnsStoredMetadataForKnownIDs(t *testing.T) {
+	service := NewService(testSettings())
+	defer service.Close()
+
+	indexChunks(t, service, []domain.Chunk{
+		{
+			ID: "c1", SourceID: "s1", SourceURI: "acdc://guides/a",
+			ChunkURI: "acdc://guides/a#intro", SourceTitle: "Guide A",
+			SourcePath: "guides/a.md", HeadingPath: []string{"Intro"},
+			StartLine: 3, EndLine: 9, Content: "alpha content",
+		},
+		{
+			ID: "c2", SourceID: "s2", SourceURI: "acdc://guides/b",
+			ChunkURI: "acdc://guides/b#setup", SourceTitle: "Guide B",
+			SourcePath: "guides/b.md", HeadingPath: []string{"Setup"},
+			StartLine: 1, EndLine: 4, Content: "beta content",
+		},
+		{ID: "c3", SourceID: "s3", SourceURI: "acdc://guides/c", Content: "gamma"},
+	})
+
+	results, err := service.Fetch([]string{"c2", "c1"})
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+
+	byID := map[string]SearchResult{}
+	for _, r := range results {
+		byID[r.ChunkID] = r
+	}
+
+	require.Equal(t, "Guide A", byID["c1"].SourceTitle)
+	require.Equal(t, "acdc://guides/a#intro", byID["c1"].ChunkURI)
+	require.Equal(t, []string{"Intro"}, byID["c1"].HeadingPath)
+	require.Equal(t, 3, byID["c1"].StartLine)
+	require.Equal(t, 9, byID["c1"].EndLine)
+	require.Equal(t, "alpha content", byID["c1"].Content)
+	// No Highlight on a DocID lookup, so the snippet falls back to leading content.
+	require.Equal(t, "alpha content", byID["c1"].Snippet)
+	require.Equal(t, "Guide B", byID["c2"].SourceTitle)
+}
+
+func TestTextService_FetchToleratesUnknownAndEmptyIDs(t *testing.T) {
+	service := NewService(testSettings())
+	defer service.Close()
+
+	indexChunks(t, service, []domain.Chunk{
+		{ID: "c1", SourceID: "s1", SourceTitle: "Guide A", Content: "alpha"},
+	})
+
+	results, err := service.Fetch([]string{"c1", "missing"})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, "c1", results[0].ChunkID)
+
+	empty, err := service.Fetch(nil)
+	require.NoError(t, err)
+	require.Empty(t, empty)
+}
+
+func TestTextService_FetchOnEmptyIndexReturnsNothing(t *testing.T) {
+	service := NewService(testSettings())
+	defer service.Close()
+
+	results, err := service.Fetch([]string{"c1"})
+	require.NoError(t, err)
+	require.Empty(t, results)
+}
+
+// A DocID lookup has no query to highlight against, so the snippet is built
+// from leading content. Without a bound the whole chunk becomes the snippet,
+// which content mode then prints a second time as Content.
+func TestTextService_FetchBoundsTheSnippetForLargeChunks(t *testing.T) {
+	service := NewService(testSettings())
+	defer service.Close()
+
+	body := strings.Repeat("alpha ", 400)
+	indexChunks(t, service, []domain.Chunk{
+		{ID: "c1", SourceID: "s1", SourceURI: "acdc://guides/a", Content: body},
+	})
+
+	results, err := service.Fetch([]string{"c1"})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	require.Less(t, len([]rune(results[0].Snippet)), len([]rune(body)),
+		"expected the snippet to be bounded, not the whole chunk")
+	require.Equal(t, body, results[0].Content, "Content must stay whole")
+}
+
+func TestTextService_FetchKeepsShortContentIntactAsTheSnippet(t *testing.T) {
+	service := NewService(testSettings())
+	defer service.Close()
+
+	indexChunks(t, service, []domain.Chunk{
+		{ID: "c1", SourceID: "s1", SourceURI: "acdc://guides/a", Content: "alpha content"},
+	})
+
+	results, err := service.Fetch([]string{"c1"})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, "alpha content", results[0].Snippet)
 }

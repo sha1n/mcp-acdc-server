@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/index/scorch"
 	"github.com/blevesearch/bleve/v2/mapping"
+	blevesearch "github.com/blevesearch/bleve/v2/search"
 	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
@@ -66,8 +68,8 @@ type searchIndex interface {
 	DocCount() (uint64, error)
 }
 
-// Service search service using Bleve
-type Service struct {
+// TextService is the Bleve-backed lexical retriever.
+type TextService struct {
 	mu       sync.RWMutex
 	settings config.SearchSettings
 	// fuzziness resolves the edit distance applied to a field's match clause.
@@ -78,19 +80,19 @@ type Service struct {
 	indexDir  string
 }
 
-// Ensure Service implements Searcher
-var _ Searcher = (*Service)(nil)
+// Ensure TextService implements Searcher
+var _ Searcher = (*TextService)(nil)
 
-// NewService creates a new search service
-func NewService(settings config.SearchSettings) *Service {
-	return &Service{
+// NewService creates a new lexical search service.
+func NewService(settings config.SearchSettings) *TextService {
+	return &TextService{
 		settings:  settings,
 		fuzziness: fieldFuzziness,
 	}
 }
 
 // Index rebuilds the index from a stream of chunks.
-func (s *Service) Index(ctx context.Context, chunks <-chan domain.Chunk) error {
+func (s *TextService) Index(ctx context.Context, chunks <-chan domain.Chunk) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -118,7 +120,7 @@ func (s *Service) Index(ctx context.Context, chunks <-chan domain.Chunk) error {
 	return nil
 }
 
-func (s *Service) newIndex() (searchIndex, string, error) {
+func (s *TextService) newIndex() (searchIndex, string, error) {
 	indexMapping := buildMapping()
 	if s.settings.InMemory {
 		index, err := newMemoryIndex(indexMapping)
@@ -143,7 +145,7 @@ func (s *Service) newIndex() (searchIndex, string, error) {
 	return index, indexDir, nil
 }
 
-// defaultBatchSize is how many chunks Service.Index accumulates before
+// defaultBatchSize is how many chunks TextService.Index accumulates before
 // introducing a segment. In memory scorch runs no merger goroutine
 // (scorch.go gates both background loops on a non-empty path), so this also
 // fixes the number of segments a query fans out across — which is why it is
@@ -272,7 +274,7 @@ func buildMapping() mapping.IndexMapping {
 }
 
 // Search finds chunks matching query.
-func (s *Service) Search(queryStr string, candidateLimit int) ([]SearchResult, error) {
+func (s *TextService) Search(queryStr string, candidateLimit int) ([]SearchResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -307,30 +309,88 @@ func (s *Service) Search(queryStr string, candidateLimit int) ([]SearchResult, e
 
 	results := make([]SearchResult, 0, len(searchResult.Hits))
 	for _, hit := range searchResult.Hits {
-		snippet := fieldString(hit.Fields, domain.FieldContent)
-		if fragments, ok := hit.Fragments[domain.FieldContent]; ok && len(fragments) > 0 {
-			snippet = fragments[0]
-		}
-		if snippet == "" {
-			snippet = fieldString(hit.Fields, domain.FieldSourceTitle)
-		}
-
-		results = append(results, SearchResult{
-			ChunkID:     fieldStringOr(hit.Fields, domain.FieldChunkID, hit.ID),
-			SourceID:    fieldString(hit.Fields, domain.FieldSourceID),
-			SourceURI:   fieldString(hit.Fields, domain.FieldSourceURI),
-			ChunkURI:    fieldString(hit.Fields, domain.FieldChunkURI),
-			SourceTitle: fieldString(hit.Fields, domain.FieldSourceTitle),
-			SourcePath:  fieldString(hit.Fields, domain.FieldSourcePath),
-			HeadingPath: fieldStrings(hit.Fields, domain.FieldHeadingPath),
-			StartLine:   fieldInt(hit.Fields, domain.FieldStartLine),
-			EndLine:     fieldInt(hit.Fields, domain.FieldEndLine),
-			Score:       hit.Score,
-			Snippet:     snippet,
-			Content:     fieldString(hit.Fields, domain.FieldContent),
-		})
+		results = append(results, hitToResult(hit))
 	}
 
+	return results, nil
+}
+
+// snippetRunes bounds a snippet built from leading content.
+//
+// It matches bleve's default highlight fragment size so a hit with nothing to
+// highlight reads like one that was highlighted. Without the bound the whole
+// chunk becomes the snippet, and content mode then prints that body a second
+// time as Content — worst for exactly the semantic-only hits that never carry
+// a fragment.
+const snippetRunes = 100
+
+// leadingSnippet returns content bounded to snippetRunes, counting runes so a
+// multi-byte character is never split.
+func leadingSnippet(content string) string {
+	runes := []rune(content)
+	if len(runes) <= snippetRunes {
+		return content
+	}
+
+	return strings.TrimRight(string(runes[:snippetRunes]), " \t\r\n") + "…"
+}
+
+// hitToResult projects a bleve hit onto SearchResult. The snippet prefers a
+// highlighted fragment, which only a query-bearing search produces; a DocID
+// lookup has nothing to highlight against and falls through to bounded leading
+// content, then the source title.
+func hitToResult(hit *blevesearch.DocumentMatch) SearchResult {
+	snippet := leadingSnippet(fieldString(hit.Fields, domain.FieldContent))
+	if fragments, ok := hit.Fragments[domain.FieldContent]; ok && len(fragments) > 0 {
+		snippet = fragments[0]
+	}
+	if snippet == "" {
+		snippet = fieldString(hit.Fields, domain.FieldSourceTitle)
+	}
+
+	return SearchResult{
+		ChunkID:     fieldStringOr(hit.Fields, domain.FieldChunkID, hit.ID),
+		SourceID:    fieldString(hit.Fields, domain.FieldSourceID),
+		SourceURI:   fieldString(hit.Fields, domain.FieldSourceURI),
+		ChunkURI:    fieldString(hit.Fields, domain.FieldChunkURI),
+		SourceTitle: fieldString(hit.Fields, domain.FieldSourceTitle),
+		SourcePath:  fieldString(hit.Fields, domain.FieldSourcePath),
+		HeadingPath: fieldStrings(hit.Fields, domain.FieldHeadingPath),
+		StartLine:   fieldInt(hit.Fields, domain.FieldStartLine),
+		EndLine:     fieldInt(hit.Fields, domain.FieldEndLine),
+		Score:       hit.Score,
+		Snippet:     snippet,
+		Content:     fieldString(hit.Fields, domain.FieldContent),
+	}
+}
+
+// Fetch returns the stored fields for the given chunk IDs.
+//
+// It is a lookup, not a re-index: buildMapping stores every field. IDs with
+// no document are omitted rather than reported, and the returned order is
+// bleve's, not the caller's — callers key the result by ChunkID. Score is
+// the constant a DocID query assigns and carries no ranking meaning.
+func (s *TextService) Fetch(ids []string) ([]SearchResult, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.index == nil || len(ids) == 0 {
+		return []SearchResult{}, nil
+	}
+
+	searchRequest := bleve.NewSearchRequest(bleve.NewDocIDQuery(ids))
+	searchRequest.Size = len(ids)
+	searchRequest.Fields = []string{"*"}
+
+	searchResult, err := s.index.Search(searchRequest)
+	if err != nil {
+		return nil, fmt.Errorf("fetch failed: %w", err)
+	}
+
+	results := make([]SearchResult, 0, len(searchResult.Hits))
+	for _, hit := range searchResult.Hits {
+		results = append(results, hitToResult(hit))
+	}
 	return results, nil
 }
 
@@ -341,7 +401,7 @@ func (s *Service) Search(queryStr string, candidateLimit int) ([]SearchResult, e
 // == 0, because NewService accepts an unvalidated SearchSettings: a negative
 // boost would feed a negative weight into bleve's sumOfSquaredWeights,
 // producing a NaN queryNorm and NaN scores for every clause, not just its own.
-func (s *Service) boostedFieldQueries(queryStr string) []query.Query {
+func (s *TextService) boostedFieldQueries(queryStr string) []query.Query {
 	fields := []struct {
 		name  string
 		boost float64
@@ -435,7 +495,7 @@ func fieldInt(fields map[string]interface{}, field string) int {
 }
 
 // Close cleans up resources
-func (s *Service) Close() {
+func (s *TextService) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -450,7 +510,7 @@ func (s *Service) Close() {
 }
 
 // DocCount returns number of docs in index
-func (s *Service) DocCount() (uint64, error) {
+func (s *TextService) DocCount() (uint64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
