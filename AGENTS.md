@@ -12,6 +12,7 @@
 - `make test` runs all unit and integration tests.
 - `make coverage` writes `coverage.out` and prints package/function coverage.
 - `make lint` runs `go vet`, golangci-lint, and the formatting check.
+- `make complexity` runs the function-level complexity analysis on its own; `make lint` already includes it.
 - `make format` applies simplified `gofmt` formatting.
 - `make build-docker` builds `sha1n/mcp-acdc-server:latest`.
 
@@ -19,7 +20,7 @@ Run locally with `bin/acdc-mcp --content-dir ./examples/sample-content`; add `--
 
 ## Coding Style & Naming Conventions
 
-Use standard Go formatting (tabs from `gofmt`) and idiomatic names: exported identifiers in `PascalCase`, unexported identifiers in `camelCase`, and short lowercase packages. Keep packages focused. Return contextual errors rather than logging deep inside packages. Use `log/slog` for structured logging and `stderr` so stdio protocol traffic remains valid. Run `make format && make lint` before submitting.
+Use standard Go formatting (tabs from `gofmt`) and idiomatic names: exported identifiers in `PascalCase`, unexported identifiers in `camelCase`, and short lowercase packages. Keep packages focused. Return contextual errors rather than logging deep inside packages. Use `log/slog` for structured logging and `stderr` so stdio protocol traffic remains valid. Run `make format && make lint` before submitting. Function-level complexity is gated by `gocognit` (max 20) and `gocyclo` (max 12), configured in `.golangci.yml`; `_test.go` files are exempt but `tests/integration/testkit/` is not.
 
 ## Testing Guidelines
 

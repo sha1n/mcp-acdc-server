@@ -107,6 +107,12 @@ golangci-lint:
 	@echo "  >  Running golangci-lint..."
 	go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint run
 
+## complexity: Runs function-level complexity analysis (thresholds live in .golangci.yml)
+.PHONY: complexity
+complexity:
+	@echo "  >  Running complexity analysis..."
+	go tool github.com/golangci/golangci-lint/v2/cmd/golangci-lint run --default=none --enable=gocognit,gocyclo
+
 .PHONY: go-format
 go-format:
 	@echo "  >  Formating source files..."
