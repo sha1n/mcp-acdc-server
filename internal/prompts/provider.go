@@ -89,7 +89,6 @@ func (p *PromptProvider) GetPrompt(name string, arguments map[string]string) ([]
 
 // DiscoverPrompts discovers prompts from markdown files
 func DiscoverPrompts(cp *content.ContentProvider) ([]PromptDefinition, error) {
-	var definitions []PromptDefinition
 	promptsDir := cp.PromptsDir
 
 	// Ensure directory exists, if not just return empty
@@ -102,75 +101,93 @@ func DiscoverPrompts(cp *content.ContentProvider) ([]PromptDefinition, error) {
 		return nil, err
 	}
 
+	var definitions []PromptDefinition
 	err := filepath.WalkDir(promptsDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			slog.Error("Error walking prompts directory", "path", path, "error", err)
 			return nil // continue walking
 		}
-		if d.IsDir() {
-			return nil
-		}
-		if filepath.Ext(path) != ".md" {
+		if d.IsDir() || filepath.Ext(path) != ".md" {
 			return nil
 		}
 
-		// Parse frontmatter
-		md, err := cp.LoadMarkdownWithFrontmatter(path)
-		if err != nil {
-			slog.Warn("Skipping invalid prompt file", "file", d.Name(), "error", err)
+		definition, ok := loadPromptDefinition(cp, path, d.Name())
+		if !ok {
 			return nil
 		}
 
-		// Extract metadata
-		name, _ := md.Metadata["name"].(string)
-		description, _ := md.Metadata["description"].(string)
-
-		if name == "" || description == "" {
-			slog.Warn("Skipping prompt with missing metadata", "file", d.Name())
-			return nil
-		}
-
-		// Extract arguments
-		var arguments []PromptArgument
-		if args, ok := md.Metadata["arguments"].([]interface{}); ok {
-			for _, a := range args {
-				if amap, ok := a.(map[string]interface{}); ok {
-					argName, _ := amap["name"].(string)
-					argDesc, _ := amap["description"].(string)
-					argReq, ok := amap["required"].(bool)
-					if !ok {
-						argReq = true // default to required
-					}
-					if argName != "" {
-						arguments = append(arguments, PromptArgument{
-							Name:        argName,
-							Description: argDesc,
-							Required:    argReq,
-						})
-					}
-				}
-			}
-		}
-
-		// Parse and cache template
-		tmpl, err := template.New(name).Option("missingkey=zero").Parse(md.Content)
-		if err != nil {
-			slog.Warn("Skipping prompt with invalid template", "file", d.Name(), "error", err)
-			return nil
-		}
-
-		definitions = append(definitions, PromptDefinition{
-			Name:        name,
-			Description: description,
-			Arguments:   arguments,
-			FilePath:    path,
-			Template:    tmpl,
-		})
-
-		slog.Info("Loaded prompt", "name", name)
+		definitions = append(definitions, definition)
+		slog.Info("Loaded prompt", "name", definition.Name)
 
 		return nil
 	})
 
 	return definitions, err
+}
+
+// loadPromptDefinition parses a single prompt file. It reports false for files
+// that are unreadable, missing required metadata or carry an invalid template,
+// which discovery skips rather than treating as a failure.
+func loadPromptDefinition(cp *content.ContentProvider, path, fileName string) (PromptDefinition, bool) {
+	md, err := cp.LoadMarkdownWithFrontmatter(path)
+	if err != nil {
+		slog.Warn("Skipping invalid prompt file", "file", fileName, "error", err)
+		return PromptDefinition{}, false
+	}
+
+	name, _ := md.Metadata["name"].(string)
+	description, _ := md.Metadata["description"].(string)
+	if name == "" || description == "" {
+		slog.Warn("Skipping prompt with missing metadata", "file", fileName)
+		return PromptDefinition{}, false
+	}
+
+	tmpl, err := template.New(name).Option("missingkey=zero").Parse(md.Content)
+	if err != nil {
+		slog.Warn("Skipping prompt with invalid template", "file", fileName, "error", err)
+		return PromptDefinition{}, false
+	}
+
+	return PromptDefinition{
+		Name:        name,
+		Description: description,
+		Arguments:   parsePromptArguments(md.Metadata["arguments"]),
+		FilePath:    path,
+		Template:    tmpl,
+	}, true
+}
+
+// parsePromptArguments reads the optional `arguments` frontmatter list, ignoring
+// entries that are malformed or unnamed. An argument is required unless the
+// frontmatter explicitly declares otherwise.
+func parsePromptArguments(raw interface{}) []PromptArgument {
+	args, ok := raw.([]interface{})
+	if !ok {
+		return nil
+	}
+
+	var arguments []PromptArgument
+	for _, a := range args {
+		amap, ok := a.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		argName, _ := amap["name"].(string)
+		if argName == "" {
+			continue
+		}
+		argRequired, ok := amap["required"].(bool)
+		if !ok {
+			argRequired = true
+		}
+		argDescription, _ := amap["description"].(string)
+
+		arguments = append(arguments, PromptArgument{
+			Name:        argName,
+			Description: argDescription,
+			Required:    argRequired,
+		})
+	}
+
+	return arguments
 }
