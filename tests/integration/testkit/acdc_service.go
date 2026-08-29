@@ -10,10 +10,27 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/app"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/embed"
 	"github.com/spf13/pflag"
 )
 
 type RunnerFunc func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error
+
+// ServiceOption customizes the server a testkit service starts.
+//
+// Options rather than constructor parameters: NewACDCService has many call
+// sites across tests/integration, and every one of them would have to change
+// for a new parameter.
+type ServiceOption func(*acdcService)
+
+// WithEmbedderProvider supplies the embedding backend the server opens when
+// search.semantic_model is configured. No adapter is linked into the binary,
+// so without this a configured model path aborts startup.
+func WithEmbedderProvider(provider func(modelPath string) (embed.Embedder, error)) ServiceOption {
+	return func(s *acdcService) {
+		s.embedderProvider = provider
+	}
+}
 
 type acdcService struct {
 	name         string
@@ -24,6 +41,8 @@ type acdcService struct {
 	StartTimeout time.Duration
 	runner       RunnerFunc
 
+	embedderProvider func(modelPath string) (embed.Embedder, error)
+
 	// Stdio pipes
 	stdinReader  *io.PipeReader
 	stdinWriter  *io.PipeWriter
@@ -32,8 +51,8 @@ type acdcService struct {
 	ctxCancel    context.CancelFunc
 }
 
-func NewACDCService(name string, flags *pflag.FlagSet) Service {
-	return &acdcService{
+func NewACDCService(name string, flags *pflag.FlagSet, opts ...ServiceOption) Service {
+	service := &acdcService{
 		name:         name,
 		flags:        flags,
 		errChan:      make(chan error, 1),
@@ -41,6 +60,10 @@ func NewACDCService(name string, flags *pflag.FlagSet) Service {
 		StartTimeout: 10 * time.Second,
 		runner:       app.RunWithDeps,
 	}
+	for _, opt := range opts {
+		opt(service)
+	}
+	return service
 }
 
 func (s *acdcService) GetName() string {
@@ -49,6 +72,11 @@ func (s *acdcService) GetName() string {
 
 func (s *acdcService) Start() (map[string]any, error) {
 	params := app.DefaultRunParams()
+	if provider := s.embedderProvider; provider != nil {
+		params.CreateServer = func(ctx context.Context, settings *config.Settings, version string) (*mcp.Server, func(), error) {
+			return app.CreateMCPServer(ctx, settings, version, app.WithEmbedderProvider(provider))
+		}
+	}
 	transport, _ := s.flags.GetString("transport")
 
 	var ctx context.Context

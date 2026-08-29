@@ -26,7 +26,11 @@ func DefaultRunParams() RunParams {
 		LoadSettings:   config.LoadSettingsWithFlags,
 		ValidSettings:  config.ValidateSettings,
 		StartSSEServer: StartSSEServer,
-		CreateServer:   CreateMCPServer,
+		// Wrapped rather than assigned directly: CreateMCPServer is
+		// variadic in its options, which RunParams.CreateServer is not.
+		CreateServer: func(ctx context.Context, settings *config.Settings, version string) (*mcp.Server, func(), error) {
+			return CreateMCPServer(ctx, settings, version)
+		},
 	}
 }
 

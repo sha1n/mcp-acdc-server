@@ -29,6 +29,8 @@ When the same setting is specified in multiple places, the following priority ap
 | `--search-content-boost` | — | `ACDC_MCP_SEARCH_CONTENT_BOOST` | Boost for content matches | `1.0` |
 | `--search-result-mode` | — | `ACDC_MCP_SEARCH_RESULT_MODE` | Search output detail: `references` (chunk citations only) or `content` (citations plus the full matched chunk body) | `references` |
 | `--search-in-memory` | — | `ACDC_MCP_SEARCH_IN_MEMORY` | Hold the search index in memory instead of on disk | `true` |
+| `--search-semantic-model` | — | `ACDC_MCP_SEARCH_SEMANTIC_MODEL` | Path to a semantic embedding model. Empty disables semantic search | _(empty)_ |
+| `--search-semantic-floor` | — | `ACDC_MCP_SEARCH_SEMANTIC_FLOOR` | Minimum cosine similarity a semantic hit must clear to be returned. `-1` disables the floor | `0.25` |
 
 ### What the search boosts actually do
 
@@ -71,6 +73,45 @@ magnitudes no meaningful ranking could use; the boundary itself is accepted, and
 strictly above it are rejected. Setting *all five* boosts to `0` is also rejected: the query
 would carry no clauses at all, so every search would return nothing while reporting success.
 Zeroing any subset of the five remains supported.
+
+### Semantic search
+
+Semantic search is off by default and costs nothing — in dependencies, binary
+size, startup time or ranking — until `--search-semantic-model` names a model
+path.
+
+When it is set, the server embeds every indexed chunk and fuses the semantic
+ranking with the existing full-text ranking using Reciprocal Rank Fusion, so a
+query phrased differently from the corpus still finds the right chunk. Chunk
+boundaries, chunk URIs and the `search` and `read` tool schemas are unchanged
+either way; only result order and the reported score change. Fused scores are
+normalized so the top result reads `1.00`, because Reciprocal Rank Fusion
+values carry rank information, not magnitude.
+
+A model path that is missing, unreadable, or fails validation aborts startup
+with an error naming the path. Configuring semantic search and silently
+running without it would hide a broken deployment. A single document that
+cannot be embedded is different: it is skipped, counted in one summary warning
+at the end of indexing, and stays findable by full-text search.
+
+No embedding backend ships yet, so any configured path currently aborts startup
+with "no embedding backend is available in this build".
+
+#### Tuning the similarity floor
+
+Cosine similarity always ranks something first: a vector search returns the
+least-dissimilar chunk in the corpus no matter what you ask. `--search-semantic-floor`
+is the threshold below which a semantic hit is discarded instead of returned, and it is
+what preserves the `No results found` answer for a query nothing matches.
+
+The shipped default is conservative rather than measured, because the threshold
+separating a real match from a coincidentally-nearby one is a property of the embedding
+model interacting with your corpus. Raise it if unrelated chunks appear in results;
+lower it if paraphrased queries stop finding documents that full-text search also
+misses. `-1` disables the floor entirely, and values above `1` are rejected at startup
+because nothing could ever clear them.
+
+Valid values run from `-1` to `1`. Anything outside that range aborts startup.
 
 ### How closely a query has to match
 
