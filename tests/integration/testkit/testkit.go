@@ -139,9 +139,8 @@ func CreateTestContentDir(t testing.TB, opts *ContentDirOptions) string {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
 	cp := content.NewContentProvider(contentDir)
-	resourcesDir := cp.ResourcesDir
 
-	if err := os.MkdirAll(resourcesDir, 0755); err != nil {
+	if err := os.MkdirAll(cp.ResourcesDir, 0755); err != nil {
 		t.Fatalf("Failed to create resources dir: %v", err)
 	}
 
@@ -149,56 +148,61 @@ func CreateTestContentDir(t testing.TB, opts *ContentDirOptions) string {
 	if opts != nil && opts.Metadata != "" {
 		metadata = opts.Metadata
 	}
-
 	if err := os.WriteFile(cp.ConfigFile, []byte(metadata), 0644); err != nil {
 		t.Fatalf("Failed to write metadata: %v", err)
 	}
 
-	if opts != nil && opts.Resources != nil {
-		for name, content := range opts.Resources {
-			path := filepath.Join(resourcesDir, name)
-			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-				t.Fatalf("Failed to create parent dir for resource %s: %v", name, err)
-			}
-			if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-				t.Fatalf("Failed to write resource %s: %v", name, err)
-			}
-		}
+	if opts == nil {
+		return contentDir
 	}
 
-	if opts != nil && opts.Prompts != nil {
-		promptsDir := cp.PromptsDir
-		if err := os.MkdirAll(promptsDir, 0755); err != nil {
+	writeTestFiles(t, cp.ResourcesDir, opts.Resources, "resource")
+
+	if opts.Prompts != nil {
+		if err := os.MkdirAll(cp.PromptsDir, 0755); err != nil {
 			t.Fatalf("Failed to create prompts dir: %v", err)
 		}
-		for name, content := range opts.Prompts {
-			path := filepath.Join(promptsDir, name)
-			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-				t.Fatalf("Failed to create parent dir for prompt %s: %v", name, err)
-			}
-			if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-				t.Fatalf("Failed to write prompt %s: %v", name, err)
-			}
-		}
+		writeTestFiles(t, cp.PromptsDir, opts.Prompts, "prompt")
 	}
 
-	if opts != nil && opts.Files != nil {
-		for name, content := range opts.Files {
-			if !filepath.IsLocal(name) {
-				t.Fatalf("Invalid Files path %q: must be relative and confined to the content root", name)
-				continue
-			}
-			path := filepath.Join(contentDir, filepath.Clean(name))
-			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-				t.Fatalf("Failed to create parent dir for file %s: %v", name, err)
-			}
-			if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-				t.Fatalf("Failed to write file %s: %v", name, err)
-			}
-		}
-	}
+	writeExtraContentFiles(t, contentDir, opts.Files)
 
 	return contentDir
+}
+
+// writeExtraContentFiles writes ContentDirOptions.Files, which are addressed
+// relative to the content root and must stay confined to it.
+func writeExtraContentFiles(t testing.TB, contentDir string, files map[string]string) {
+	t.Helper()
+
+	for name, body := range files {
+		if !filepath.IsLocal(name) {
+			t.Fatalf("Invalid Files path %q: must be relative and confined to the content root", name)
+			continue
+		}
+		writeTestFile(t, filepath.Join(contentDir, filepath.Clean(name)), name, body, "file")
+	}
+}
+
+func writeTestFiles(t testing.TB, dir string, files map[string]string, label string) {
+	t.Helper()
+
+	for name, body := range files {
+		writeTestFile(t, filepath.Join(dir, name), name, body, label)
+	}
+}
+
+// writeTestFile writes body to path, creating parent directories. name and
+// label identify the file in failure messages.
+func writeTestFile(t testing.TB, path, name, body, label string) {
+	t.Helper()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("Failed to create parent dir for %s %s: %v", label, name, err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatalf("Failed to write %s %s: %v", label, name, err)
+	}
 }
 
 // FlagOptions configures NewTestFlags
@@ -216,52 +220,57 @@ type FlagOptions struct {
 func NewTestFlags(t testing.TB, contentDir string, opts *FlagOptions) *pflag.FlagSet {
 	t.Helper()
 
+	resolved := resolveFlagOptions(opts)
+	if resolved.Port == 0 {
+		resolved.Port = MustGetFreePort(t)
+	}
+
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	app.RegisterFlags(flags)
 
-	port := 0
-	transport := "sse"
-	authType := "none"
-	host := "localhost"
-
-	if opts != nil {
-		if opts.Port != 0 {
-			port = opts.Port
-		}
-		if opts.Transport != "" {
-			transport = opts.Transport
-		}
-		if opts.AuthType != "" {
-			authType = opts.AuthType
-		}
-		if opts.Host != "" {
-			host = opts.Host
-		}
-	}
-
-	scheme := ""
-	if opts != nil && opts.Scheme != "" {
-		scheme = opts.Scheme
-	}
-
-	if port == 0 {
-		port = MustGetFreePort(t)
-	}
-
-	_ = flags.Set("port", fmt.Sprintf("%d", port))
+	_ = flags.Set("port", fmt.Sprintf("%d", resolved.Port))
 	_ = flags.Set("content-dir", contentDir)
-	_ = flags.Set("transport", transport)
-	_ = flags.Set("auth-type", authType)
-	_ = flags.Set("host", host)
-	if scheme != "" {
-		_ = flags.Set("uri-scheme", scheme)
+	_ = flags.Set("transport", resolved.Transport)
+	_ = flags.Set("auth-type", resolved.AuthType)
+	_ = flags.Set("host", resolved.Host)
+	if resolved.Scheme != "" {
+		_ = flags.Set("uri-scheme", resolved.Scheme)
 	}
-	if opts != nil && opts.ResultMode != "" {
-		_ = flags.Set("search-result-mode", opts.ResultMode)
+	if resolved.ResultMode != "" {
+		_ = flags.Set("search-result-mode", resolved.ResultMode)
 	}
-	if opts != nil && opts.CrossRef {
+	if resolved.CrossRef {
 		_ = flags.Set("cross-ref", "true")
 	}
 
 	return flags
+}
+
+// resolveFlagOptions applies the defaults documented on FlagOptions. A zero Port
+// is left for the caller to fill with a free port.
+func resolveFlagOptions(opts *FlagOptions) FlagOptions {
+	resolved := FlagOptions{
+		Transport: "sse",
+		AuthType:  "none",
+		Host:      "localhost",
+	}
+	if opts == nil {
+		return resolved
+	}
+
+	resolved.Port = opts.Port
+	resolved.Scheme = opts.Scheme
+	resolved.ResultMode = opts.ResultMode
+	resolved.CrossRef = opts.CrossRef
+	if opts.Transport != "" {
+		resolved.Transport = opts.Transport
+	}
+	if opts.AuthType != "" {
+		resolved.AuthType = opts.AuthType
+	}
+	if opts.Host != "" {
+		resolved.Host = opts.Host
+	}
+
+	return resolved
 }
