@@ -15,6 +15,8 @@ func RegisterFlags(flags *pflag.FlagSet) {
 	flags.Float64("search-title-boost", 0, "Boost for document title matches (default: 2.0)")
 	flags.Float64("search-content-boost", 0, "Boost for content matches (default: 1.0)")
 	flags.String("search-result-mode", "", "Search output mode: references or content (default: references)")
+	flags.String("search-semantic-model", "", "Path to a semantic embedding model; empty disables semantic search (default: empty)")
+	flags.Float64("search-semantic-floor", 0, "Minimum cosine similarity a semantic hit must clear; -1 disables the floor (default: 0.25)")
 	// Unlike its neighbours this default is non-zero, so pflag prints its own
 	// "(default true)" in --help; stating it in the usage text too would
 	// duplicate it.

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLog(t *testing.T) {
@@ -228,3 +229,16 @@ func (h *mapHandler) Handle(_ context.Context, r slog.Record) error {
 }
 func (h *mapHandler) WithAttrs(attrs []slog.Attr) slog.Handler { return h }
 func (h *mapHandler) WithGroup(name string) slog.Handler       { return h }
+
+func TestSearchSettingsLogValue_IncludesSemanticModel(t *testing.T) {
+	value := SearchSettingsLogValue(SearchSettings{SemanticModel: "/models/potion-base-8m"})
+
+	require.Contains(t, value.String(), "/models/potion-base-8m",
+		"a model path is configuration, not a secret")
+}
+
+func TestSearchSettingsLogValue_IncludesSemanticFloor(t *testing.T) {
+	value := SearchSettingsLogValue(SearchSettings{SemanticFloor: 0.42})
+
+	require.Contains(t, value.String(), "0.42")
+}

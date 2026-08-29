@@ -192,3 +192,45 @@ func TestCLI_SearchInMemoryDefaultsToTrueWhenFlagIsNotPassed(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, settings.Search.InMemory)
 }
+
+func TestRegisterFlags_DeclaresSemanticModel(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+
+	RegisterFlags(flags)
+
+	model := flags.Lookup("search-semantic-model")
+	require.NotNil(t, model)
+	require.Equal(t, "", model.DefValue)
+
+	floor := flags.Lookup("search-semantic-floor")
+	require.NotNil(t, floor)
+}
+
+// TestCLI_SearchSemanticFloorDefaultsToThePlaceholderWhenFlagIsNotPassed pins
+// the same precedence the in-memory flag depends on, for the one setting whose
+// pflag default (0) and viper default (DefaultSemanticFloor) disagree. Viper
+// reads a bound flag only once pflag reports it changed, so registration alone
+// must not lower the floor to ~0 — a floor of 0 admits the corpus's
+// nearest-but-irrelevant chunk for queries that should answer "No results
+// found", which is exactly what the floor exists to prevent.
+func TestCLI_SearchSemanticFloorDefaultsToThePlaceholderWhenFlagIsNotPassed(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	RegisterFlags(flags)
+
+	settings, err := config.LoadSettingsWithFlags(flags)
+
+	require.NoError(t, err)
+	require.InDelta(t, config.DefaultSemanticFloor, settings.Search.SemanticFloor, 1e-9)
+}
+
+func TestCLI_SearchSemanticFloorFlagBeatsEnv(t *testing.T) {
+	t.Setenv("ACDC_MCP_SEARCH_SEMANTIC_FLOOR", "0.1")
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	RegisterFlags(flags)
+	require.NoError(t, flags.Set("search-semantic-floor", "0.7"))
+
+	settings, err := config.LoadSettingsWithFlags(flags)
+
+	require.NoError(t, err)
+	require.InDelta(t, 0.7, settings.Search.SemanticFloor, 1e-9)
+}

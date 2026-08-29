@@ -28,6 +28,10 @@ func LogWithLogger(s *Settings, logger *slog.Logger) {
 	logger.InfoContext(ctx, "Config: search.title_boost", "value", s.Search.TitleBoost)
 	logger.InfoContext(ctx, "Config: search.content_boost", "value", s.Search.ContentBoost)
 	logger.InfoContext(ctx, "Config: search.result_mode", "value", s.Search.ResultMode)
+	logger.InfoContext(ctx, "Config: search.semantic_model", "value", s.Search.SemanticModel)
+	if s.Search.SemanticModel != "" {
+		logger.InfoContext(ctx, "Config: search.semantic_floor", "value", s.Search.SemanticFloor)
+	}
 
 	logger.InfoContext(ctx, "Config: auth.type", "value", s.Auth.Type)
 	switch s.Auth.Type {
@@ -50,6 +54,8 @@ func SearchSettingsLogValue(s SearchSettings) slog.Value {
 		slog.Float64("title_boost", s.TitleBoost),
 		slog.Float64("content_boost", s.ContentBoost),
 		slog.String("result_mode", string(s.ResultMode)),
+		slog.String("semantic_model", s.SemanticModel),
+		slog.Float64("semantic_floor", s.SemanticFloor),
 	)
 }
 
