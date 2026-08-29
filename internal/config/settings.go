@@ -191,53 +191,83 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 // ValidateSettings checks for conflicting configurations.
 // Returns an error if the settings contain mutually exclusive or incomplete auth config.
 func ValidateSettings(s *Settings) error {
-	// Validate transport type
-	switch s.Transport {
-	case "stdio", "sse":
-		// valid
-	default:
-		return errors.New("transport must be 'stdio' or 'sse', got: " + s.Transport)
+	if err := validateTransport(s.Transport); err != nil {
+		return err
 	}
-
-	// Validate URI scheme (RFC 3986: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ))
-	if !schemeRegexp.MatchString(s.Scheme) {
-		return errors.New("scheme must match RFC 3986 (start with a letter, contain only letters, digits, +, -, .), got: " + s.Scheme)
+	if err := validateScheme(s.Scheme); err != nil {
+		return err
 	}
-
-	switch s.Search.ResultMode {
-	case SearchResultModeReferences, SearchResultModeContent:
-	default:
-		return errors.New("search result mode must be 'references' or 'content', got: " + string(s.Search.ResultMode))
-	}
-
-	if err := validateBoosts(s.Search); err != nil {
+	if err := validateSearch(s.Search); err != nil {
 		return err
 	}
 
-	hasBasicCreds := s.Auth.Basic.Username != "" || s.Auth.Basic.Password != ""
-	hasAPIKeys := len(s.Auth.APIKeys) > 0
+	return validateAuth(s.Auth)
+}
 
-	switch s.Auth.Type {
+func validateTransport(transport string) error {
+	switch transport {
+	case "stdio", "sse":
+		return nil
+	default:
+		return errors.New("transport must be 'stdio' or 'sse', got: " + transport)
+	}
+}
+
+// validateScheme enforces RFC 3986: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ).
+func validateScheme(scheme string) error {
+	if !schemeRegexp.MatchString(scheme) {
+		return errors.New("scheme must match RFC 3986 (start with a letter, contain only letters, digits, +, -, .), got: " + scheme)
+	}
+
+	return nil
+}
+
+func validateSearch(s SearchSettings) error {
+	switch s.ResultMode {
+	case SearchResultModeReferences, SearchResultModeContent:
+	default:
+		return errors.New("search result mode must be 'references' or 'content', got: " + string(s.ResultMode))
+	}
+
+	return validateBoosts(s)
+}
+
+func validateAuth(a AuthSettings) error {
+	hasBasicCreds := a.Basic.Username != "" || a.Basic.Password != ""
+	hasAPIKeys := len(a.APIKeys) > 0
+
+	switch a.Type {
 	case AuthTypeNone, "":
 		if hasBasicCreds || hasAPIKeys {
 			return errors.New("auth-type 'none' is incompatible with auth credentials")
 		}
+		return nil
 	case AuthTypeBasic:
-		if hasAPIKeys {
-			return errors.New("auth-type 'basic' is mutually exclusive with auth-api-keys")
-		}
-		if s.Auth.Basic.Username == "" || s.Auth.Basic.Password == "" {
-			return errors.New("auth-type 'basic' requires both username and password")
-		}
+		return validateBasicAuth(a.Basic, hasAPIKeys)
 	case AuthTypeAPIKey:
-		if hasBasicCreds {
-			return errors.New("auth-type 'apikey' is mutually exclusive with basic auth credentials")
-		}
-		if !hasAPIKeys {
-			return errors.New("auth-type 'apikey' requires at least one API key")
-		}
+		return validateAPIKeyAuth(hasBasicCreds, hasAPIKeys)
 	default:
-		return errors.New("unknown auth-type: " + s.Auth.Type)
+		return errors.New("unknown auth-type: " + a.Type)
+	}
+}
+
+func validateBasicAuth(basic BasicAuthSettings, hasAPIKeys bool) error {
+	if hasAPIKeys {
+		return errors.New("auth-type 'basic' is mutually exclusive with auth-api-keys")
+	}
+	if basic.Username == "" || basic.Password == "" {
+		return errors.New("auth-type 'basic' requires both username and password")
+	}
+
+	return nil
+}
+
+func validateAPIKeyAuth(hasBasicCreds, hasAPIKeys bool) error {
+	if hasBasicCreds {
+		return errors.New("auth-type 'apikey' is mutually exclusive with basic auth credentials")
+	}
+	if !hasAPIKeys {
+		return errors.New("auth-type 'apikey' requires at least one API key")
 	}
 
 	return nil
