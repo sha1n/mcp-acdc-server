@@ -46,6 +46,7 @@ make build-docker
 | `make coverage` | Run tests with coverage report |
 | `make bench` | Run the search measurement benchmarks |
 | `make lint` | Run linters (go vet, golangci-lint, format check) |
+| `make complexity` | Run function-level complexity analysis only |
 | `make format` | Format source files |
 | `make clean` | Remove build artifacts |
 
@@ -95,3 +96,11 @@ package path that follows it.
 - Standard Go formatting (`gofmt`) is enforced
 - Run `make lint` before committing to check for issues
 - Run `make format` to auto-format code
+
+### Complexity
+
+`gocognit` (cognitive, max 20) and `gocyclo` (cyclomatic, max 12) gate every
+function. Thresholds live in `.golangci.yml`, `make lint` enforces them, and the
+`complexity` CI job reports a breach as its own check. `_test.go` files are
+exempt because table-driven and integration tests are legitimately branchy;
+shared helpers under `tests/integration/testkit/` are not exempt.

@@ -67,6 +67,22 @@ jobs:
           fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' }}
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  # Function-level complexity gate. Runs standalone so a threshold breach shows
+  # as its own red check; the thresholds themselves live in .golangci.yml and are
+  # also enforced by `make lint`.
+  complexity:
+    needs: changes
+    if: needs.changes.outputs.src == 'true' || github.event_name == 'push' && contains(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Run complexity analysis
+        run: make complexity
+
   docker:
     needs: [changes, test]
     if: |
@@ -140,13 +156,13 @@ jobs:
 
   # This job acts as a bridge for documentation-only PRs to satisfy status checks
   status-check:
-    needs: [changes, test, docker]
+    needs: [changes, test, complexity, docker]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Verify status
         run: |
-          if [[ "${{ needs.test.result }}" == "failure" || "${{ needs.docker.result }}" == "failure" ]]; then
+          if [[ "${{ needs.test.result }}" == "failure" || "${{ needs.complexity.result }}" == "failure" || "${{ needs.docker.result }}" == "failure" ]]; then
             echo "One or more critical jobs failed."
             exit 1
           fi
