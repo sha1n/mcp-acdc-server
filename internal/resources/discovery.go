@@ -162,10 +162,38 @@ func selectConfiguredFiles(ctx context.Context, cp *content.ContentProvider, ind
 		return "", nil, fmt.Errorf("resolve content root: %w", err)
 	}
 
-	descent := newDescentFilter(patterns)
+	selector := &configuredSelector{
+		root:     root,
+		patterns: patterns,
+		excludes: excludes,
+		ops:      ops,
+		policy:   policy,
+		descent:  newDescentFilter(patterns),
+	}
 
-	var selected []selectedFile
-	err = ops.walkDir(root, func(filePath string, entry fs.DirEntry, walkErr error) error {
+	if err := ops.walkDir(root, selector.walkFunc(ctx)); err != nil {
+		return "", nil, err
+	}
+
+	sortSelectedFiles(selector.selected)
+	return root, selector.selected, nil
+}
+
+// configuredSelector accumulates the files an index configuration selects over a
+// single walk of the content root. It is single-use and not safe for concurrent
+// use: filepath.WalkDir invokes the callback sequentially.
+type configuredSelector struct {
+	root     string
+	patterns []string
+	excludes []string
+	ops      discoveryOps
+	policy   discoverPolicy
+	descent  descentFilter
+	selected []selectedFile
+}
+
+func (s *configuredSelector) walkFunc(ctx context.Context) fs.WalkDirFunc {
+	return func(filePath string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -173,63 +201,70 @@ func selectConfiguredFiles(ctx context.Context, cp *content.ContentProvider, ind
 			return err
 		}
 		if entry.IsDir() {
-			if filePath == root {
-				return nil
-			}
-			if shouldPruneDir(entry.Name(), policy.lenient) {
-				return fs.SkipDir
-			}
-			relativeDir, err := ops.relativePath(root, filePath)
-			if err != nil {
-				return err
-			}
-			if !descent.allows(filepath.ToSlash(relativeDir)) {
-				return fs.SkipDir
-			}
-			return nil
+			return s.visitDir(filePath, entry)
 		}
-		if entry.Type()&fs.ModeSymlink != 0 {
-			return nil
-		}
+		return s.visitFile(filePath, entry)
+	}
+}
 
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return nil
-		}
-
-		canonicalFile, err := ops.canonicalPath(filePath)
-		if err != nil {
-			return err
-		}
-		if !withinRoot(root, canonicalFile) {
-			return fmt.Errorf("selected file escapes content root: %s", filePath)
-		}
-
-		relativePath, err := ops.relativePath(root, canonicalFile)
-		if err != nil {
-			return err
-		}
-		relativePath = filepath.ToSlash(relativePath)
-		if !matchesAny(patterns, relativePath) || matchesAny(excludes, relativePath) {
-			return nil
-		}
-		selected = append(selected, selectedFile{
-			path:         canonicalFile,
-			relativePath: relativePath,
-			size:         info.Size(),
-			modTime:      info.ModTime(),
-		})
+// visitDir returns fs.SkipDir for directories that cannot contain a match.
+func (s *configuredSelector) visitDir(filePath string, entry fs.DirEntry) error {
+	if filePath == s.root {
 		return nil
-	})
-	if err != nil {
-		return "", nil, err
+	}
+	if shouldPruneDir(entry.Name(), s.policy.lenient) {
+		return fs.SkipDir
 	}
 
-	sortSelectedFiles(selected)
-	return root, selected, nil
+	relativeDir, err := s.ops.relativePath(s.root, filePath)
+	if err != nil {
+		return err
+	}
+	if !s.descent.allows(filepath.ToSlash(relativeDir)) {
+		return fs.SkipDir
+	}
+	return nil
+}
+
+// visitFile appends entry to the selection when it is a regular file inside the
+// content root that the include patterns match and the exclude patterns do not.
+func (s *configuredSelector) visitFile(filePath string, entry fs.DirEntry) error {
+	if entry.Type()&fs.ModeSymlink != 0 {
+		return nil
+	}
+
+	info, err := entry.Info()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return nil
+	}
+
+	canonicalFile, err := s.ops.canonicalPath(filePath)
+	if err != nil {
+		return err
+	}
+	if !withinRoot(s.root, canonicalFile) {
+		return fmt.Errorf("selected file escapes content root: %s", filePath)
+	}
+
+	relativePath, err := s.ops.relativePath(s.root, canonicalFile)
+	if err != nil {
+		return err
+	}
+	relativePath = filepath.ToSlash(relativePath)
+	if !matchesAny(s.patterns, relativePath) || matchesAny(s.excludes, relativePath) {
+		return nil
+	}
+
+	s.selected = append(s.selected, selectedFile{
+		path:         canonicalFile,
+		relativePath: relativePath,
+		size:         info.Size(),
+		modTime:      info.ModTime(),
+	})
+	return nil
 }
 
 // DiscoverResources returns legacy .acdc/resources definitions for callers that

@@ -209,6 +209,33 @@ func TestDiscoverWithOps_ConfiguredSkipsUnreadableFileAndIndexesSibling(t *testi
 	require.Equal(t, []string{"acdc://docs/good"}, sourceURIs(result.Sources))
 }
 
+func TestDiscoverWithOps_ConfiguredSkipsNonregularFileAndIndexesSibling(t *testing.T) {
+	root := "/catalog"
+	pipeFile := root + "/docs/pipe.md"
+	regularFile := root + "/docs/good.md"
+
+	ops := successfulDiscoveryOps(root)
+	ops.walkDir = func(_ string, walk fs.WalkDirFunc) error {
+		if err := walk(pipeFile, testDirEntry{name: "pipe.md", mode: fs.ModeNamedPipe}, nil); err != nil {
+			return err
+		}
+		return walk(regularFile, regularEntry("good.md"), nil)
+	}
+	ops.relativePath = func(_, path string) (string, error) {
+		return strings.TrimPrefix(path, root+"/"), nil
+	}
+	ops.readFile = func(path string) ([]byte, error) {
+		if path == pipeFile {
+			t.Fatal("a nonregular entry must be skipped before it is read")
+		}
+		return []byte("# Good\n\nBody.\n"), nil
+	}
+
+	result, err := discoverWithOps(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{Include: []string{"docs/*.md"}}, "acdc", ops)
+	require.NoError(t, err)
+	require.Equal(t, []string{"acdc://docs/good"}, sourceURIs(result.Sources))
+}
+
 func TestDiscoverWithOps_LegacySkipsUnreadableAndNonregularEntries(t *testing.T) {
 	root := "/catalog"
 	resourcesRoot := content.NewContentProvider(root).ResourcesDir
