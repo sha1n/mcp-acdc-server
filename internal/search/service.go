@@ -159,8 +159,7 @@ func (s *Service) newIndex() (searchIndex, string, error) {
 const defaultBatchSize = 1000
 
 func batchIndex(ctx context.Context, index BatchIndexer, chunks <-chan domain.Chunk, batchSize int) error {
-	batch := index.NewBatch()
-	count := 0
+	writer := newBatchWriter(index, batchSize)
 
 	for {
 		select {
@@ -168,28 +167,60 @@ func batchIndex(ctx context.Context, index BatchIndexer, chunks <-chan domain.Ch
 			return ctx.Err()
 		case chunk, ok := <-chunks:
 			if !ok {
-				if count > 0 {
-					if err := index.Batch(batch); err != nil {
-						return fmt.Errorf("failed to execute final batch index: %w", err)
-					}
-				}
-				return nil
+				return writer.flush()
 			}
-
-			if err := batch.Index(chunk.ID, chunk); err != nil {
-				return fmt.Errorf("failed to add chunk to batch: %w", err)
-			}
-			count++
-
-			if count >= batchSize {
-				if err := index.Batch(batch); err != nil {
-					return fmt.Errorf("failed to execute batch index: %w", err)
-				}
-				batch = index.NewBatch()
-				count = 0
+			if err := writer.add(chunk); err != nil {
+				return err
 			}
 		}
 	}
+}
+
+// batchWriter accumulates chunks into an index batch and submits it whenever it
+// reaches batchSize, so that a batch is never held in memory beyond that size.
+type batchWriter struct {
+	index     BatchIndexer
+	batch     *bleve.Batch
+	pending   int
+	batchSize int
+}
+
+func newBatchWriter(index BatchIndexer, batchSize int) *batchWriter {
+	return &batchWriter{
+		index:     index,
+		batch:     index.NewBatch(),
+		batchSize: batchSize,
+	}
+}
+
+func (w *batchWriter) add(chunk domain.Chunk) error {
+	if err := w.batch.Index(chunk.ID, chunk); err != nil {
+		return fmt.Errorf("failed to add chunk to batch: %w", err)
+	}
+	w.pending++
+
+	if w.pending < w.batchSize {
+		return nil
+	}
+	if err := w.index.Batch(w.batch); err != nil {
+		return fmt.Errorf("failed to execute batch index: %w", err)
+	}
+	w.batch = w.index.NewBatch()
+	w.pending = 0
+
+	return nil
+}
+
+// flush submits the trailing partial batch, if any.
+func (w *batchWriter) flush() error {
+	if w.pending == 0 {
+		return nil
+	}
+	if err := w.index.Batch(w.batch); err != nil {
+		return fmt.Errorf("failed to execute final batch index: %w", err)
+	}
+
+	return nil
 }
 
 func buildMapping() mapping.IndexMapping {
