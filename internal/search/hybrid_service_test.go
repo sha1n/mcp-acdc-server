@@ -1315,3 +1315,105 @@ func TestHybridService_PublishAfterCloseDropsTheGeneration(t *testing.T) {
 	require.Equal(t, 1, lexical.published, "the built generation was never handed back for release")
 	require.Zero(t, hybrid.VectorCount(), "vectors became visible after Close")
 }
+
+func newTestHybridWithFloor(t *testing.T, embedder embed.Embedder, floor float64) *HybridService {
+	t.Helper()
+	settings := testSemanticSettings()
+	settings.SemanticFloor = floor
+	lexical := NewService(testSettings())
+	hybrid, err := NewHybridService(lexical, embedder, settings)
+	require.NoError(t, err)
+	t.Cleanup(hybrid.Close)
+	return hybrid
+}
+
+// unrepresentableEmbedder answers with the zero vector for any text holding
+// marker, which is what a static model does for text its vocabulary cannot
+// cover, and with a real unit vector for everything else.
+type unrepresentableEmbedder struct {
+	dimensions int
+	marker     string
+}
+
+func (u *unrepresentableEmbedder) Info() embed.ModelInfo {
+	return embed.ModelInfo{Dimensions: u.dimensions}
+}
+
+func (u *unrepresentableEmbedder) vector(text string) []float32 {
+	values := make([]float32, u.dimensions)
+	if strings.Contains(text, u.marker) {
+		return values
+	}
+	values[0] = 1
+	return values
+}
+
+func (u *unrepresentableEmbedder) EmbedDocuments(_ context.Context, texts []string) ([][]float32, error) {
+	vectors := make([][]float32, len(texts))
+	for i, text := range texts {
+		vectors[i] = u.vector(text)
+	}
+	return vectors, nil
+}
+
+func (u *unrepresentableEmbedder) EmbedQuery(_ context.Context, text string) ([]float32, error) {
+	return u.vector(text), nil
+}
+
+// zeroQueryEmbedder represents every passage but no query at all. Keying this
+// on the method rather than on the text is what keeps the query-side case
+// unambiguous: every fixture query also appears in a chunk.
+type zeroQueryEmbedder struct{ dimensions int }
+
+func (z *zeroQueryEmbedder) Info() embed.ModelInfo {
+	return embed.ModelInfo{Dimensions: z.dimensions}
+}
+
+func (z *zeroQueryEmbedder) EmbedDocuments(_ context.Context, texts []string) ([][]float32, error) {
+	vectors := make([][]float32, len(texts))
+	for i := range texts {
+		vectors[i] = make([]float32, z.dimensions)
+		vectors[i][0] = 1
+	}
+	return vectors, nil
+}
+
+func (z *zeroQueryEmbedder) EmbedQuery(context.Context, string) ([]float32, error) {
+	return make([]float32, z.dimensions), nil
+}
+
+// A passage the embedder cannot represent must not reach the store. Its dot
+// product is 0.0 against every query, so at a floor of zero it would clear the
+// floor for every search and become a permanent hit.
+func TestHybridService_SkipsPassagesTheEmbedderCannotRepresent(t *testing.T) {
+	logs := captureLogs(t, slog.LevelWarn)
+	hybrid := newTestHybridWithFloor(t, &unrepresentableEmbedder{dimensions: 4, marker: "beta"}, 0)
+
+	require.NoError(t, indexHybrid(t, hybrid, testChunks()))
+
+	require.Equal(t, 1, hybrid.VectorCount(), "the unrepresentable passage must not be stored")
+	record := requireLog(t, logs(), "Semantic indexing skipped passages that could not be embedded")
+	// Attrs comes back through a JSON handler, so numbers arrive as float64.
+	require.Equal(t, float64(1), record.Attrs["passages"], "the skip must be counted for the operator")
+}
+
+// A query the embedder cannot represent carries no semantic signal. Searching
+// on it would rank the whole corpus by ties at 0.0, broken by chunk ID.
+func TestHybridService_ZeroQueryVectorDegradesToLexical(t *testing.T) {
+	logs := captureLogs(t, slog.LevelWarn)
+	hybrid := newTestHybridWithFloor(t, &zeroQueryEmbedder{dimensions: 4}, 0)
+	lexicalOnly := NewService(testSettings())
+	t.Cleanup(lexicalOnly.Close)
+
+	require.NoError(t, indexHybrid(t, hybrid, testChunks()))
+	indexChunks(t, lexicalOnly, testChunks())
+
+	fused, err := hybrid.Search("alpha content", 10)
+	require.NoError(t, err)
+	lexical, err := lexicalOnly.Search("alpha content", 10)
+	require.NoError(t, err)
+
+	require.Equal(t, lexical, fused, "a query with no embedding must return the lexical ranking unchanged")
+	// Nothing failed — the embedder answered — so warning here would be false.
+	requireNoLog(t, logs(), "Semantic query embedding failed, returning lexical results only")
+}

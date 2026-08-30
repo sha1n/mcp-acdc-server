@@ -85,3 +85,10 @@ func TestStore_LenCountsVectorsNotChunks(t *testing.T) {
 
 	require.Equal(t, 2, store.Len())
 }
+
+func TestIsZero_DistinguishesNoEmbeddingFromASmallOne(t *testing.T) {
+	require.True(t, IsZero([]float32{0, 0, 0}))
+	require.True(t, IsZero(nil))
+	require.False(t, IsZero([]float32{0, 1e-30, 0}))
+	require.False(t, IsZero([]float32{-1, 0, 0}))
+}

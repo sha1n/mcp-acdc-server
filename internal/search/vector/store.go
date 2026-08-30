@@ -47,13 +47,29 @@ func (s *Store) Add(chunkID string, vector []float32) error {
 	return nil
 }
 
+// IsZero reports the Embedder contract's "no embedding" vector.
+//
+// It is exported because both halves of the semantic path have to recognise
+// it: the index must not store one, and a query that embeds to one carries no
+// signal to search on.
+func IsZero(v []float32) bool {
+	for _, value := range v {
+		if value != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // Search returns the k chunks most similar to query, max-pooled: a chunk
 // scores as its single best passage, never an average, so a query matching
 // one paragraph deep inside a long chunk still retrieves it.
 //
-// Every vector is unit-norm by the Embedder contract, so the dot product is
-// the cosine similarity and no division is needed. Ties break on chunk ID so
-// the order is stable for the golden harness.
+// Every stored vector is unit-norm, so the dot product is the cosine
+// similarity and no division is needed. The Embedder contract permits an
+// all-zero vector for text a model cannot represent, so that guarantee rests
+// on the caller filtering those out with IsZero rather than adding them. Ties
+// break on chunk ID so the order is stable for the golden harness.
 func (s *Store) Search(query []float32, k int) []Hit {
 	if k <= 0 || len(query) != s.dimensions || len(s.chunkIDs) == 0 {
 		return nil

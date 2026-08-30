@@ -183,6 +183,13 @@ func (h *HybridService) vectorHits(query string, limit int) []vector.Hit {
 		return nil
 	}
 
+	// No semantic signal at all. This is not a failure — the embedder answered
+	// — so it degrades to lexical silently, unlike the embedding-error path
+	// above, which warns.
+	if vector.IsZero(queryVector) {
+		return nil
+	}
+
 	scanned := store.Search(queryVector, limit)
 	hits := make([]vector.Hit, 0, len(scanned))
 	for _, hit := range scanned {
@@ -629,10 +636,8 @@ func drainCached(
 		}
 		stats.reused++
 		// Dedup the inference, not the vector: each owning chunk needs one.
-		for _, owner := range item.owners {
-			if err := store.Add(owner, cached); err != nil {
-				return nil, err
-			}
+		if err := storePassage(store, item, cached, stats); err != nil {
+			return nil, err
 		}
 	}
 
@@ -650,11 +655,31 @@ func recordEmbedded(
 ) error {
 	stats.embedded += len(queue)
 	for i, item := range queue {
+		// Cache what the embedder answered, zero vector included: re-embedding
+		// an unrepresentable passage every generation would buy nothing.
 		next[item.passage.Key] = vectors[i]
-		for _, owner := range item.owners {
-			if err := store.Add(owner, vectors[i]); err != nil {
-				return err
-			}
+		if err := storePassage(store, item, vectors[i], stats); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// storePassage adds one passage vector under each owning chunk, unless the
+// embedder could not represent the text.
+//
+// A skipped passage is counted, so an operator whose corpus the model cannot
+// represent — a script outside its vocabulary, for instance — sees it in the
+// same summary warning as a passage that failed to embed. That is what it is.
+func storePassage(store *vector.Store, item pendingPassage, embedding []float32, stats *buildStats) error {
+	if vector.IsZero(embedding) {
+		stats.skip(item.owners)
+		return nil
+	}
+	for _, owner := range item.owners {
+		if err := store.Add(owner, embedding); err != nil {
+			return err
 		}
 	}
 
