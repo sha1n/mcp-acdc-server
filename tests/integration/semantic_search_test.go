@@ -32,7 +32,7 @@ func TestSemanticSearch_UnloadableModelAbortsStartup(t *testing.T) {
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "/definitely/not/a/model", "the operator must be told which path failed")
-	require.Contains(t, err.Error(), "no embedding backend", "and why it failed")
+	require.Contains(t, err.Error(), "failed to load semantic model", "and why it failed")
 }
 
 // Declaring the flag without a value must not turn anything on: empty is off,

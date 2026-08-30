@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/sha1n/mcp-acdc-server/internal/embed"
+	"github.com/sha1n/mcp-acdc-server/internal/embed/model2vec/model2vectest"
 )
 
 func write(t *testing.T, path, content string) {
@@ -34,44 +35,8 @@ func readFile(t *testing.T, path string) string {
 	return string(raw)
 }
 
-func writeArithmeticModel(t *testing.T, normalize bool) string {
-	t.Helper()
-	dir := t.TempDir()
-
-	tokenizer := `{
-	  "version": "1.0",
-	  "added_tokens": [{"id": 0, "content": "[UNK]", "special": true}],
-	  "normalizer": {"type": "BertNormalizer", "clean_text": true, "handle_chinese_chars": true, "strip_accents": null, "lowercase": true},
-	  "pre_tokenizer": {"type": "BertPreTokenizer"},
-	  "post_processor": null,
-	  "decoder": null,
-	  "model": {"type": "WordPiece", "unk_token": "[UNK]", "continuing_subword_prefix": "##", "max_input_chars_per_word": 100,
-	            "vocab": {"[UNK]": 0, "alpha": 1, "beta": 2}}
-	}`
-	write(t, filepath.Join(dir, "tokenizer.json"), tokenizer)
-	write(t, filepath.Join(dir, "config.json"), fmt.Sprintf(`{"model_type":"model2vec","hidden_dim":2,"normalize":%t}`, normalize))
-
-	// Row 0 is the unknown token and must never be pooled. Rows 1 and 2 mean
-	// to (2, 0), which normalizes to (1, 0).
-	payload := float32Payload(9, 9, 3, 1, 1, -1)
-	header, err := json.Marshal(map[string]any{"embeddings": map[string]any{
-		"dtype": "F32", "shape": []int{3, 2}, "data_offsets": []int{0, 24}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var buf bytes.Buffer
-	if err := binary.Write(&buf, binary.LittleEndian, uint64(len(header))); err != nil {
-		t.Fatal(err)
-	}
-	buf.Write(header)
-	buf.Write(payload)
-	write(t, filepath.Join(dir, "model.safetensors"), buf.String())
-
-	return dir
-}
-
 func TestNew_EmbedsByMeanPooling(t *testing.T) {
-	embedder, err := New(writeArithmeticModel(t, false))
+	embedder, err := New(model2vectest.WriteArithmeticModel(t, false))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -86,7 +51,7 @@ func TestNew_EmbedsByMeanPooling(t *testing.T) {
 }
 
 func TestNew_NormalizesWhenConfigured(t *testing.T) {
-	embedder, err := New(writeArithmeticModel(t, true))
+	embedder, err := New(model2vectest.WriteArithmeticModel(t, true))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -100,7 +65,7 @@ func TestNew_NormalizesWhenConfigured(t *testing.T) {
 }
 
 func TestNew_DropsUnknownTokens(t *testing.T) {
-	embedder, err := New(writeArithmeticModel(t, false))
+	embedder, err := New(model2vectest.WriteArithmeticModel(t, false))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -115,7 +80,7 @@ func TestNew_DropsUnknownTokens(t *testing.T) {
 }
 
 func TestNew_ReturnsZeroVectorForUntokenizableText(t *testing.T) {
-	embedder, err := New(writeArithmeticModel(t, true))
+	embedder, err := New(model2vectest.WriteArithmeticModel(t, true))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -129,7 +94,7 @@ func TestNew_ReturnsZeroVectorForUntokenizableText(t *testing.T) {
 }
 
 func TestNew_ReportsModelGeometry(t *testing.T) {
-	embedder, err := New(writeArithmeticModel(t, true))
+	embedder, err := New(model2vectest.WriteArithmeticModel(t, true))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -149,7 +114,7 @@ func TestNew_RejectsBrokenModelDirectories(t *testing.T) {
 		}
 	})
 	t.Run("hidden_dim disagrees with the matrix", func(t *testing.T) {
-		dir := writeArithmeticModel(t, true)
+		dir := model2vectest.WriteArithmeticModel(t, true)
 		write(t, filepath.Join(dir, "config.json"), `{"model_type":"model2vec","hidden_dim":384,"normalize":true}`)
 		_, err := New(dir)
 		if err == nil || !strings.Contains(err.Error(), "hidden_dim") {
@@ -157,7 +122,7 @@ func TestNew_RejectsBrokenModelDirectories(t *testing.T) {
 		}
 	})
 	t.Run("token id beyond the matrix", func(t *testing.T) {
-		dir := writeArithmeticModel(t, true)
+		dir := model2vectest.WriteArithmeticModel(t, true)
 		write(t, filepath.Join(dir, "config.json"), `{"model_type":"model2vec","hidden_dim":2,"normalize":true}`)
 		// Same vocabulary, one more token than the matrix has rows.
 		write(t, filepath.Join(dir, "tokenizer.json"), strings.Replace(
@@ -187,7 +152,7 @@ func TestNew_MakesNoNetworkRequest(t *testing.T) {
 	http.DefaultTransport = refusingTransport{t: t}
 	t.Cleanup(func() { http.DefaultTransport = original })
 
-	embedder, err := New(writeArithmeticModel(t, true))
+	embedder, err := New(model2vectest.WriteArithmeticModel(t, true))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

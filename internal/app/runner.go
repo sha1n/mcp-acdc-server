@@ -9,6 +9,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/embed/model2vec"
 	"github.com/spf13/pflag"
 )
 
@@ -29,8 +30,12 @@ func DefaultRunParams() RunParams {
 		StartSSEServer: StartSSEServer,
 		// Wrapped rather than assigned directly: CreateMCPServer is
 		// variadic in its options, which RunParams.CreateServer is not.
+		//
+		// The adapter is linked here rather than inside the factory so that
+		// internal/app keeps no compile-time dependency on a model format and
+		// a test can still install a different provider.
 		CreateServer: func(ctx context.Context, settings *config.Settings, version string) (*mcp.Server, func(), error) {
-			return CreateMCPServer(ctx, settings, version)
+			return CreateMCPServer(ctx, settings, version, WithEmbedderProvider(model2vec.New))
 		},
 	}
 }

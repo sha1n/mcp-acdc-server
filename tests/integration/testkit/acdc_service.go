@@ -25,8 +25,9 @@ type RunnerFunc func(ctx context.Context, params app.RunParams, flags *pflag.Fla
 type ServiceOption func(*acdcService)
 
 // WithEmbedderProvider supplies the embedding backend the server opens when
-// search.semantic_model is configured. No adapter is linked into the binary,
-// so without this a configured model path aborts startup.
+// search.semantic_model is configured. The binary links the model2vec adapter,
+// so a real model directory works without this option. Supply it to script
+// vectors a test can assert on.
 func WithEmbedderProvider(provider func(modelPath string) (embed.Embedder, error)) ServiceOption {
 	return func(s *acdcService) {
 		s.embedderProvider = provider

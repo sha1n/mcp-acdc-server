@@ -5,11 +5,13 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/embed/model2vec/model2vectest"
 	"github.com/spf13/pflag"
 )
 
@@ -286,5 +288,36 @@ func TestNewLogger_LevelGatesDebug(t *testing.T) {
 func TestNewLogger_RejectsUnknownLevel(t *testing.T) {
 	if _, err := newLogger(io.Discard, "trace"); err == nil {
 		t.Fatal("newLogger must reject an unknown level")
+	}
+}
+
+// The production server must link a real embedding backend. Everything else
+// about semantic search is proved with an injected embedder, so without this
+// test the adapter could be absent from the shipped binary and every other
+// test would still pass.
+func TestDefaultRunParams_LoadsAModelDirectory(t *testing.T) {
+	settings := appTestSettings(writeMetadataOnly(t, testMetadata))
+	settings.Search.SemanticModel = model2vectest.WriteArithmeticModel(t, true)
+
+	server, cleanup, err := DefaultRunParams().CreateServer(context.Background(), settings, "test")
+	if err != nil {
+		t.Fatalf("CreateServer with a real model directory: %v", err)
+	}
+	t.Cleanup(cleanup)
+	if server == nil {
+		t.Fatal("CreateServer returned no server")
+	}
+}
+
+func TestDefaultRunParams_ReportsAnUnreadableModel(t *testing.T) {
+	settings := appTestSettings(writeMetadataOnly(t, testMetadata))
+	settings.Search.SemanticModel = filepath.Join(t.TempDir(), "absent")
+
+	_, _, err := DefaultRunParams().CreateServer(context.Background(), settings, "test")
+	if err == nil {
+		t.Fatal("want an error naming the path")
+	}
+	if !strings.Contains(err.Error(), settings.Search.SemanticModel) {
+		t.Fatalf("error %v does not name the configured path", err)
 	}
 }
