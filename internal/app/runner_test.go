@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -256,4 +258,33 @@ func (m *mockTransport) Connect(ctx context.Context) (mcp.Connection, error) {
 	}
 	// Return error immediately since we don't have real I/O
 	return nil, errors.New("mock transport - no real connection")
+}
+
+func TestNewLogger_LevelGatesDebug(t *testing.T) {
+	ctx := context.Background()
+
+	debug, err := newLogger(io.Discard, "debug")
+	if err != nil {
+		t.Fatalf("newLogger(debug) returned an error: %v", err)
+	}
+	if !debug.Enabled(ctx, slog.LevelDebug) {
+		t.Error("a debug logger must emit debug records")
+	}
+
+	info, err := newLogger(io.Discard, "info")
+	if err != nil {
+		t.Fatalf("newLogger(info) returned an error: %v", err)
+	}
+	if info.Enabled(ctx, slog.LevelDebug) {
+		t.Error("an info logger must drop debug records")
+	}
+	if !info.Enabled(ctx, slog.LevelInfo) {
+		t.Error("an info logger must emit info records")
+	}
+}
+
+func TestNewLogger_RejectsUnknownLevel(t *testing.T) {
+	if _, err := newLogger(io.Discard, "trace"); err == nil {
+		t.Fatal("newLogger must reject an unknown level")
+	}
 }

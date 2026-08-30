@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 
@@ -48,8 +49,11 @@ func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, ve
 	}
 
 	// Configure logging - always use stderr to avoid buffering issues
-	handler := slog.NewTextHandler(os.Stderr, nil)
-	slog.SetDefault(slog.New(handler))
+	logger, err := newLogger(os.Stderr, settings.LogLevel)
+	if err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
+	}
+	slog.SetDefault(logger)
 
 	slog.Info("Starting MCP Acdc server", "version", version)
 	config.Log(settings)
@@ -74,4 +78,16 @@ func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, ve
 		slog.Info("Starting SSE server", "host", settings.Host, "port", settings.Port)
 		return params.StartSSEServer(mcpServer, settings)
 	}
+}
+
+// newLogger builds the process logger at the configured severity. Levels are
+// resolved through config.ParseLogLevel so the runner and settings validation
+// accept exactly the same names.
+func newLogger(out io.Writer, level string) (*slog.Logger, error) {
+	parsed, err := config.ParseLogLevel(level)
+	if err != nil {
+		return nil, err
+	}
+
+	return slog.New(slog.NewTextHandler(out, &slog.HandlerOptions{Level: parsed})), nil
 }

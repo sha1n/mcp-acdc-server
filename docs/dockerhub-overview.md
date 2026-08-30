@@ -84,6 +84,7 @@ Every setting is available as a CLI flag or an `ACDC_MCP_*` environment variable
 | `ACDC_MCP_PORT` | Bind port (SSE only) | `8080` |
 | `ACDC_MCP_URI_SCHEME` | Resource URI scheme, e.g. `acdc://guides/setup` | `acdc` |
 | `ACDC_MCP_CROSS_REF` | Rewrite relative Markdown links into resource URIs | `false` |
+| `ACDC_MCP_LOG_LEVEL` | Minimum log severity: `debug`, `info`, `warn` or `error` | `info` |
 
 ### Search
 

@@ -141,6 +141,7 @@ Rows marked **SSE** are read only under `--transport sse`. The `stdio` transport
 | `--transport`, `-t` | `ACDC_MCP_TRANSPORT` | `stdio` | `stdio` for a local child process, `sse` for HTTP. |
 | `--uri-scheme`, `-s` | `ACDC_MCP_URI_SCHEME` | `acdc` | Scheme of every resource URI. Must be RFC 3986 compliant. |
 | `--cross-ref` | `ACDC_MCP_CROSS_REF` | `false` | Rewrite relative Markdown links into resource URIs. |
+| `--log-level` | `ACDC_MCP_LOG_LEVEL` | `info` | Minimum log severity: `debug`, `info`, `warn` or `error`. `debug` adds one ranking line per semantic query. |
 | `--search-max-results`, `-m` | `ACDC_MCP_SEARCH_MAX_RESULTS` | `10` | Maximum number of chunks one `search` call returns. |
 | `--search-result-mode` | `ACDC_MCP_SEARCH_RESULT_MODE` | `references` | `references` returns citations and a snippet. `content` also returns each chunk body, and raises the per-document cap from 1 chunk to 2. |
 | `--search-keywords-boost` | `ACDC_MCP_SEARCH_KEYWORDS_BOOST` | `3.0` | Rank multiplier for a match on frontmatter `keywords`. |

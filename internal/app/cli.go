@@ -21,6 +21,7 @@ func RegisterFlags(flags *pflag.FlagSet) {
 	// "(default true)" in --help; stating it in the usage text too would
 	// duplicate it.
 	flags.Bool("search-in-memory", true, "Hold the search index in memory instead of on disk")
+	flags.String("log-level", "", "Minimum log severity: debug, info, warn or error (default: info)")
 	flags.StringP("uri-scheme", "s", "", "URI scheme for resources (default: acdc)")
 	flags.Bool("cross-ref", false, "Transform relative markdown links to resource URIs (default: false)")
 	flags.StringP("auth-type", "a", "", "Authentication type: none, basic, or apikey (default: none)")

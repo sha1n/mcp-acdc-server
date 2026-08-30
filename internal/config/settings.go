@@ -85,6 +85,18 @@ type BasicAuthSettings struct {
 	Password string `mapstructure:"password"`
 }
 
+// LogLevel names the minimum severity the server emits. Values are the slog
+// level names, matched without regard to case.
+const (
+	LogLevelDebug = "debug"
+	LogLevelInfo  = "info"
+	LogLevelWarn  = "warn"
+	LogLevelError = "error"
+)
+
+// DefaultLogLevel is the level the server runs at when an operator sets none.
+const DefaultLogLevel = LogLevelInfo
+
 // Settings application settings
 type Settings struct {
 	ContentDir string         `mapstructure:"content_dir"`
@@ -95,6 +107,10 @@ type Settings struct {
 	CrossRef   bool           `mapstructure:"cross_ref"`
 	Search     SearchSettings `mapstructure:"search"`
 	Auth       AuthSettings   `mapstructure:"auth"`
+	// LogLevel is the minimum severity written to stderr. Semantic search
+	// reports per-query ranking detail at debug, which is too high a volume
+	// for the default level.
+	LogLevel string `mapstructure:"log_level"`
 }
 
 // LoadSettings loads settings from environment variables and optional .env file
@@ -116,6 +132,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	v.SetDefault("host", "0.0.0.0")
 	v.SetDefault("port", 8080)
 	v.SetDefault("uri_scheme", "acdc")
+	v.SetDefault("log_level", DefaultLogLevel)
 	v.SetDefault("search.max_results", 10)
 	v.SetDefault("search.keywords_boost", DefaultKeywordsBoost)
 	v.SetDefault("search.heading_boost", DefaultHeadingBoost)
@@ -148,6 +165,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	_ = v.BindEnv("search.semantic_model", "ACDC_MCP_SEARCH_SEMANTIC_MODEL")
 	_ = v.BindEnv("search.semantic_floor", "ACDC_MCP_SEARCH_SEMANTIC_FLOOR")
 
+	_ = v.BindEnv("log_level", "ACDC_MCP_LOG_LEVEL")
 	_ = v.BindEnv("uri_scheme", "ACDC_MCP_URI_SCHEME")
 	_ = v.BindEnv("cross_ref", "ACDC_MCP_CROSS_REF")
 
@@ -163,6 +181,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 		_ = v.BindPFlag("host", flags.Lookup("host"))
 		_ = v.BindPFlag("port", flags.Lookup("port"))
 		_ = v.BindPFlag("uri_scheme", flags.Lookup("uri-scheme"))
+		_ = v.BindPFlag("log_level", flags.Lookup("log-level"))
 		_ = v.BindPFlag("cross_ref", flags.Lookup("cross-ref"))
 		_ = v.BindPFlag("search.max_results", flags.Lookup("search-max-results"))
 		_ = v.BindPFlag("search.keywords_boost", flags.Lookup("search-keywords-boost"))
@@ -217,6 +236,9 @@ func ValidateSettings(s *Settings) error {
 		return err
 	}
 	if err := validateScheme(s.Scheme); err != nil {
+		return err
+	}
+	if _, err := ParseLogLevel(s.LogLevel); err != nil {
 		return err
 	}
 	if err := validateSearch(s.Search); err != nil {

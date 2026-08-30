@@ -242,3 +242,17 @@ func TestSearchSettingsLogValue_IncludesSemanticFloor(t *testing.T) {
 
 	require.Contains(t, value.String(), "0.42")
 }
+
+func TestLogWithLogger_LogsLogLevel(t *testing.T) {
+	captured := make(map[string]any)
+	settings := &Settings{
+		Transport: "stdio",
+		LogLevel:  "debug",
+		Search:    SearchSettings{ResultMode: SearchResultModeReferences},
+		Auth:      AuthSettings{Type: AuthTypeNone},
+	}
+
+	LogWithLogger(settings, slog.New(&mapHandler{attrs: captured}))
+
+	require.Equal(t, "debug", captured["Config: log_level"])
+}

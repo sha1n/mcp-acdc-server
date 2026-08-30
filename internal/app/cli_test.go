@@ -234,3 +234,16 @@ func TestCLI_SearchSemanticFloorFlagBeatsEnv(t *testing.T) {
 	require.NoError(t, err)
 	require.InDelta(t, 0.7, settings.Search.SemanticFloor, 1e-9)
 }
+
+func TestRegisterFlags_LogLevel(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	RegisterFlags(flags)
+
+	require.NotNil(t, flags.Lookup("log-level"), "flag --log-level not registered")
+
+	require.NoError(t, flags.Parse([]string{"--log-level", "debug"}))
+
+	settings, err := config.LoadSettingsWithFlags(flags)
+	require.NoError(t, err)
+	require.Equal(t, "debug", settings.LogLevel)
+}

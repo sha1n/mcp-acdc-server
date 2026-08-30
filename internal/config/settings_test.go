@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log/slog"
 	"math"
 	"os"
 	"strings"
@@ -1169,4 +1170,105 @@ func TestValidateSettings_AcceptsAnySemanticModelPath(t *testing.T) {
 	settings.Search.SemanticModel = "/definitely/not/a/real/path"
 
 	require.NoError(t, ValidateSettings(settings))
+}
+
+func TestLoadSettings_LogLevelDefaultsToInfo(t *testing.T) {
+	unsetEnvForTest(t, "ACDC_MCP_LOG_LEVEL")
+
+	settings, err := LoadSettings()
+	require.NoError(t, err)
+	require.Equal(t, "info", settings.LogLevel)
+}
+
+func TestLoadSettings_LogLevelFromEnv(t *testing.T) {
+	unsetEnvForTest(t, "ACDC_MCP_LOG_LEVEL")
+	t.Setenv("ACDC_MCP_LOG_LEVEL", "debug")
+
+	settings, err := LoadSettings()
+	require.NoError(t, err)
+	require.Equal(t, "debug", settings.LogLevel)
+}
+
+func TestLoadSettingsWithFlags_LogLevelFlagOverridesEnv(t *testing.T) {
+	unsetEnvForTest(t, "ACDC_MCP_LOG_LEVEL")
+	t.Setenv("ACDC_MCP_LOG_LEVEL", "error")
+
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	flags.String("log-level", "", "")
+	require.NoError(t, flags.Set("log-level", "warn"))
+
+	settings, err := LoadSettingsWithFlags(flags)
+	require.NoError(t, err)
+	require.Equal(t, "warn", settings.LogLevel)
+}
+
+func TestValidateSettings_LogLevel(t *testing.T) {
+	tests := []struct {
+		level   string
+		wantErr bool
+	}{
+		{"debug", false},
+		{"info", false},
+		{"warn", false},
+		{"error", false},
+		{"DEBUG", false},
+		{"", false},
+		{"trace", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.level, func(t *testing.T) {
+			settings := &Settings{
+				Transport: "stdio",
+				Scheme:    "acdc",
+				LogLevel:  tc.level,
+				Search: SearchSettings{
+					ResultMode:   SearchResultModeReferences,
+					ContentBoost: 1.0,
+				},
+				Auth: AuthSettings{Type: AuthTypeNone},
+			}
+
+			err := ValidateSettings(settings)
+			if tc.wantErr {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), "log level")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestParseLogLevel(t *testing.T) {
+	tests := []struct {
+		level string
+		want  slog.Level
+	}{
+		{"debug", slog.LevelDebug},
+		{"info", slog.LevelInfo},
+		{"warn", slog.LevelWarn},
+		{"error", slog.LevelError},
+		{"Warn", slog.LevelWarn},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.level, func(t *testing.T) {
+			got, err := ParseLogLevel(tc.level)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestParseLogLevel_EmptyResolvesToDefault(t *testing.T) {
+	got, err := ParseLogLevel("")
+	require.NoError(t, err)
+	require.Equal(t, slog.LevelInfo, got)
+}
+
+func TestParseLogLevel_Unknown(t *testing.T) {
+	_, err := ParseLogLevel("trace")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "log level")
 }

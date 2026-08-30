@@ -21,6 +21,7 @@ When the same setting is specified in multiple places, the following priority ap
 | `--port` | `-p` | `ACDC_MCP_PORT` | Port for SSE server (SSE mode only) | `8080` |
 | `--uri-scheme` | `-s` | `ACDC_MCP_URI_SCHEME` | URI scheme for resources (e.g. `acdc`, `myorg`) | `acdc` |
 | `--cross-ref` | — | `ACDC_MCP_CROSS_REF` | Transform relative markdown links between resources into resource URIs | `false` |
+| `--log-level` | — | `ACDC_MCP_LOG_LEVEL` | Minimum log severity: `debug`, `info`, `warn` or `error` | `info` |
 | `--search-max-results` | `-m` | `ACDC_MCP_SEARCH_MAX_RESULTS` | Maximum search results | `10` |
 | `--search-keywords-boost` | — | `ACDC_MCP_SEARCH_KEYWORDS_BOOST` | Boost for keywords matches | `3.0` |
 | `--search-heading-boost` | — | `ACDC_MCP_SEARCH_HEADING_BOOST` | Boost for heading path (`heading_path`) matches | `2.5` |
@@ -257,6 +258,7 @@ The server validates configuration at startup and will fail with a clear error i
 
 - `--uri-scheme` is empty or doesn't match RFC 3986 (must start with a letter, then letters/digits/`+`/`-`/`.`)
 - `--search-result-mode` is set to anything other than `references` or `content`
+- `--log-level` is set to anything other than `debug`, `info`, `warn` or `error`
 - every search boost is `0`, which would leave the query with no clauses and silently return no results
 - a search boost exceeds `1.34e154`, a conservative sanity cap beyond which no meaningful ranking
   could use the value (smaller boosts can still degenerate scoring — see above)
