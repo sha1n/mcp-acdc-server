@@ -70,8 +70,21 @@ type searchIndex interface {
 
 // TextService is the Bleve-backed lexical retriever.
 type TextService struct {
-	mu       sync.RWMutex
+	mu sync.RWMutex
+	// building serializes rebuilds. It is not mu: a rebuild must not block a
+	// search, but two rebuilds at once would each hold a whole index in
+	// memory, and only one of them could ever be published.
+	//
+	// build takes it and publish releases it, so it is held across the whole
+	// rebuild rather than across the build alone. Releasing it earlier would
+	// let a rebuild that started later publish first, which would install the
+	// older of the two generations. sync.Mutex permits the handover: the
+	// goroutine that unlocks need not be the one that locked.
+	building sync.Mutex
 	settings config.SearchSettings
+	// closed records that Close has run, so a rebuild still in flight at
+	// shutdown releases its generation instead of installing it.
+	closed bool
 	// fuzziness resolves the edit distance applied to a field's match clause.
 	// A field rather than a direct call so tests can measure the ranking model
 	// at other settings without exporting anything.
@@ -91,33 +104,96 @@ func NewService(settings config.SearchSettings) *TextService {
 	}
 }
 
-// Index rebuilds the index from a stream of chunks.
-func (s *TextService) Index(ctx context.Context, chunks <-chan domain.Chunk) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// lexicalGeneration is a complete index that has not been published yet.
+//
+// It exists so a caller holding a second index — HybridService and its vector
+// store — can finish both builds before either becomes visible. See build.
+type lexicalGeneration struct {
+	index    searchIndex
+	indexDir string
+}
 
-	index, indexDir, err := s.newIndex()
+// Index rebuilds the index from a stream of chunks and publishes it.
+func (s *TextService) Index(ctx context.Context, chunks <-chan domain.Chunk) error {
+	generation, err := s.build(ctx, chunks)
 	if err != nil {
 		return err
 	}
+	s.publish(generation)
+
+	return nil
+}
+
+// build indexes the whole stream into a new index without publishing it, so
+// the previous generation keeps answering until publish is called.
+//
+// It does not take mu: the index it fills is not reachable from any reader, and
+// holding the index lock for a full rebuild would stall every search. It takes
+// building instead, so rebuilds still run one at a time.
+//
+// A generation it returns owns an open index, possibly a temporary directory,
+// and the rebuild lock. A caller that receives one must therefore publish it,
+// even when it has decided to abandon the rebuild: publish is what releases all
+// three. On failure build releases everything itself and returns no generation.
+func (s *TextService) build(ctx context.Context, chunks <-chan domain.Chunk) (*lexicalGeneration, error) {
+	s.building.Lock()
+
+	index, indexDir, err := s.newIndex()
+	if err != nil {
+		s.building.Unlock()
+		return nil, err
+	}
 	if err := batchIndex(ctx, index, chunks, defaultBatchSize); err != nil {
-		_ = index.Close()
-		if indexDir != "" {
-			_ = removeAll(indexDir)
-		}
-		return err
+		releaseGeneration(&lexicalGeneration{index: index, indexDir: indexDir})
+		s.building.Unlock()
+		return nil, err
+	}
+
+	return &lexicalGeneration{index: index, indexDir: indexDir}, nil
+}
+
+// publish makes a built generation visible and releases the one it replaces.
+// It also releases the rebuild lock that build took, so every generation build
+// hands back must reach publish exactly once.
+//
+// After Close the generation is released instead of installed. A rebuild that
+// was still filling its index when shutdown began would otherwise install a
+// live index behind Close and leak it. Close does not wait for that rebuild:
+// a full rebuild can run for minutes, and shutdown must not.
+//
+// Installing is a pointer swap and nothing more, so a caller can hold its own
+// lock across it to swap a second index in the same instant.
+func (s *TextService) publish(generation *lexicalGeneration) {
+	defer s.building.Unlock()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		releaseGeneration(generation)
+		return
 	}
 
 	oldIndex, oldIndexDir := s.index, s.indexDir
-	s.index = index
-	s.indexDir = indexDir
+	s.index = generation.index
+	s.indexDir = generation.indexDir
 	if oldIndex != nil {
 		_ = oldIndex.Close()
 	}
-	if oldIndexDir != "" && oldIndexDir != indexDir {
+	if oldIndexDir != "" && oldIndexDir != generation.indexDir {
 		_ = removeAll(oldIndexDir)
 	}
-	return nil
+}
+
+// releaseGeneration closes an index that will never be published and removes
+// the directory it occupied.
+func releaseGeneration(generation *lexicalGeneration) {
+	if generation.index != nil {
+		_ = generation.index.Close()
+	}
+	if generation.indexDir != "" {
+		_ = removeAll(generation.indexDir)
+	}
 }
 
 func (s *TextService) newIndex() (searchIndex, string, error) {
@@ -494,11 +570,16 @@ func fieldInt(fields map[string]interface{}, field string) int {
 	}
 }
 
-// Close cleans up resources
+// Close cleans up resources.
+//
+// It records the shutdown so a rebuild still in flight releases its generation
+// when it reaches publish. It does not take the rebuild lock, which that
+// rebuild holds until then.
 func (s *TextService) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.closed = true
 	if s.index != nil {
 		_ = s.index.Close()
 		s.index = nil

@@ -176,6 +176,7 @@ func createMCPServer(ctx context.Context, settings *config.Settings, version str
 func newSearchService(settings config.SearchSettings, deps factoryDeps) (search.Searcher, error) {
 	lexical := deps.newSearch(settings)
 	if settings.SemanticModel == "" {
+		slog.Info("Semantic search disabled, serving lexical results only")
 		return lexical, nil
 	}
 
@@ -190,6 +191,17 @@ func newSearchService(settings config.SearchSettings, deps factoryDeps) (search.
 		lexical.Close()
 		return nil, fmt.Errorf("failed to enable semantic search for model %q: %w", settings.SemanticModel, err)
 	}
+
+	// The model geometry is reported by the loaded embedder, not by the
+	// configuration, so this line is the only place an operator can confirm
+	// which model actually answered.
+	info := embedder.Info()
+	slog.Info("Semantic search enabled",
+		"model", settings.SemanticModel,
+		"dimensions", info.Dimensions,
+		"max_tokens", info.MaxTokens,
+		"floor", settings.SemanticFloor)
+
 	return hybrid, nil
 }
 

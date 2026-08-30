@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
@@ -23,6 +24,12 @@ import (
 type textRetriever interface {
 	Searcher
 	Fetch(ids []string) ([]SearchResult, error)
+	// build and publish are the two halves of Index. HybridService needs them
+	// apart so the lexical index and the vector store become visible in the
+	// same instant. They are unexported, so only a lexical retriever in this
+	// package can satisfy the contract.
+	build(ctx context.Context, chunks <-chan domain.Chunk) (*lexicalGeneration, error)
+	publish(generation *lexicalGeneration)
 }
 
 // teeBuffer matches the buffer IndexResources uses upstream, so the tee adds
@@ -52,6 +59,9 @@ type HybridService struct {
 	// replaced wholesale at swap time so vectors for deleted documents are not
 	// retained forever.
 	cache map[string][]float32
+	// closed records that Close has run, so a rebuild still embedding at
+	// shutdown does not install its vectors afterwards.
+	closed bool
 }
 
 // Ensure HybridService implements Searcher
@@ -97,7 +107,17 @@ const rrfK = 60.0
 // Searcher carries no context, so query embedding runs on a background
 // context. A query-time embedding failure degrades to lexical results rather
 // than failing the request.
+//
+// The read lock spans both retrievers, which is what makes a generation
+// atomic. Locking each side as it is read would let a rebuild land between the
+// two reads and pair a new lexical index with the vectors of the generation
+// before it. The lock is held across the bleve query and the embedder call, so
+// it must never be taken again further down: sync.RWMutex is not reentrant,
+// and a writer arriving between two read locks deadlocks the reader.
 func (h *HybridService) Search(query string, candidateLimit int) ([]SearchResult, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
 	// The raw limit, not the resolved one: the lexical side applies its own
 	// established fallback, and imposing a second one here would override it.
 	lexical, err := h.lexical.Search(query, candidateLimit)
@@ -134,6 +154,8 @@ func (h *HybridService) effectiveLimit(candidateLimit int) int {
 // server returns "No results found" today. The floor's default is a
 // placeholder until the adapter plan calibrates it, which is exactly why it is
 // configurable: no value here is right for every model and corpus.
+//
+// The caller holds the read lock. See Search.
 func (h *HybridService) vectorHits(query string, limit int) []vector.Hit {
 	// "*" is the lexical match-all sentinel. Embedding it would rank the whole
 	// corpus by its similarity to an asterisk.
@@ -141,10 +163,7 @@ func (h *HybridService) vectorHits(query string, limit int) []vector.Hit {
 		return nil
 	}
 
-	h.mu.RLock()
 	store := h.vectors
-	h.mu.RUnlock()
-
 	if store == nil || store.Len() == 0 {
 		return nil
 	}
@@ -160,7 +179,7 @@ func (h *HybridService) vectorHits(query string, limit int) []vector.Hit {
 
 	queryVector, err := h.embedder.EmbedQuery(context.Background(), query)
 	if err != nil {
-		slog.Warn("semantic query embedding failed; returning lexical results only", "error", err)
+		slog.Warn("Semantic query embedding failed, returning lexical results only", "error", err)
 		return nil
 	}
 
@@ -171,7 +190,36 @@ func (h *HybridService) vectorHits(query string, limit int) []vector.Hit {
 			hits = append(hits, hit)
 		}
 	}
+	h.reportRanking(scanned, len(hits))
+
 	return hits
+}
+
+// reportRanking records what the floor admitted and what it rejected.
+//
+// The top score is the best raw similarity the scan found, reported whether or
+// not it cleared the floor. Without it a floor set too high is indistinguishable
+// from a corpus with nothing to say, and neither the placeholder default nor any
+// later value can be calibrated against a real corpus.
+//
+// This is debug rather than info because it fires once per query.
+func (h *HybridService) reportRanking(scanned []vector.Hit, admitted int) {
+	if !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+		return
+	}
+
+	top := 0.0
+	if len(scanned) > 0 {
+		// Store.Search returns hits in descending score order.
+		top = scanned[0].Score
+	}
+
+	slog.Debug("Semantic query ranked",
+		"candidates", len(scanned),
+		"above_floor", admitted,
+		"below_floor", len(scanned)-admitted,
+		"top_score", top,
+		"floor", h.floor)
 }
 
 // fuse accumulates a reciprocal per ranking, hydrates chunks only the vector
@@ -273,12 +321,13 @@ func normalizeScores(results []SearchResult) {
 
 // Index rebuilds both indexes from one chunk stream.
 //
-// A lexical failure fails the rebuild. A vector failure does not: it clears
-// the store and logs, so this generation serves lexical results only. A vector
-// index whose chunk IDs disagree with the lexical index is worse than none.
+// A lexical failure fails the rebuild. A vector failure does not: the lexical
+// generation is published with no vectors beside it, so this generation serves
+// lexical results only. A vector index whose chunk IDs disagree with the
+// lexical index is worse than none.
 //
 // Nothing is published until both sides have reported, because the two failure
-// modes leave different survivors. TextService.Index keeps its previous index
+// modes leave different survivors. The lexical build keeps its previous index
 // on failure and catalogRefresher.Revalidate keeps its previous catalog, so the
 // vectors already published are exactly the generation that survived: they are
 // retained untouched rather than cleared.
@@ -287,10 +336,14 @@ func (h *HybridService) Index(ctx context.Context, chunks <-chan domain.Chunk) e
 	defer cancel()
 
 	lexicalChunks := make(chan domain.Chunk, teeBuffer)
-	lexicalErrs := make(chan error, 1)
+	type lexicalResult struct {
+		generation *lexicalGeneration
+		err        error
+	}
+	lexicalResults := make(chan lexicalResult, 1)
 
 	go func() {
-		err := h.lexical.Index(indexCtx, lexicalChunks)
+		generation, err := h.lexical.build(indexCtx, lexicalChunks)
 		if err != nil {
 			cancel()
 		}
@@ -298,36 +351,68 @@ func (h *HybridService) Index(ctx context.Context, chunks <-chan domain.Chunk) e
 		// forever otherwise, and with it the producer upstream.
 		for range lexicalChunks {
 		}
-		lexicalErrs <- err
+		lexicalResults <- lexicalResult{generation: generation, err: err}
 	}()
 
-	store, cache, buildErr := h.buildVectors(indexCtx, chunks, lexicalChunks)
-	lexicalErr := <-lexicalErrs
+	started := time.Now()
+	store, cache, stats, buildErr := h.buildVectors(indexCtx, chunks, lexicalChunks)
+	lexical := <-lexicalResults
 
-	// KNOWN LIMITATION: the two generations do not publish atomically.
-	// TextService.Index publishes and unlocks the new bleve index before this
-	// goroutine reports, so a concurrent Search can pair the new lexical
-	// generation with the previous vector generation. What bounds it: Fetch
-	// hydrates from the current lexical index, so no stale metadata is ever
-	// returned, and fuse drops vector hits for chunks that index no longer
-	// holds. Only ranking is affected, for a sub-second window during a live
-	// refresh. Closing it takes a two-phase publish in TextService so both
-	// generations swap under one lock, and must happen before semantic search
-	// is enabled in production.
-	if lexicalErr != nil {
+	if lexical.err != nil {
 		// Publish nothing and clear nothing. The retained bleve index and the
 		// retained vector generation are the same generation, so they survive
 		// or fall together; clearing would take semantic search dark until the
 		// next successful reindex and then charge a full corpus re-embed.
-		return lexicalErr
+		return lexical.err
 	}
 	if buildErr != nil {
-		h.swap(nil, nil)
-		slog.Error("semantic index build failed; this generation serves lexical results only", "error", buildErr)
+		h.publish(lexical.generation, nil, nil)
+		slog.Error("Semantic index build failed, this generation serves lexical results only", "error", buildErr)
 		return nil
 	}
-	h.swap(store, cache)
+
+	h.publish(lexical.generation, store, cache)
+	reportPublished(store, stats, time.Since(started))
+
 	return nil
+}
+
+// publish makes the lexical index and the vector store visible together.
+//
+// Both swaps happen under this one write lock, and Search reads both under the
+// matching read lock, so no reader can pair one generation's lexical index with
+// another's vectors. The lock order is always hybrid then lexical; Search takes
+// them in the same order, so the two cannot invert.
+func (h *HybridService) publish(generation *lexicalGeneration, store *vector.Store, cache map[string][]float32) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	// The generation goes to the lexical side even after Close, because publish
+	// is what releases the built index and the rebuild lock. The lexical side
+	// records its own shutdown and releases rather than installs.
+	h.lexical.publish(generation)
+	if h.closed {
+		return
+	}
+	h.vectors = store
+	h.cache = cache
+}
+
+// reportPublished records what the generation cost and whether it can answer
+// anything. An empty store is not an error: a corpus can legitimately hold no
+// embeddable passage. It is still worth a warning, because every later query
+// silently serves lexical results only, and nothing else would say so.
+func reportPublished(store *vector.Store, stats buildStats, elapsed time.Duration) {
+	slog.Info("Semantic index published",
+		"vectors", store.Len(),
+		"passages_embedded", stats.embedded,
+		"passages_reused", stats.reused,
+		"embed_ms", stats.embedding.Milliseconds(),
+		"duration_ms", elapsed.Milliseconds())
+
+	if store.Len() == 0 {
+		slog.Warn("Semantic index is empty, searches serve lexical results only")
+	}
 }
 
 // buildVectors forwards every chunk to the lexical side while embedding its
@@ -338,7 +423,7 @@ func (h *HybridService) buildVectors(
 	ctx context.Context,
 	in <-chan domain.Chunk,
 	out chan<- domain.Chunk,
-) (*vector.Store, map[string][]float32, error) {
+) (*vector.Store, map[string][]float32, buildStats, error) {
 	defer close(out)
 
 	info := h.embedder.Info()
@@ -349,16 +434,14 @@ func (h *HybridService) buildVectors(
 
 	var pending []vector.Passage
 	var buildErr error
-	skipped := 0
+	var stats buildStats
 
 	flush := func() {
 		if buildErr != nil || len(pending) == 0 {
 			pending = pending[:0]
 			return
 		}
-		batchSkipped, err := h.embedBatch(ctx, pending, previous, next, store)
-		skipped += batchSkipped
-		if err != nil {
+		if err := h.embedBatch(ctx, pending, previous, next, store, &stats); err != nil {
 			buildErr = err
 		}
 		pending = pending[:0]
@@ -383,12 +466,59 @@ func (h *HybridService) buildVectors(
 	flush()
 
 	if buildErr != nil {
-		return nil, nil, buildErr
+		return nil, nil, stats, buildErr
 	}
-	if skipped > 0 {
-		slog.Warn("semantic indexing skipped passages that could not be embedded", "count", skipped)
+	if stats.skipped > 0 {
+		slog.Warn("Semantic indexing skipped passages that could not be embedded",
+			"passages", stats.skipped,
+			"chunks_affected", len(stats.skippedChunks),
+			"chunks", stats.loggedSkippedChunks())
 	}
-	return store, next, nil
+	return store, next, stats, nil
+}
+
+// maxLoggedSkippedChunks bounds the chunk list in the skip warning. A corpus
+// that fails wholesale would otherwise put every chunk ID on one line; the
+// count attribute stays exact regardless.
+const maxLoggedSkippedChunks = 20
+
+// buildStats is what one vector generation cost, for the line Index logs when
+// it publishes. The embedded/reused split is the only measure of whether the
+// carry-forward cache is working.
+type buildStats struct {
+	embedded int
+	reused   int
+	skipped  int
+	// embedding is the time spent inside the embedder. The rebuild's total
+	// wall clock covers the lexical build running concurrently, so it cannot
+	// answer what inference cost.
+	embedding time.Duration
+	// skippedChunks are the distinct chunks that lost passages, in the order
+	// they were skipped.
+	skippedChunks []string
+	seenSkipped   map[string]struct{}
+}
+
+func (b *buildStats) skip(owners []string) {
+	b.skipped++
+	if b.seenSkipped == nil {
+		b.seenSkipped = make(map[string]struct{}, len(owners))
+	}
+	for _, owner := range owners {
+		if _, seen := b.seenSkipped[owner]; seen {
+			continue
+		}
+		b.seenSkipped[owner] = struct{}{}
+		b.skippedChunks = append(b.skippedChunks, owner)
+	}
+}
+
+// loggedSkippedChunks is the bounded chunk list for the skip warning.
+func (b *buildStats) loggedSkippedChunks() []string {
+	if len(b.skippedChunks) <= maxLoggedSkippedChunks {
+		return b.skippedChunks
+	}
+	return b.skippedChunks[:maxLoggedSkippedChunks]
 }
 
 // pendingPassage tracks how many times a passage has been halved, so a model
@@ -415,17 +545,17 @@ func (h *HybridService) embedBatch(
 	passages []vector.Passage,
 	previous, next map[string][]float32,
 	store *vector.Store,
-) (int, error) {
-	skipped := 0
+	stats *buildStats,
+) error {
 	queue := pendingQueue(passages)
 
 	for len(queue) > 0 {
 		// Resolved before every call, not once up front: halving mints passages
 		// a previous generation may already have paid for, and those are the
 		// most expensive passages in the corpus to re-embed.
-		unresolved, err := drainCached(queue, previous, next, store)
+		unresolved, err := drainCached(queue, previous, next, store, stats)
 		if err != nil {
-			return skipped, err
+			return err
 		}
 		queue = unresolved
 		if len(queue) == 0 {
@@ -437,26 +567,28 @@ func (h *HybridService) embedBatch(
 			texts[i] = item.passage.Text
 		}
 
+		startedEmbedding := time.Now()
 		vectors, embedErr := h.embedder.EmbedDocuments(ctx, texts)
+		stats.embedding += time.Since(startedEmbedding)
 		if embedErr == nil {
 			if len(vectors) != len(queue) {
-				return skipped, fmt.Errorf("embedder returned %d vectors for %d texts", len(vectors), len(queue))
+				return fmt.Errorf("embedder returned %d vectors for %d texts", len(vectors), len(queue))
 			}
 
-			return skipped, recordEmbedded(queue, vectors, next, store)
+			return recordEmbedded(queue, vectors, next, store, stats)
 		}
 
-		shortened, dropped, retryErr := retryAfterTooLong(queue, embedErr)
+		shortened, droppedOwners, retryErr := retryAfterTooLong(queue, embedErr)
 		if retryErr != nil {
-			return skipped, retryErr
+			return retryErr
 		}
 		queue = shortened
-		if dropped {
-			skipped++
+		if droppedOwners != nil {
+			stats.skip(droppedOwners)
 		}
 	}
 
-	return skipped, nil
+	return nil
 }
 
 // pendingQueue collapses passages sharing a key into one queue entry, so an
@@ -486,6 +618,7 @@ func drainCached(
 	queue []pendingPassage,
 	previous, next map[string][]float32,
 	store *vector.Store,
+	stats *buildStats,
 ) ([]pendingPassage, error) {
 	unresolved := queue[:0]
 	for _, item := range queue {
@@ -494,6 +627,7 @@ func drainCached(
 			unresolved = append(unresolved, item)
 			continue
 		}
+		stats.reused++
 		// Dedup the inference, not the vector: each owning chunk needs one.
 		for _, owner := range item.owners {
 			if err := store.Add(owner, cached); err != nil {
@@ -512,7 +646,9 @@ func recordEmbedded(
 	vectors [][]float32,
 	next map[string][]float32,
 	store *vector.Store,
+	stats *buildStats,
 ) error {
+	stats.embedded += len(queue)
 	for i, item := range queue {
 		next[item.passage.Key] = vectors[i]
 		for _, owner := range item.owners {
@@ -525,13 +661,13 @@ func recordEmbedded(
 	return nil
 }
 
-// retryAfterTooLong reshapes the queue around an over-length input, reporting
-// whether the offending passage was dropped rather than halved. Any error the
-// caller cannot retry is returned unchanged.
-func retryAfterTooLong(queue []pendingPassage, err error) ([]pendingPassage, bool, error) {
+// retryAfterTooLong reshapes the queue around an over-length input, returning
+// the owning chunks of the passage it dropped rather than halved, or nil when
+// it halved. Any error the caller cannot retry is returned unchanged.
+func retryAfterTooLong(queue []pendingPassage, err error) ([]pendingPassage, []string, error) {
 	var tooLong *embed.ErrInputTooLong
 	if !errors.As(err, &tooLong) {
-		return nil, false, err
+		return nil, nil, err
 	}
 	// A reported index outside the batch is a contract violation by the
 	// adapter, not a data condition: there is no passage to halve or skip,
@@ -540,18 +676,18 @@ func retryAfterTooLong(queue []pendingPassage, err error) ([]pendingPassage, boo
 	// degrades to lexical-only, which is uniform and visible in the logs,
 	// whereas a partially embedded corpus fails silently per chunk.
 	if tooLong.Index < 0 || tooLong.Index >= len(queue) {
-		return nil, false, fmt.Errorf("embedder reported input %d for a batch of %d: %w", tooLong.Index, len(queue), err)
+		return nil, nil, fmt.Errorf("embedder reported input %d for a batch of %d: %w", tooLong.Index, len(queue), err)
 	}
 
 	item := queue[tooLong.Index]
 	first, second, divisible := item.passage.Halve()
 	if !divisible || item.depth >= vector.MaxHalveDepth {
-		return append(queue[:tooLong.Index], queue[tooLong.Index+1:]...), true, nil
+		return append(queue[:tooLong.Index], queue[tooLong.Index+1:]...), item.owners, nil
 	}
 
 	queue[tooLong.Index] = pendingPassage{passage: first, owners: item.owners, depth: item.depth + 1}
 
-	return append(queue, pendingPassage{passage: second, owners: item.owners, depth: item.depth + 1}), false, nil
+	return append(queue, pendingPassage{passage: second, owners: item.owners, depth: item.depth + 1}), nil, nil
 }
 
 // cachedVector resolves a passage key against the previous generation's cache
@@ -572,15 +708,6 @@ func (h *HybridService) snapshotCache() map[string][]float32 {
 	return h.cache
 }
 
-// swap publishes a completed generation and drops the previous one, mirroring
-// the index swap in TextService.Index.
-func (h *HybridService) swap(store *vector.Store, cache map[string][]float32) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.vectors = store
-	h.cache = cache
-}
-
 // VectorCount reports how many passage vectors are held, for tests and
 // diagnostics.
 func (h *HybridService) VectorCount() int {
@@ -595,7 +722,17 @@ func (h *HybridService) VectorCount() int {
 // Close releases the lexical index and drops the vector store. It does not
 // close the embedder: factory.go constructs and owns it for the process
 // lifetime.
+//
+// The write lock covers both, so a search already in flight finishes against a
+// whole generation before either half is released. A rebuild still embedding
+// when Close lands is not waited for: it drops its generation when it reaches
+// publish.
 func (h *HybridService) Close() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.closed = true
 	h.lexical.Close()
-	h.swap(nil, nil)
+	h.vectors = nil
+	h.cache = nil
 }

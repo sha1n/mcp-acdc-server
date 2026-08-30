@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
@@ -930,4 +934,163 @@ func TestTextService_FetchKeepsShortContentIntactAsTheSnippet(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	require.Equal(t, "alpha content", results[0].Snippet)
+}
+
+// build releases the read lock so searches keep answering during a rebuild.
+// Rebuilds still have to run one at a time: two at once would hold two whole
+// indexes in memory, which is what the single lock used to prevent.
+func TestService_ConcurrentRebuildsRunOneAtATime(t *testing.T) {
+	var mu sync.Mutex
+	inFlight, peak := 0, 0
+
+	originalNewMemoryIndex := newMemoryIndex
+	newMemoryIndex = func(m mapping.IndexMapping) (bleve.Index, error) {
+		mu.Lock()
+		inFlight++
+		if inFlight > peak {
+			peak = inFlight
+		}
+		mu.Unlock()
+
+		time.Sleep(20 * time.Millisecond)
+
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+
+		return originalNewMemoryIndex(m)
+	}
+	t.Cleanup(func() { newMemoryIndex = originalNewMemoryIndex })
+
+	service := NewService(testSettings())
+	t.Cleanup(service.Close)
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			stream := make(chan domain.Chunk)
+			close(stream)
+			require.NoError(t, service.Index(context.Background(), stream))
+		}()
+	}
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, 1, peak, "two rebuilds held an index in memory at the same time")
+}
+
+// closeTrackingIndex records whether the index it wraps was released.
+// The field is an alias rather than bleve.Index directly: bleve.Index declares
+// an Index method, which an embedded field of that name would shadow.
+type embeddedBleveIndex = bleve.Index
+
+type closeTrackingIndex struct {
+	embeddedBleveIndex
+	closed *atomic.Bool
+}
+
+func (i *closeTrackingIndex) Close() error {
+	i.closed.Store(true)
+	return i.embeddedBleveIndex.Close()
+}
+
+func trackIndexClose(t *testing.T) *atomic.Bool {
+	t.Helper()
+	var closed atomic.Bool
+	original := newMemoryIndex
+	newMemoryIndex = func(m mapping.IndexMapping) (bleve.Index, error) {
+		index, err := original(m)
+		if err != nil {
+			return nil, err
+		}
+		return &closeTrackingIndex{embeddedBleveIndex: index, closed: &closed}, nil
+	}
+	t.Cleanup(func() { newMemoryIndex = original })
+
+	return &closed
+}
+
+// A rebuild owns the right to publish from the moment it starts building until
+// it publishes. Releasing that right when the build ends would let a rebuild
+// that started later publish first, and leave the older generation installed.
+func TestService_ABuiltGenerationBlocksTheNextRebuild(t *testing.T) {
+	service := NewService(testSettings())
+	t.Cleanup(service.Close)
+
+	first, err := service.build(context.Background(), chunkStream([]domain.Chunk{{
+		ID: "c1", SourceID: "s1", SourceURI: "acdc://s1", ChunkURI: "acdc://s1#c1", Content: "alpha",
+	}}))
+	require.NoError(t, err)
+
+	second := make(chan *lexicalGeneration, 1)
+	go func() {
+		generation, buildErr := service.build(context.Background(), chunkStream([]domain.Chunk{{
+			ID: "c2", SourceID: "s2", SourceURI: "acdc://s2", ChunkURI: "acdc://s2#c2", Content: "beta",
+		}}))
+		if buildErr != nil {
+			close(second)
+			return
+		}
+		second <- generation
+	}()
+
+	select {
+	case <-second:
+		t.Fatal("a rebuild built a generation while an earlier one was still unpublished")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	service.publish(first)
+	later := <-second
+	require.NotNil(t, later)
+	service.publish(later)
+
+	results, err := service.Search("beta", 0)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, "c2", results[0].ChunkID)
+}
+
+// Close can land while a rebuild is still filling its private index. That
+// generation must not become the published one, and it must not stay open.
+func TestService_PublishAfterCloseReleasesTheGeneration(t *testing.T) {
+	closed := trackIndexClose(t)
+
+	service := NewService(testSettings())
+	generation, err := service.build(context.Background(), chunkStream([]domain.Chunk{{
+		ID: "c1", SourceID: "s1", SourceURI: "acdc://s1", ChunkURI: "acdc://s1#c1", Content: "alpha",
+	}}))
+	require.NoError(t, err)
+
+	service.Close()
+	service.publish(generation)
+
+	require.True(t, closed.Load(), "a generation built during shutdown was left open")
+
+	count, err := service.DocCount()
+	require.NoError(t, err)
+	require.Zero(t, count, "a generation became visible after Close")
+}
+
+// The on-disk mode also owns a temporary directory. Rejecting a generation has
+// to remove it, or shutdown leaks a whole index directory.
+func TestService_PublishAfterCloseRemovesTheGenerationIndexDir(t *testing.T) {
+	settings := testSettings()
+	settings.InMemory = false
+
+	service := NewService(settings)
+	generation, err := service.build(context.Background(), chunkStream([]domain.Chunk{{
+		ID: "c1", SourceID: "s1", SourceURI: "acdc://s1", ChunkURI: "acdc://s1#c1", Content: "alpha",
+	}}))
+	require.NoError(t, err)
+	require.NotEmpty(t, generation.indexDir)
+
+	service.Close()
+	service.publish(generation)
+
+	_, statErr := os.Stat(generation.indexDir)
+	require.True(t, os.IsNotExist(statErr), "shutdown left the index directory behind")
 }

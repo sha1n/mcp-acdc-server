@@ -114,6 +114,23 @@ because nothing could ever clear them.
 
 Valid values run from `-1` to `1`. Anything outside that range aborts startup.
 
+To calibrate the floor against your own corpus, start the server with
+`--log-level debug` and run the queries you care about. Every semantic query then
+writes one `Semantic query ranked` line:
+
+```
+DEBUG Semantic query ranked candidates=8 above_floor=2 below_floor=6 top_score=0.41 floor=0.25
+```
+
+`top_score` is the best raw cosine similarity the scan found, reported whether or
+not it cleared the floor. A query that should have matched but returned nothing
+tells you which way to move: a `top_score` just under the floor means the floor is
+too high, and a `top_score` near zero means the model found nothing to match.
+
+> [!WARNING]
+> `debug` writes one line per search request. Use it to calibrate, then return to
+> `info`.
+
 ### How closely a query has to match
 
 Four of the five indexed fields tolerate a single-character difference between a query term and

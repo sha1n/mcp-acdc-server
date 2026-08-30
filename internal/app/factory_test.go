@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -955,4 +956,40 @@ func TestCreateMCPServer_ClosesTheLexicalIndexWhenHybridDecorationFails(t *testi
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "/models/potion-base-8m", "the error must name the path the operator configured")
 	require.Equal(t, 1, lexical.closeCalls, "the lexical index built before the failure must be closed")
+}
+
+func TestCreateMCPServer_SemanticOffReportsTheServingMode(t *testing.T) {
+	read := captureLogs(t, slog.LevelInfo)
+	deps := defaultFactoryDeps()
+
+	settings := appTestSettings(writeMetadataOnly(t, testMetadata))
+	_, cleanup, err := createMCPServer(context.Background(), settings, "test", deps)
+	require.NoError(t, err)
+	defer cleanup()
+
+	requireLog(t, read(), "Semantic search disabled, serving lexical results only")
+}
+
+func TestCreateMCPServer_SemanticOnReportsTheLoadedModel(t *testing.T) {
+	read := captureLogs(t, slog.LevelInfo)
+	deps := defaultFactoryDeps()
+	deps.newEmbedder = func(string) (embed.Embedder, error) {
+		fake := embed.NewFake(8)
+		fake.MaxTokens = 512
+		return fake, nil
+	}
+
+	settings := appTestSettings(writeMetadataOnly(t, testMetadata))
+	settings.Search.SemanticModel = "/models/potion-base-8m"
+	settings.Search.SemanticFloor = 0.6
+
+	_, cleanup, err := createMCPServer(context.Background(), settings, "test", deps)
+	require.NoError(t, err)
+	defer cleanup()
+
+	record := requireLog(t, read(), "Semantic search enabled")
+	require.Equal(t, "/models/potion-base-8m", record.Attrs["model"])
+	require.EqualValues(t, 8, record.Attrs["dimensions"])
+	require.EqualValues(t, 512, record.Attrs["max_tokens"])
+	require.InDelta(t, 0.6, record.Attrs["floor"], 1e-9)
 }

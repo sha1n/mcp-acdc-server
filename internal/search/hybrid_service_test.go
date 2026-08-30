@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
 	"github.com/sha1n/mcp-acdc-server/internal/embed"
+	"github.com/sha1n/mcp-acdc-server/internal/search/vector"
 	"github.com/stretchr/testify/require"
 )
 
@@ -330,17 +332,38 @@ type stubRetriever struct {
 	searchErr   error
 	fetched     []SearchResult
 	fetchErr    error
+	built       []domain.Chunk
 	indexed     []domain.Chunk
+	published   int
 }
 
 func (s *stubRetriever) Index(ctx context.Context, chunks <-chan domain.Chunk) error {
+	generation, err := s.build(ctx, chunks)
+	if err != nil {
+		return err
+	}
+	s.publish(generation)
+
+	return nil
+}
+
+func (s *stubRetriever) build(_ context.Context, chunks <-chan domain.Chunk) (*lexicalGeneration, error) {
 	if s.stopReading {
-		return s.indexErr
+		return nil, s.indexErr
 	}
 	for chunk := range chunks {
-		s.indexed = append(s.indexed, chunk)
+		s.built = append(s.built, chunk)
 	}
-	return s.indexErr
+	if s.indexErr != nil {
+		return nil, s.indexErr
+	}
+
+	return &lexicalGeneration{}, nil
+}
+
+func (s *stubRetriever) publish(*lexicalGeneration) {
+	s.indexed = s.built
+	s.published++
 }
 
 func (s *stubRetriever) Search(string, int) ([]SearchResult, error) { return s.results, s.searchErr }
@@ -1046,4 +1069,249 @@ func (m *malformedEmbedder) vector(width int) []float32 {
 // takes effect on the next call.
 type mutableEmbedder struct {
 	embed.Embedder
+}
+
+func TestHybridService_IndexReportsThePublishedGeneration(t *testing.T) {
+	read := captureLogs(t, slog.LevelInfo)
+	hybrid, _ := newTestHybrid(t, embed.NewFake(8))
+
+	require.NoError(t, indexHybrid(t, hybrid, testChunks()))
+
+	record := requireLog(t, read(), "Semantic index published")
+	require.EqualValues(t, 2, record.Attrs["vectors"])
+	require.EqualValues(t, 2, record.Attrs["passages_embedded"])
+	require.EqualValues(t, 0, record.Attrs["passages_reused"])
+	require.Contains(t, record.Attrs, "duration_ms")
+}
+
+// The carry-forward cache is the only reason a refresh is cheap, so the split
+// between inferred and reused passages has to be measurable.
+func TestHybridService_IndexReportsCarriedPassagesAsReused(t *testing.T) {
+	hybrid, _ := newTestHybrid(t, embed.NewFake(8))
+	require.NoError(t, indexHybrid(t, hybrid, testChunks()))
+
+	read := captureLogs(t, slog.LevelInfo)
+	require.NoError(t, indexHybrid(t, hybrid, testChunks()))
+
+	record := requireLog(t, read(), "Semantic index published")
+	require.EqualValues(t, 0, record.Attrs["passages_embedded"])
+	require.EqualValues(t, 2, record.Attrs["passages_reused"])
+}
+
+func TestHybridService_IndexWarnsWhenTheGenerationHoldsNoVectors(t *testing.T) {
+	fake := embed.NewFake(8)
+	fake.MaxTokens = 1
+	read := captureLogs(t, slog.LevelInfo)
+	hybrid, _ := newTestHybrid(t, fake)
+
+	require.NoError(t, indexHybrid(t, hybrid, testChunks()))
+
+	require.Equal(t, 0, hybrid.VectorCount())
+	requireLog(t, read(), "Semantic index is empty, searches serve lexical results only")
+}
+
+func TestHybridService_IndexDoesNotWarnWhenVectorsWerePublished(t *testing.T) {
+	read := captureLogs(t, slog.LevelInfo)
+	hybrid, _ := newTestHybrid(t, embed.NewFake(8))
+
+	require.NoError(t, indexHybrid(t, hybrid, testChunks()))
+
+	requireNoLog(t, read(), "Semantic index is empty, searches serve lexical results only")
+}
+
+// A count alone cannot be acted on: an operator needs to know which documents
+// lost their vectors.
+func TestHybridService_IndexNamesTheChunksItSkipped(t *testing.T) {
+	fake := embed.NewFake(8)
+	fake.MaxTokens = 1
+	read := captureLogs(t, slog.LevelInfo)
+	hybrid, _ := newTestHybrid(t, fake)
+
+	require.NoError(t, indexHybrid(t, hybrid, testChunks()))
+
+	record := requireLog(t, read(), "Semantic indexing skipped passages that could not be embedded")
+	require.EqualValues(t, 2, record.Attrs["chunks_affected"])
+	require.ElementsMatch(t, []any{"c1", "c2"}, record.Attrs["chunks"])
+	// Halving splits one oversized passage into many fragments, so the raw
+	// drop count exceeds the number of chunks that lost vectors.
+	require.Greater(t, record.Attrs["passages"], float64(0))
+}
+
+// The similarity floor is a placeholder until a real model calibrates it.
+// Calibration needs the scores the floor rejected, so the debug line carries
+// the best raw score whether or not it cleared.
+func TestHybridService_SearchReportsRankingDetailAtDebug(t *testing.T) {
+	read := captureLogs(t, slog.LevelDebug)
+	hybrid, _ := newTestHybrid(t, fusionEmbedder())
+	require.NoError(t, indexHybrid(t, hybrid, fusionChunks()))
+
+	_, err := hybrid.Search("alpha", 10)
+	require.NoError(t, err)
+
+	record := requireLog(t, read(), "Semantic query ranked")
+	require.EqualValues(t, 3, record.Attrs["candidates"])
+	require.EqualValues(t, 2, record.Attrs["above_floor"])
+	require.EqualValues(t, 1, record.Attrs["below_floor"])
+	require.InDelta(t, 1.0, record.Attrs["top_score"], 1e-6)
+	require.InDelta(t, config.DefaultSemanticFloor, record.Attrs["floor"], 1e-9)
+}
+
+func TestHybridService_SearchReportsTheTopScoreWhenNothingClearsTheFloor(t *testing.T) {
+	read := captureLogs(t, slog.LevelDebug)
+	hybrid, _ := newTestHybrid(t, fusionEmbedder())
+	require.NoError(t, indexHybrid(t, hybrid, fusionChunks()))
+
+	_, err := hybrid.Search("unscripted", 10)
+	require.NoError(t, err)
+
+	record := requireLog(t, read(), "Semantic query ranked")
+	require.EqualValues(t, 0, record.Attrs["above_floor"])
+	require.EqualValues(t, 3, record.Attrs["below_floor"])
+	require.InDelta(t, 0.0, record.Attrs["top_score"], 1e-6)
+}
+
+// Per-query detail is high volume on a busy server, so the default level must
+// not carry it.
+func TestHybridService_SearchKeepsRankingDetailOffTheDefaultLevel(t *testing.T) {
+	read := captureLogs(t, slog.LevelInfo)
+	hybrid, _ := newTestHybrid(t, fusionEmbedder())
+	require.NoError(t, indexHybrid(t, hybrid, fusionChunks()))
+
+	_, err := hybrid.Search("alpha", 10)
+	require.NoError(t, err)
+
+	requireNoLog(t, read(), "Semantic query ranked")
+}
+
+// blockingRetriever lets a test hold a publish open and observe what a
+// concurrent reader can see while both generations are half swapped.
+type blockingRetriever struct {
+	stubRetriever
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingRetriever) publish(generation *lexicalGeneration) {
+	close(b.entered)
+	<-b.release
+	b.stubRetriever.publish(generation)
+}
+
+// The lexical index and the vector store are one generation. A reader must see
+// both halves of the previous generation or both halves of the new one, never
+// the new lexical index paired with the previous vectors.
+func TestHybridService_SearchCannotObserveAHalfPublishedGeneration(t *testing.T) {
+	lexical := &blockingRetriever{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	hybrid, err := NewHybridService(lexical, embed.NewFake(8), testSemanticSettings())
+	require.NoError(t, err)
+	t.Cleanup(hybrid.Close)
+
+	// Registered after Close so it runs before it: a failing assertion below
+	// would otherwise leave the publish holding the write lock, and Close would
+	// block on it until the test binary times out instead of reporting.
+	var release sync.Once
+	unblock := func() { release.Do(func() { close(lexical.release) }) }
+	t.Cleanup(unblock)
+
+	indexed := make(chan error, 1)
+	go func() { indexed <- indexHybrid(t, hybrid, testChunks()) }()
+
+	<-lexical.entered
+
+	searched := make(chan struct{})
+	go func() {
+		_, _ = hybrid.Search("alpha", 10)
+		close(searched)
+	}()
+
+	select {
+	case <-searched:
+		t.Fatal("a search completed while a generation was half published")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	unblock()
+	require.NoError(t, <-indexed)
+
+	select {
+	case <-searched:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the search never completed after the publish finished")
+	}
+}
+
+// A vector build that fails must not hold back the lexical generation: the
+// server still has to serve the content it just indexed.
+func TestHybridService_IndexPublishesTheLexicalGenerationWhenVectorsFail(t *testing.T) {
+	lexical := NewService(testSettings())
+	hybrid, err := NewHybridService(lexical, &malformedEmbedder{dimensions: 8}, testSemanticSettings())
+	require.NoError(t, err)
+	t.Cleanup(hybrid.Close)
+
+	require.NoError(t, indexHybrid(t, hybrid, testChunks()))
+
+	require.Equal(t, 0, hybrid.VectorCount(), "a failed vector build publishes no vectors")
+	count, err := lexical.DocCount()
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), count, "the lexical generation must still be published")
+}
+
+// slowEmbedder spends a measurable amount of time inside EmbedDocuments so a
+// test can tell embedding cost apart from total rebuild time.
+type slowEmbedder struct {
+	embed.Embedder
+	delay time.Duration
+}
+
+func (s *slowEmbedder) EmbedDocuments(ctx context.Context, texts []string) ([][]float32, error) {
+	time.Sleep(s.delay)
+	return s.Embedder.EmbedDocuments(ctx, texts)
+}
+
+// duration_ms covers a rebuild whose two halves run concurrently, so it cannot
+// answer what the embedder cost. embed_ms is measured inside the embedder and
+// can.
+func TestHybridService_IndexReportsTimeSpentEmbedding(t *testing.T) {
+	read := captureLogs(t, slog.LevelInfo)
+	embedder := &slowEmbedder{Embedder: embed.NewFake(8), delay: 25 * time.Millisecond}
+	hybrid, _ := newTestHybrid(t, embedder)
+
+	require.NoError(t, indexHybrid(t, hybrid, testChunks()))
+
+	record := requireLog(t, read(), "Semantic index published")
+	require.GreaterOrEqual(t, record.Attrs["embed_ms"], float64(20))
+}
+
+// A rebuild that embeds nothing still reports, so a zero is a measurement and
+// not a missing attribute.
+func TestHybridService_IndexReportsNoEmbeddingTimeWhenEverythingIsCached(t *testing.T) {
+	hybrid, _ := newTestHybrid(t, embed.NewFake(8))
+	require.NoError(t, indexHybrid(t, hybrid, testChunks()))
+
+	read := captureLogs(t, slog.LevelInfo)
+	require.NoError(t, indexHybrid(t, hybrid, testChunks()))
+
+	record := requireLog(t, read(), "Semantic index published")
+	require.EqualValues(t, 0, record.Attrs["embed_ms"])
+}
+
+// A rebuild that is still embedding when Close lands must not install its
+// vectors afterwards. The lexical side still receives the generation, because
+// publish is what releases the built index and the rebuild lock.
+func TestHybridService_PublishAfterCloseDropsTheGeneration(t *testing.T) {
+	lexical := &stubRetriever{}
+	hybrid, err := NewHybridService(lexical, embed.NewFake(8), testSemanticSettings())
+	require.NoError(t, err)
+
+	store := vector.NewStore(8)
+	require.NoError(t, store.Add("c1", make([]float32, 8)))
+
+	hybrid.Close()
+	hybrid.publish(&lexicalGeneration{}, store, map[string][]float32{"p1": make([]float32, 8)})
+
+	require.Equal(t, 1, lexical.published, "the built generation was never handed back for release")
+	require.Zero(t, hybrid.VectorCount(), "vectors became visible after Close")
 }
