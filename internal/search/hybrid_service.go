@@ -125,6 +125,15 @@ func (h *HybridService) Search(query string, candidateLimit int) ([]SearchResult
 		return nil, err
 	}
 
+	// D11: the semantic side cannot distinguish "no answer exists" from "an
+	// answer exists", measured over the real corpus; the lexical side can. An
+	// empty lexical result is the one honest signal that a query's terms
+	// appear nowhere, so it stands rather than being filled with the corpus's
+	// nearest-but-irrelevant chunks.
+	if len(lexical) == 0 {
+		return lexical, nil
+	}
+
 	limit := h.effectiveLimit(candidateLimit)
 	hits := h.vectorHits(query, limit)
 	if len(hits) == 0 {

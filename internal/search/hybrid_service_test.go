@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -50,6 +51,66 @@ func testChunks() []domain.Chunk {
 		{ID: "c1", SourceID: "s1", SourceURI: "acdc://a", ChunkURI: "acdc://a#1", SourceTitle: "Alpha", Content: "alpha content"},
 		{ID: "c2", SourceID: "s2", SourceURI: "acdc://b", ChunkURI: "acdc://b#1", SourceTitle: "Beta", Content: "beta content"},
 	}
+}
+
+// countingEmbedder answers every text with the same unit vector, so every
+// chunk sits at cosine 1.0 from every query. No floor can suppress that; only
+// D11 can.
+type countingEmbedder struct {
+	dimensions int
+	queries    atomic.Int64
+}
+
+func (c *countingEmbedder) Info() embed.ModelInfo {
+	return embed.ModelInfo{Dimensions: c.dimensions}
+}
+
+func (c *countingEmbedder) vector() []float32 {
+	vector := make([]float32, c.dimensions)
+	vector[0] = 1
+	return vector
+}
+
+func (c *countingEmbedder) EmbedDocuments(_ context.Context, texts []string) ([][]float32, error) {
+	vectors := make([][]float32, len(texts))
+	for i := range texts {
+		vectors[i] = c.vector()
+	}
+	return vectors, nil
+}
+
+func (c *countingEmbedder) EmbedQuery(context.Context, string) ([]float32, error) {
+	c.queries.Add(1)
+	return c.vector(), nil
+}
+
+// D11: the semantic side cannot tell that a query has no answer, and the
+// lexical side can. A query whose terms appear nowhere must keep answering
+// with nothing, whatever the vector store would have ranked first.
+func TestHybridService_EmptyLexicalResultSuppressesSemantic(t *testing.T) {
+	embedder := &countingEmbedder{dimensions: 4}
+	hybrid, _ := newTestHybrid(t, embedder)
+	require.NoError(t, indexHybrid(t, hybrid, testChunks()))
+
+	results, err := hybrid.Search("nonexistentterm12345", 10)
+
+	require.NoError(t, err)
+	require.Empty(t, results, "an empty lexical result must stand")
+	require.Zero(t, embedder.queries.Load(), "the semantic side must not even be consulted")
+}
+
+// The companion, without which a rule that always returns the lexical result
+// would pass the test above.
+func TestHybridService_NonEmptyLexicalResultStillConsultsSemantic(t *testing.T) {
+	embedder := &countingEmbedder{dimensions: 4}
+	hybrid, _ := newTestHybrid(t, embedder)
+	require.NoError(t, indexHybrid(t, hybrid, testChunks()))
+
+	results, err := hybrid.Search("alpha", 10)
+
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+	require.Equal(t, int64(1), embedder.queries.Load(), "suppression must not swallow a real query")
 }
 
 func TestHybridService_RejectsALexicalSideWithoutFetch(t *testing.T) {
@@ -565,7 +626,10 @@ func TestHybridService_SearchReturnsNothingWhenNothingClearsTheFloor(t *testing.
 
 func TestHybridService_SearchDropsHitsBelowTheFloor(t *testing.T) {
 	hybrid, lexical := newFusionHybrid(t, fusionEmbedder())
-	lexical.results = nil
+	// D11 suppresses semantic only when lexical is empty, so lexical must find
+	// something; c1 here is already the top semantic result and does not
+	// change the assertion below.
+	lexical.results = []SearchResult{{ChunkID: "c1", SourceURI: "acdc://a", SourceTitle: "A"}}
 	lexical.fetched = []SearchResult{
 		{ChunkID: "c1", SourceURI: "acdc://a", SourceTitle: "A"},
 		{ChunkID: "c2", SourceURI: "acdc://b", SourceTitle: "B"},
@@ -575,8 +639,8 @@ func TestHybridService_SearchDropsHitsBelowTheFloor(t *testing.T) {
 	results, err := hybrid.Search("alpha", 10)
 
 	require.NoError(t, err)
-	// c1 at 1.0 and c3 at 0.707 clear the default 0.25 floor; c2 at 0.0 does
-	// not, and Fetch offering its metadata does not put it back.
+	// c1 at 1.0 and c3 at 0.707 clear the 0.10 floor; c2 at 0.0 does not, and
+	// Fetch offering its metadata does not put it back.
 	require.Equal(t, []string{"c1", "c3"}, resultIDs(results))
 }
 
@@ -586,10 +650,16 @@ func TestHybridService_SearchHonoursAConfiguredFloor(t *testing.T) {
 	settings := testSemanticSettings()
 	settings.SemanticFloor = 0.9
 
-	lexical := &stubRetriever{fetched: []SearchResult{
-		{ChunkID: "c1", SourceURI: "acdc://a"},
-		{ChunkID: "c3", SourceURI: "acdc://c"},
-	}}
+	// D11 suppresses semantic only when lexical is empty, so lexical must find
+	// something; c1 here is already the top semantic result and does not
+	// change the assertion below.
+	lexical := &stubRetriever{
+		results: []SearchResult{{ChunkID: "c1", SourceURI: "acdc://a"}},
+		fetched: []SearchResult{
+			{ChunkID: "c1", SourceURI: "acdc://a"},
+			{ChunkID: "c3", SourceURI: "acdc://c"},
+		},
+	}
 	hybrid, err := NewHybridService(lexical, fusionEmbedder(), settings)
 	require.NoError(t, err)
 	require.NoError(t, indexHybrid(t, hybrid, fusionChunks()))
@@ -604,11 +674,17 @@ func TestHybridService_SearchWithFloorDisabledKeepsEveryHit(t *testing.T) {
 	settings := testSemanticSettings()
 	settings.SemanticFloor = -1
 
-	lexical := &stubRetriever{fetched: []SearchResult{
-		{ChunkID: "c1", SourceURI: "acdc://a"},
-		{ChunkID: "c2", SourceURI: "acdc://b"},
-		{ChunkID: "c3", SourceURI: "acdc://c"},
-	}}
+	// D11 suppresses semantic only when lexical is empty, so lexical must find
+	// something; c1 here is already the top semantic result and does not
+	// change the assertion below.
+	lexical := &stubRetriever{
+		results: []SearchResult{{ChunkID: "c1", SourceURI: "acdc://a"}},
+		fetched: []SearchResult{
+			{ChunkID: "c1", SourceURI: "acdc://a"},
+			{ChunkID: "c2", SourceURI: "acdc://b"},
+			{ChunkID: "c3", SourceURI: "acdc://c"},
+		},
+	}
 	hybrid, err := NewHybridService(lexical, fusionEmbedder(), settings)
 	require.NoError(t, err)
 	require.NoError(t, indexHybrid(t, hybrid, fusionChunks()))
@@ -686,13 +762,19 @@ func TestHybridService_SearchTruncatesToCandidateLimit(t *testing.T) {
 // returned without metadata.
 func TestHybridService_SearchDropsHitsWithNoLexicalDocument(t *testing.T) {
 	hybrid, lexical := newFusionHybrid(t, fusionEmbedder())
-	lexical.results = nil
+	// D11 suppresses semantic only when lexical is empty, so lexical must find
+	// something; c1 here is already the top semantic result and does not
+	// change the assertion below. c3 stays unresolved: it only ever surfaces
+	// through the vector store, and Fetch (lexical.fetched left nil) cannot
+	// supply its metadata, so it must be dropped rather than returned bare.
+	lexical.results = []SearchResult{{ChunkID: "c1", SourceURI: "acdc://a"}}
 	lexical.fetched = nil
 
 	results, err := hybrid.Search("alpha", 10)
 
 	require.NoError(t, err)
-	require.Empty(t, results)
+	require.Equal(t, []string{"c1"}, resultIDs(results),
+		"c3's vector survives fusion but Fetch cannot resolve it, so it must not appear")
 }
 
 func TestHybridService_SearchBreaksTiesDeterministically(t *testing.T) {
@@ -1161,7 +1243,10 @@ func TestHybridService_SearchReportsTheTopScoreWhenNothingClearsTheFloor(t *test
 	hybrid, _ := newTestHybrid(t, fusionEmbedder())
 	require.NoError(t, indexHybrid(t, hybrid, fusionChunks()))
 
-	_, err := hybrid.Search("unscripted", 10)
+	// "body" is common to every chunk's lexical content, so D11 lets the
+	// search reach the semantic side; it is orthogonal to every scripted
+	// vector, so nothing clears the floor.
+	_, err := hybrid.Search("body", 10)
 	require.NoError(t, err)
 
 	record := requireLog(t, read(), "Semantic query ranked")
