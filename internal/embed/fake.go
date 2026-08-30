@@ -81,8 +81,17 @@ func (f *Fake) tooLong(text string) bool {
 }
 
 // vector expands a SHA-256 of the text into Dimensions floats and normalizes,
-// so the result is deterministic, text-sensitive and unit-norm.
+// so the result is deterministic, text-sensitive and unit-norm. The empty
+// string is the one exception: it has no tokens, so it embeds to the
+// contract's zero vector.
 func (f *Fake) vector(text string) []float32 {
+	// A real static model pools one row per token, so a text with no tokens
+	// has nothing to pool. The fake mirrors that, which is what keeps the
+	// contract suite honest about the case.
+	if text == "" {
+		return make([]float32, f.Dimensions)
+	}
+
 	values := make([]float32, f.Dimensions)
 	seed := sha256.Sum256([]byte(text))
 	for i := range values {

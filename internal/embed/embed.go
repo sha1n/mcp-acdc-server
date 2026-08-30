@@ -24,8 +24,13 @@ type ModelInfo struct {
 // Implementations must be safe for concurrent use: indexing calls
 // EmbedDocuments while EmbedQuery serves live requests.
 //
-// Every returned vector is unit-norm and Info().Dimensions wide, so callers
-// may treat a dot product as cosine similarity.
+// Every returned vector is Info().Dimensions wide and finite. Every vector is
+// unit-norm, so callers may treat a dot product as cosine similarity, with one
+// exception: a vector may be all-zero when the implementation cannot represent
+// the text at all — a tokenizer that reduces it to no tokens. Callers must
+// treat an all-zero vector as no embedding rather than as a position in the
+// space: it scores zero against every query, so storing or ranking it would
+// make it a match for everything at a similarity floor of zero or below.
 type Embedder interface {
 	Info() ModelInfo
 

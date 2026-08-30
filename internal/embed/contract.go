@@ -30,7 +30,11 @@ func TestEmbedderContract(t testing.TB, newEmbedder func() Embedder) {
 		t.Fatalf("Info().Dimensions must be positive, got %d", info.Dimensions)
 	}
 
-	texts := fitCorpusToWindow([]string{"alpha", "a longer passage of ordinary prose", ""}, info.MaxTokens)
+	texts := make([]string, len(contractFixtures))
+	for i, fixture := range contractFixtures {
+		texts[i] = fixture.text
+	}
+	texts = fitCorpusToWindow(texts, info.MaxTokens)
 
 	documents, err := embedder.EmbedDocuments(ctx, texts)
 	if err != nil {
@@ -40,18 +44,34 @@ func TestEmbedderContract(t testing.TB, newEmbedder func() Embedder) {
 		t.Fatalf("EmbedDocuments returned %d vectors for %d texts", len(documents), len(texts))
 	}
 	for i, vector := range documents {
-		assertVectorContract(t, "EmbedDocuments", i, vector, info.Dimensions)
+		assertVectorContract(t, "EmbedDocuments", i, vector, info.Dimensions, contractFixtures[i].unrepresentable)
 	}
 
 	query, err := embedder.EmbedQuery(ctx, "alpha")
 	if err != nil {
 		t.Fatalf("EmbedQuery returned an error: %v", err)
 	}
-	assertVectorContract(t, "EmbedQuery", 0, query, info.Dimensions)
+	assertVectorContract(t, "EmbedQuery", 0, query, info.Dimensions, false)
 
 	assertRejectsOversizedInput(t, embedder, info)
 	assertPreservesInputOrder(t, embedder, info)
 	assertSafeForConcurrentUse(t, embedder, info)
+}
+
+// contractFixtures are the happy-path texts, each marked with whether a real
+// model may legitimately reduce it to no tokens. Only a marked fixture may
+// answer with the zero vector, so an adapter that zeroes ordinary prose still
+// fails here.
+var contractFixtures = []struct {
+	text            string
+	unrepresentable bool
+}{
+	{text: "alpha"},
+	{text: "a longer passage of ordinary prose"},
+	{text: "", unrepresentable: true},
+	// Measured against minishlab/potion-retrieval-32M: the pruned vocabulary
+	// holds no emoji, so this reduces to unknown tokens the reference drops.
+	{text: "\U0001F642\U0001F642", unrepresentable: true},
 }
 
 // fitCorpusToWindow shortens the happy-path fixtures to at most maxTokens
@@ -77,7 +97,7 @@ func fitCorpusToWindow(texts []string, maxTokens int) []string {
 	return fitted
 }
 
-func assertVectorContract(t testing.TB, method string, index int, vector []float32, dimensions int) {
+func assertVectorContract(t testing.TB, method string, index int, vector []float32, dimensions int, unrepresentable bool) {
 	t.Helper()
 
 	if len(vector) != dimensions {
@@ -92,6 +112,12 @@ func assertVectorContract(t testing.TB, method string, index int, vector []float
 			return
 		}
 		sum += float64(value) * float64(value)
+	}
+	// The zero vector is the contract's "no embedding". It is legal only for a
+	// text a model may reduce to no tokens; anywhere else it is an adapter bug
+	// that every width and finiteness check above would otherwise pass.
+	if sum == 0 && unrepresentable {
+		return
 	}
 	if norm := math.Sqrt(sum); math.Abs(norm-1) > 1e-5 {
 		t.Errorf("%s vector %d has norm %v, want 1", method, index, norm)
@@ -247,7 +273,8 @@ func assertSafeForConcurrentUse(t testing.TB, embedder Embedder, info ModelInfo)
 	}
 	index := 0
 	for vector := range vectors {
-		assertVectorContract(t, "concurrent call", index, vector, info.Dimensions)
+		// These fixtures are ordinary prose, so none may answer with zero.
+		assertVectorContract(t, "concurrent call", index, vector, info.Dimensions, false)
 		index++
 	}
 }

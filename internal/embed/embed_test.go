@@ -413,3 +413,24 @@ func (f *misindexedOversizedErrorFake) EmbedDocuments(ctx context.Context, texts
 	}
 	return vectors, err
 }
+
+// zeroesEverything is the bug the marker exists to catch: an adapter that
+// answers with no embedding for ordinary prose still satisfies every width and
+// finiteness check.
+type zeroesEverything struct{ *Fake }
+
+func (z zeroesEverything) EmbedDocuments(_ context.Context, texts []string) ([][]float32, error) {
+	vectors := make([][]float32, len(texts))
+	for i := range vectors {
+		vectors[i] = make([]float32, z.Info().Dimensions)
+	}
+	return vectors, nil
+}
+
+func (z zeroesEverything) EmbedQuery(context.Context, string) ([]float32, error) {
+	return make([]float32, z.Info().Dimensions), nil
+}
+
+func TestEmbedderContract_RejectsZeroForRepresentableText(t *testing.T) {
+	require.True(t, contractFails(func() Embedder { return zeroesEverything{NewFake(8)} }))
+}
