@@ -146,8 +146,8 @@ Rows marked **SSE** are read only under `--transport sse`. The `stdio` transport
 | `--search-result-mode` | `ACDC_MCP_SEARCH_RESULT_MODE` | `references` | `references` returns citations and a snippet. `content` also returns each chunk body, and raises the per-document cap from 1 chunk to 2. |
 | `--search-keywords-boost` | `ACDC_MCP_SEARCH_KEYWORDS_BOOST` | `3.0` | Rank multiplier for a match on frontmatter `keywords`. |
 | `--search-in-memory` | `ACDC_MCP_SEARCH_IN_MEMORY` | `true` | Hold the index in memory. Set `false` to write it to a temporary directory instead. Neither mode survives a restart. |
-| `--search-semantic-model` | `ACDC_MCP_SEARCH_SEMANTIC_MODEL` | _(empty)_ | Path to an embedding model enabling hybrid semantic search. Empty disables it. No backend ships yet, so a configured path aborts startup. |
-| `--search-semantic-floor` | `ACDC_MCP_SEARCH_SEMANTIC_FLOOR` | `0.25` | Minimum cosine similarity a semantic hit must clear to be returned. `-1` disables the floor. Ignored while semantic search is off. |
+| `--search-semantic-model` | `ACDC_MCP_SEARCH_SEMANTIC_MODEL` | _(empty)_ | Path to a directory holding a model2vec model — `model.safetensors`, `tokenizer.json` and `config.json`. Empty disables semantic search. |
+| `--search-semantic-floor` | `ACDC_MCP_SEARCH_SEMANTIC_FLOOR` | `0.10` | Minimum cosine similarity a semantic hit must clear to be returned. `-1` disables the floor. Ignored while semantic search is off. |
 | `--host`, `-H` | `ACDC_MCP_HOST` | `0.0.0.0` | **SSE** — interface to bind. |
 | `--port`, `-p` | `ACDC_MCP_PORT` | `8080` | **SSE** — port to listen on. |
 | `--auth-type`, `-a` | `ACDC_MCP_AUTH_TYPE` | `none` | **SSE** — `none`, `basic`, or `apikey`. `/health` stays public in every mode. |

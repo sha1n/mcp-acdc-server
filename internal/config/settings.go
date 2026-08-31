@@ -40,12 +40,15 @@ const (
 // DefaultSemanticFloor is the minimum cosine similarity a semantic hit must
 // clear to enter fusion.
 //
-// This value is a placeholder, not a measurement. The threshold separating a
-// real match from a coincidentally-nearby one is a property of the model's
-// embedding geometry, and no model ships yet. Calibrating it is an acceptance
-// criterion of the adapter plan; until then it is deliberately conservative,
-// and configurable so an operator is never stuck behind a wrong guess.
-const DefaultSemanticFloor float64 = 0.25
+// It is a guard on the degenerate tail, not a relevance gate. Measured on
+// minishlab/potion-retrieval-32M over the real corpus (474 chunks, 1596
+// passages): the correct chunk for a paraphrase query scores a minimum of
+// 0.119 and a p10 of 0.129, while a query with no answer at all reaches 0.324.
+// The two populations overlap almost completely, so no threshold separates
+// them — D11 gives that job to the lexical side instead. This value sits below
+// every correct answer measured, which is the only property it can honestly
+// have.
+const DefaultSemanticFloor float64 = 0.10
 
 // SearchSettings configuration for search service
 type SearchSettings struct {
