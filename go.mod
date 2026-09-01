@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/blevesearch/bleve/v2 v2.6.0
-	github.com/blevesearch/bleve_index_api v1.3.11
+	github.com/blevesearch/bleve_index_api v1.4.1
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/spf13/cobra v1.10.2
