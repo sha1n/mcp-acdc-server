@@ -5,15 +5,34 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/app"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/embed"
 	"github.com/spf13/pflag"
 )
 
 type RunnerFunc func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error
+
+// ServiceOption customizes the server a testkit service starts.
+//
+// Options rather than constructor parameters: NewACDCService has many call
+// sites across tests/integration, and every one of them would have to change
+// for a new parameter.
+type ServiceOption func(*acdcService)
+
+// WithEmbedderProvider supplies the embedding backend the server opens when
+// search.semantic_model is configured. The binary links the model2vec adapter,
+// so a real model directory works without this option. Supply it to script
+// vectors a test can assert on.
+func WithEmbedderProvider(provider func(modelPath string) (embed.Embedder, error)) ServiceOption {
+	return func(s *acdcService) {
+		s.embedderProvider = provider
+	}
+}
 
 type acdcService struct {
 	name         string
@@ -24,6 +43,8 @@ type acdcService struct {
 	StartTimeout time.Duration
 	runner       RunnerFunc
 
+	embedderProvider func(modelPath string) (embed.Embedder, error)
+
 	// Stdio pipes
 	stdinReader  *io.PipeReader
 	stdinWriter  *io.PipeWriter
@@ -32,8 +53,8 @@ type acdcService struct {
 	ctxCancel    context.CancelFunc
 }
 
-func NewACDCService(name string, flags *pflag.FlagSet) Service {
-	return &acdcService{
+func NewACDCService(name string, flags *pflag.FlagSet, opts ...ServiceOption) Service {
+	service := &acdcService{
 		name:         name,
 		flags:        flags,
 		errChan:      make(chan error, 1),
@@ -41,39 +62,59 @@ func NewACDCService(name string, flags *pflag.FlagSet) Service {
 		StartTimeout: 10 * time.Second,
 		runner:       app.RunWithDeps,
 	}
+	for _, opt := range opts {
+		opt(service)
+	}
+	return service
 }
 
 func (s *acdcService) GetName() string {
 	return s.name
 }
 
+// servingTransport reports the moment the server begins consuming the
+// transport.
+//
+// RunWithDeps loads settings, validates them and builds the server before it
+// reaches mcpServer.Run, and Run is what calls Connect. Connect is therefore
+// the exact boundary between "startup failed" and "serving", which is the
+// signal Start needs: without it the stdio path returns unconditionally and a
+// startup error only reaches the caller if the runner goroutine happens to
+// close the pipes before the client reads them. That race resolves differently
+// per platform.
+type servingTransport struct {
+	mcp.Transport
+	// once guards against a panic if Connect is ever called more than once.
+	// The SDK documents exactly one call; a closed channel makes a second one
+	// fatal to the whole test binary rather than to one test.
+	once    sync.Once
+	serving chan struct{}
+}
+
+func (t *servingTransport) Connect(ctx context.Context) (mcp.Connection, error) {
+	t.once.Do(func() { close(t.serving) })
+
+	return t.Transport.Connect(ctx)
+}
+
 func (s *acdcService) Start() (map[string]any, error) {
 	params := app.DefaultRunParams()
+	if provider := s.embedderProvider; provider != nil {
+		params.CreateServer = func(ctx context.Context, settings *config.Settings, version string) (*mcp.Server, func(), error) {
+			return app.CreateMCPServer(ctx, settings, version, app.WithEmbedderProvider(provider))
+		}
+	}
 	transport, _ := s.flags.GetString("transport")
 
 	var ctx context.Context
 	ctx, s.ctxCancel = context.WithCancel(context.Background())
 
-	if transport == "stdio" {
-		// Create pipes for stdio testing
-		s.stdinReader, s.stdinWriter = io.Pipe()
-		s.stdoutReader, s.stdoutWriter = io.Pipe()
+	var serving chan struct{}
 
-		// Create custom IO transport for testing
-		params.CustomIOTransport = &mcp.IOTransport{
-			Reader: s.stdinReader,
-			Writer: s.stdoutWriter,
-		}
+	if transport == "stdio" {
+		serving = s.configureStdio(&params)
 	} else {
-		// For SSE, use custom handler that captures server instance
-		params.StartSSEServer = func(mcpSrv *mcp.Server, settings *config.Settings) error {
-			var err error
-			s.srv, err = app.NewSSEServer(mcpSrv, settings)
-			if err != nil {
-				return err
-			}
-			return s.srv.ListenAndServe()
-		}
+		s.configureSSE(&params)
 	}
 
 	go func() {
@@ -83,14 +124,60 @@ func (s *acdcService) Start() (map[string]any, error) {
 	}()
 
 	if transport == "stdio" {
+		return s.awaitStdio(serving)
+	}
+
+	return s.awaitSSE()
+}
+
+func (s *acdcService) configureStdio(params *app.RunParams) chan struct{} {
+	s.stdinReader, s.stdinWriter = io.Pipe()
+	s.stdoutReader, s.stdoutWriter = io.Pipe()
+
+	serving := make(chan struct{})
+	params.CustomIOTransport = &servingTransport{
+		Transport: &mcp.IOTransport{
+			Reader: s.stdinReader,
+			Writer: s.stdoutWriter,
+		},
+		serving: serving,
+	}
+
+	return serving
+}
+
+func (s *acdcService) configureSSE(params *app.RunParams) {
+	params.StartSSEServer = func(mcpSrv *mcp.Server, settings *config.Settings) error {
+		var err error
+		s.srv, err = app.NewSSEServer(mcpSrv, settings)
+		if err != nil {
+			return err
+		}
+
+		return s.srv.ListenAndServe()
+	}
+}
+
+// awaitStdio resolves the three ways a stdio launch can end: the server reached
+// its transport, it failed on the way there, or it did neither in time.
+func (s *acdcService) awaitStdio(serving chan struct{}) (map[string]any, error) {
+	select {
+	case <-serving:
 		return map[string]any{
 			"acdc.transport": "stdio",
 			"acdc.stdin":     s.stdinWriter,
 			"acdc.stdout":    s.stdoutReader,
 		}, nil
+	case err := <-s.errChan:
+		return nil, fmt.Errorf("server exited before serving: %w", err)
+	case <-time.After(s.StartTimeout):
+		return nil, fmt.Errorf("timed out waiting for the server to start serving")
 	}
+}
 
-	// Wait for server to start by polling /sse
+// awaitSSE polls /sse because an HTTP listener has no equivalent of the stdio
+// transport's Connect to signal readiness from.
+func (s *acdcService) awaitSSE() (map[string]any, error) {
 	port, _ := s.flags.GetInt("port")
 	host, _ := s.flags.GetString("host")
 	if host == "" || host == "0.0.0.0" {

@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/index/scorch"
 	"github.com/blevesearch/bleve/v2/mapping"
+	blevesearch "github.com/blevesearch/bleve/v2/search"
 	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
@@ -66,10 +68,23 @@ type searchIndex interface {
 	DocCount() (uint64, error)
 }
 
-// Service search service using Bleve
-type Service struct {
-	mu       sync.RWMutex
+// TextService is the Bleve-backed lexical retriever.
+type TextService struct {
+	mu sync.RWMutex
+	// building serializes rebuilds. It is not mu: a rebuild must not block a
+	// search, but two rebuilds at once would each hold a whole index in
+	// memory, and only one of them could ever be published.
+	//
+	// build takes it and publish releases it, so it is held across the whole
+	// rebuild rather than across the build alone. Releasing it earlier would
+	// let a rebuild that started later publish first, which would install the
+	// older of the two generations. sync.Mutex permits the handover: the
+	// goroutine that unlocks need not be the one that locked.
+	building sync.Mutex
 	settings config.SearchSettings
+	// closed records that Close has run, so a rebuild still in flight at
+	// shutdown releases its generation instead of installing it.
+	closed bool
 	// fuzziness resolves the edit distance applied to a field's match clause.
 	// A field rather than a direct call so tests can measure the ranking model
 	// at other settings without exporting anything.
@@ -78,47 +93,110 @@ type Service struct {
 	indexDir  string
 }
 
-// Ensure Service implements Searcher
-var _ Searcher = (*Service)(nil)
+// Ensure TextService implements Searcher
+var _ Searcher = (*TextService)(nil)
 
-// NewService creates a new search service
-func NewService(settings config.SearchSettings) *Service {
-	return &Service{
+// NewService creates a new lexical search service.
+func NewService(settings config.SearchSettings) *TextService {
+	return &TextService{
 		settings:  settings,
 		fuzziness: fieldFuzziness,
 	}
 }
 
-// Index rebuilds the index from a stream of chunks.
-func (s *Service) Index(ctx context.Context, chunks <-chan domain.Chunk) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// lexicalGeneration is a complete index that has not been published yet.
+//
+// It exists so a caller holding a second index — HybridService and its vector
+// store — can finish both builds before either becomes visible. See build.
+type lexicalGeneration struct {
+	index    searchIndex
+	indexDir string
+}
 
-	index, indexDir, err := s.newIndex()
+// Index rebuilds the index from a stream of chunks and publishes it.
+func (s *TextService) Index(ctx context.Context, chunks <-chan domain.Chunk) error {
+	generation, err := s.build(ctx, chunks)
 	if err != nil {
 		return err
 	}
-	if err := batchIndex(ctx, index, chunks, defaultBatchSize); err != nil {
-		_ = index.Close()
-		if indexDir != "" {
-			_ = removeAll(indexDir)
-		}
-		return err
-	}
+	s.publish(generation)
 
-	oldIndex, oldIndexDir := s.index, s.indexDir
-	s.index = index
-	s.indexDir = indexDir
-	if oldIndex != nil {
-		_ = oldIndex.Close()
-	}
-	if oldIndexDir != "" && oldIndexDir != indexDir {
-		_ = removeAll(oldIndexDir)
-	}
 	return nil
 }
 
-func (s *Service) newIndex() (searchIndex, string, error) {
+// build indexes the whole stream into a new index without publishing it, so
+// the previous generation keeps answering until publish is called.
+//
+// It does not take mu: the index it fills is not reachable from any reader, and
+// holding the index lock for a full rebuild would stall every search. It takes
+// building instead, so rebuilds still run one at a time.
+//
+// A generation it returns owns an open index, possibly a temporary directory,
+// and the rebuild lock. A caller that receives one must therefore publish it,
+// even when it has decided to abandon the rebuild: publish is what releases all
+// three. On failure build releases everything itself and returns no generation.
+func (s *TextService) build(ctx context.Context, chunks <-chan domain.Chunk) (*lexicalGeneration, error) {
+	s.building.Lock()
+
+	index, indexDir, err := s.newIndex()
+	if err != nil {
+		s.building.Unlock()
+		return nil, err
+	}
+	if err := batchIndex(ctx, index, chunks, defaultBatchSize); err != nil {
+		releaseGeneration(&lexicalGeneration{index: index, indexDir: indexDir})
+		s.building.Unlock()
+		return nil, err
+	}
+
+	return &lexicalGeneration{index: index, indexDir: indexDir}, nil
+}
+
+// publish makes a built generation visible and releases the one it replaces.
+// It also releases the rebuild lock that build took, so every generation build
+// hands back must reach publish exactly once.
+//
+// After Close the generation is released instead of installed. A rebuild that
+// was still filling its index when shutdown began would otherwise install a
+// live index behind Close and leak it. Close does not wait for that rebuild:
+// a full rebuild can run for minutes, and shutdown must not.
+//
+// Installing is a pointer swap and nothing more, so a caller can hold its own
+// lock across it to swap a second index in the same instant.
+func (s *TextService) publish(generation *lexicalGeneration) {
+	defer s.building.Unlock()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		releaseGeneration(generation)
+		return
+	}
+
+	oldIndex, oldIndexDir := s.index, s.indexDir
+	s.index = generation.index
+	s.indexDir = generation.indexDir
+	if oldIndex != nil {
+		_ = oldIndex.Close()
+	}
+	if oldIndexDir != "" && oldIndexDir != generation.indexDir {
+		_ = removeAll(oldIndexDir)
+	}
+}
+
+// releaseGeneration closes an index that will never be published and removes
+// the directory it occupied.
+func releaseGeneration(generation *lexicalGeneration) {
+	if generation.index != nil {
+		_ = generation.index.Close()
+	}
+	if generation.indexDir != "" {
+		_ = removeAll(generation.indexDir)
+	}
+}
+
+func (s *TextService) newIndex() (searchIndex, string, error) {
 	indexMapping := buildMapping()
 	if s.settings.InMemory {
 		index, err := newMemoryIndex(indexMapping)
@@ -143,7 +221,7 @@ func (s *Service) newIndex() (searchIndex, string, error) {
 	return index, indexDir, nil
 }
 
-// defaultBatchSize is how many chunks Service.Index accumulates before
+// defaultBatchSize is how many chunks TextService.Index accumulates before
 // introducing a segment. In memory scorch runs no merger goroutine
 // (scorch.go gates both background loops on a non-empty path), so this also
 // fixes the number of segments a query fans out across — which is why it is
@@ -272,7 +350,7 @@ func buildMapping() mapping.IndexMapping {
 }
 
 // Search finds chunks matching query.
-func (s *Service) Search(queryStr string, candidateLimit int) ([]SearchResult, error) {
+func (s *TextService) Search(queryStr string, candidateLimit int) ([]SearchResult, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -307,30 +385,88 @@ func (s *Service) Search(queryStr string, candidateLimit int) ([]SearchResult, e
 
 	results := make([]SearchResult, 0, len(searchResult.Hits))
 	for _, hit := range searchResult.Hits {
-		snippet := fieldString(hit.Fields, domain.FieldContent)
-		if fragments, ok := hit.Fragments[domain.FieldContent]; ok && len(fragments) > 0 {
-			snippet = fragments[0]
-		}
-		if snippet == "" {
-			snippet = fieldString(hit.Fields, domain.FieldSourceTitle)
-		}
-
-		results = append(results, SearchResult{
-			ChunkID:     fieldStringOr(hit.Fields, domain.FieldChunkID, hit.ID),
-			SourceID:    fieldString(hit.Fields, domain.FieldSourceID),
-			SourceURI:   fieldString(hit.Fields, domain.FieldSourceURI),
-			ChunkURI:    fieldString(hit.Fields, domain.FieldChunkURI),
-			SourceTitle: fieldString(hit.Fields, domain.FieldSourceTitle),
-			SourcePath:  fieldString(hit.Fields, domain.FieldSourcePath),
-			HeadingPath: fieldStrings(hit.Fields, domain.FieldHeadingPath),
-			StartLine:   fieldInt(hit.Fields, domain.FieldStartLine),
-			EndLine:     fieldInt(hit.Fields, domain.FieldEndLine),
-			Score:       hit.Score,
-			Snippet:     snippet,
-			Content:     fieldString(hit.Fields, domain.FieldContent),
-		})
+		results = append(results, hitToResult(hit))
 	}
 
+	return results, nil
+}
+
+// snippetRunes bounds a snippet built from leading content.
+//
+// It matches bleve's default highlight fragment size so a hit with nothing to
+// highlight reads like one that was highlighted. Without the bound the whole
+// chunk becomes the snippet, and content mode then prints that body a second
+// time as Content — worst for exactly the semantic-only hits that never carry
+// a fragment.
+const snippetRunes = 100
+
+// leadingSnippet returns content bounded to snippetRunes, counting runes so a
+// multi-byte character is never split.
+func leadingSnippet(content string) string {
+	runes := []rune(content)
+	if len(runes) <= snippetRunes {
+		return content
+	}
+
+	return strings.TrimRight(string(runes[:snippetRunes]), " \t\r\n") + "…"
+}
+
+// hitToResult projects a bleve hit onto SearchResult. The snippet prefers a
+// highlighted fragment, which only a query-bearing search produces; a DocID
+// lookup has nothing to highlight against and falls through to bounded leading
+// content, then the source title.
+func hitToResult(hit *blevesearch.DocumentMatch) SearchResult {
+	snippet := leadingSnippet(fieldString(hit.Fields, domain.FieldContent))
+	if fragments, ok := hit.Fragments[domain.FieldContent]; ok && len(fragments) > 0 {
+		snippet = fragments[0]
+	}
+	if snippet == "" {
+		snippet = fieldString(hit.Fields, domain.FieldSourceTitle)
+	}
+
+	return SearchResult{
+		ChunkID:     fieldStringOr(hit.Fields, domain.FieldChunkID, hit.ID),
+		SourceID:    fieldString(hit.Fields, domain.FieldSourceID),
+		SourceURI:   fieldString(hit.Fields, domain.FieldSourceURI),
+		ChunkURI:    fieldString(hit.Fields, domain.FieldChunkURI),
+		SourceTitle: fieldString(hit.Fields, domain.FieldSourceTitle),
+		SourcePath:  fieldString(hit.Fields, domain.FieldSourcePath),
+		HeadingPath: fieldStrings(hit.Fields, domain.FieldHeadingPath),
+		StartLine:   fieldInt(hit.Fields, domain.FieldStartLine),
+		EndLine:     fieldInt(hit.Fields, domain.FieldEndLine),
+		Score:       hit.Score,
+		Snippet:     snippet,
+		Content:     fieldString(hit.Fields, domain.FieldContent),
+	}
+}
+
+// Fetch returns the stored fields for the given chunk IDs.
+//
+// It is a lookup, not a re-index: buildMapping stores every field. IDs with
+// no document are omitted rather than reported, and the returned order is
+// bleve's, not the caller's — callers key the result by ChunkID. Score is
+// the constant a DocID query assigns and carries no ranking meaning.
+func (s *TextService) Fetch(ids []string) ([]SearchResult, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.index == nil || len(ids) == 0 {
+		return []SearchResult{}, nil
+	}
+
+	searchRequest := bleve.NewSearchRequest(bleve.NewDocIDQuery(ids))
+	searchRequest.Size = len(ids)
+	searchRequest.Fields = []string{"*"}
+
+	searchResult, err := s.index.Search(searchRequest)
+	if err != nil {
+		return nil, fmt.Errorf("fetch failed: %w", err)
+	}
+
+	results := make([]SearchResult, 0, len(searchResult.Hits))
+	for _, hit := range searchResult.Hits {
+		results = append(results, hitToResult(hit))
+	}
 	return results, nil
 }
 
@@ -341,7 +477,7 @@ func (s *Service) Search(queryStr string, candidateLimit int) ([]SearchResult, e
 // == 0, because NewService accepts an unvalidated SearchSettings: a negative
 // boost would feed a negative weight into bleve's sumOfSquaredWeights,
 // producing a NaN queryNorm and NaN scores for every clause, not just its own.
-func (s *Service) boostedFieldQueries(queryStr string) []query.Query {
+func (s *TextService) boostedFieldQueries(queryStr string) []query.Query {
 	fields := []struct {
 		name  string
 		boost float64
@@ -434,11 +570,16 @@ func fieldInt(fields map[string]interface{}, field string) int {
 	}
 }
 
-// Close cleans up resources
-func (s *Service) Close() {
+// Close cleans up resources.
+//
+// It records the shutdown so a rebuild still in flight releases its generation
+// when it reaches publish. It does not take the rebuild lock, which that
+// rebuild holds until then.
+func (s *TextService) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.closed = true
 	if s.index != nil {
 		_ = s.index.Close()
 		s.index = nil
@@ -450,7 +591,7 @@ func (s *Service) Close() {
 }
 
 // DocCount returns number of docs in index
-func (s *Service) DocCount() (uint64, error) {
+func (s *TextService) DocCount() (uint64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 

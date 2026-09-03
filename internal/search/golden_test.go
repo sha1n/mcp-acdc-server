@@ -56,7 +56,7 @@ type goldenQuery struct {
 }
 
 // goldenService indexes the given corpora with the harness's default settings.
-func goldenService(t *testing.T, corpora ...string) *Service {
+func goldenService(t *testing.T, corpora ...string) *TextService {
 	t.Helper()
 	return goldenServiceWith(t, testSettings(), corpora...)
 }
@@ -78,7 +78,7 @@ func corpusChunks(t *testing.T, corpora ...string) []domain.Chunk {
 	return chunks
 }
 
-func goldenServiceWith(t *testing.T, settings config.SearchSettings, corpora ...string) *Service {
+func goldenServiceWith(t *testing.T, settings config.SearchSettings, corpora ...string) *TextService {
 	t.Helper()
 
 	service := NewService(settings)
@@ -452,7 +452,7 @@ func TestGolden_FuzzinessPollutesThroughPathLabels(t *testing.T) {
 	tests := []struct {
 		name string
 		// fuzziness resolves the edit distance per field, mirroring
-		// Service.fuzziness.
+		// TextService.fuzziness.
 		fuzziness func(string) int
 		// wantJunk is the README's best rank, or 0 when it is absent.
 		wantJunk int
@@ -579,8 +579,8 @@ func TestGolden_FuzzinessRecallProbes(t *testing.T) {
 }
 
 // fieldClauseCandidates counts what one field's clause retrieves on its own,
-// built the way Service.Search builds it.
-func fieldClauseCandidates(t *testing.T, service *Service, field, queryStr string, operator bleveQuery.MatchQueryOperator) int {
+// built the way TextService.Search builds it.
+func fieldClauseCandidates(t *testing.T, service *TextService, field, queryStr string, operator bleveQuery.MatchQueryOperator) int {
 	t.Helper()
 
 	clause := bleve.NewMatchQuery(queryStr)

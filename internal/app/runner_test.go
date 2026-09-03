@@ -3,11 +3,15 @@ package app
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/embed/model2vec/model2vectest"
 	"github.com/spf13/pflag"
 )
 
@@ -256,4 +260,64 @@ func (m *mockTransport) Connect(ctx context.Context) (mcp.Connection, error) {
 	}
 	// Return error immediately since we don't have real I/O
 	return nil, errors.New("mock transport - no real connection")
+}
+
+func TestNewLogger_LevelGatesDebug(t *testing.T) {
+	ctx := context.Background()
+
+	debug, err := newLogger(io.Discard, "debug")
+	if err != nil {
+		t.Fatalf("newLogger(debug) returned an error: %v", err)
+	}
+	if !debug.Enabled(ctx, slog.LevelDebug) {
+		t.Error("a debug logger must emit debug records")
+	}
+
+	info, err := newLogger(io.Discard, "info")
+	if err != nil {
+		t.Fatalf("newLogger(info) returned an error: %v", err)
+	}
+	if info.Enabled(ctx, slog.LevelDebug) {
+		t.Error("an info logger must drop debug records")
+	}
+	if !info.Enabled(ctx, slog.LevelInfo) {
+		t.Error("an info logger must emit info records")
+	}
+}
+
+func TestNewLogger_RejectsUnknownLevel(t *testing.T) {
+	if _, err := newLogger(io.Discard, "trace"); err == nil {
+		t.Fatal("newLogger must reject an unknown level")
+	}
+}
+
+// The production server must link a real embedding backend. Everything else
+// about semantic search is proved with an injected embedder, so without this
+// test the adapter could be absent from the shipped binary and every other
+// test would still pass.
+func TestDefaultRunParams_LoadsAModelDirectory(t *testing.T) {
+	settings := appTestSettings(writeMetadataOnly(t, testMetadata))
+	settings.Search.SemanticModel = model2vectest.WriteArithmeticModel(t, true)
+
+	server, cleanup, err := DefaultRunParams().CreateServer(context.Background(), settings, "test")
+	if err != nil {
+		t.Fatalf("CreateServer with a real model directory: %v", err)
+	}
+	t.Cleanup(cleanup)
+	if server == nil {
+		t.Fatal("CreateServer returned no server")
+	}
+}
+
+func TestDefaultRunParams_ReportsAnUnreadableModel(t *testing.T) {
+	settings := appTestSettings(writeMetadataOnly(t, testMetadata))
+	settings.Search.SemanticModel = filepath.Join(t.TempDir(), "absent")
+
+	_, _, err := DefaultRunParams().CreateServer(context.Background(), settings, "test")
+	if err == nil {
+		t.Fatal("want an error naming the path")
+	}
+	if !strings.Contains(err.Error(), settings.Search.SemanticModel) {
+		t.Fatalf("error %v does not name the configured path", err)
+	}
 }

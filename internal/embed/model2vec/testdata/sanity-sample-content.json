@@ -1,0 +1,20 @@
+{
+  "content_dir": "../../../examples/sample-content",
+  "pairs": [
+    {"query": "which knobs change where documents are loaded from", "chunk": "acdc://reference/configuration#cli-flags"},
+    {"query": "setting options without passing command line arguments", "chunk": "acdc://reference/configuration#environment-variables"},
+    {"query": "leave the server open to everyone", "chunk": "acdc://reference/configuration#none-default"},
+    {"query": "require a username and password", "chunk": "acdc://reference/configuration#basic-auth"},
+    {"query": "protect the endpoint with a shared secret header", "chunk": "acdc://reference/configuration#api-key"},
+    {"query": "what prefix do resource identifiers carry", "chunk": "acdc://reference/configuration#uri-scheme"},
+    {"query": "which parts of a document are stored for retrieval", "chunk": "acdc://reference/search-features#what-gets-indexed"},
+    {"query": "what happens when an agent asks a question", "chunk": "acdc://reference/search-features#how-searching-works"},
+    {"query": "tagging documents with synonyms so readers find them", "chunk": "acdc://reference/search-features#using-keywords-effectively"},
+    {"query": "a misspelled query still returns the right document", "chunk": "acdc://reference/search-features#fuzzy-and-prefix-matching"},
+    {"query": "advice for making documents easier to find", "chunk": "acdc://reference/search-features#tips-for-better-results"},
+    {"query": "the metadata block at the top of a file", "chunk": "acdc://guides/authoring-content#frontmatter-fields"},
+    {"query": "how to lay out directories", "chunk": "acdc://guides/authoring-content#organising-files"},
+    {"query": "pointing from one document to another", "chunk": "acdc://guides/authoring-content#cross-referencing"},
+    {"query": "placeholders inside a prompt", "chunk": "acdc://guides/authoring-content#template-syntax"}
+  ]
+}

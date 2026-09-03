@@ -2,8 +2,34 @@ package config
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 )
+
+// ParseLogLevel maps a configured level name to its slog.Level. It is the one
+// place a level name is interpreted, so validation and the handler that the
+// runner installs cannot disagree about which names are accepted.
+//
+// An empty name resolves to DefaultLogLevel rather than failing. Unlike
+// Transport or ResultMode, an absent level has an obvious meaning, and a
+// Settings value built in code should not have to name one to stay valid.
+func ParseLogLevel(level string) (slog.Level, error) {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "":
+		return ParseLogLevel(DefaultLogLevel)
+	case LogLevelDebug:
+		return slog.LevelDebug, nil
+	case LogLevelInfo:
+		return slog.LevelInfo, nil
+	case LogLevelWarn:
+		return slog.LevelWarn, nil
+	case LogLevelError:
+		return slog.LevelError, nil
+	default:
+		return 0, fmt.Errorf("log level must be one of debug, info, warn, error, got: %q", level)
+	}
+}
 
 // Log logs the resolved settings in a granular way, skipping irrelevant ones
 func Log(s *Settings) {
@@ -15,6 +41,7 @@ func LogWithLogger(s *Settings, logger *slog.Logger) {
 	ctx := context.Background()
 	logger.InfoContext(ctx, "Config: content_dir", "value", s.ContentDir)
 	logger.InfoContext(ctx, "Config: transport", "value", s.Transport)
+	logger.InfoContext(ctx, "Config: log_level", "value", s.LogLevel)
 	if s.Transport == "sse" {
 		logger.InfoContext(ctx, "Config: host", "value", s.Host)
 		logger.InfoContext(ctx, "Config: port", "value", s.Port)
@@ -28,6 +55,10 @@ func LogWithLogger(s *Settings, logger *slog.Logger) {
 	logger.InfoContext(ctx, "Config: search.title_boost", "value", s.Search.TitleBoost)
 	logger.InfoContext(ctx, "Config: search.content_boost", "value", s.Search.ContentBoost)
 	logger.InfoContext(ctx, "Config: search.result_mode", "value", s.Search.ResultMode)
+	logger.InfoContext(ctx, "Config: search.semantic_model", "value", s.Search.SemanticModel)
+	if s.Search.SemanticModel != "" {
+		logger.InfoContext(ctx, "Config: search.semantic_floor", "value", s.Search.SemanticFloor)
+	}
 
 	logger.InfoContext(ctx, "Config: auth.type", "value", s.Auth.Type)
 	switch s.Auth.Type {
@@ -50,6 +81,8 @@ func SearchSettingsLogValue(s SearchSettings) slog.Value {
 		slog.Float64("title_boost", s.TitleBoost),
 		slog.Float64("content_boost", s.ContentBoost),
 		slog.String("result_mode", string(s.ResultMode)),
+		slog.String("semantic_model", s.SemanticModel),
+		slog.Float64("semantic_floor", s.SemanticFloor),
 	)
 }
 

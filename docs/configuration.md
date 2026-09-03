@@ -21,6 +21,7 @@ When the same setting is specified in multiple places, the following priority ap
 | `--port` | `-p` | `ACDC_MCP_PORT` | Port for SSE server (SSE mode only) | `8080` |
 | `--uri-scheme` | `-s` | `ACDC_MCP_URI_SCHEME` | URI scheme for resources (e.g. `acdc`, `myorg`) | `acdc` |
 | `--cross-ref` | — | `ACDC_MCP_CROSS_REF` | Transform relative markdown links between resources into resource URIs | `false` |
+| `--log-level` | — | `ACDC_MCP_LOG_LEVEL` | Minimum log severity: `debug`, `info`, `warn` or `error` | `info` |
 | `--search-max-results` | `-m` | `ACDC_MCP_SEARCH_MAX_RESULTS` | Maximum search results | `10` |
 | `--search-keywords-boost` | — | `ACDC_MCP_SEARCH_KEYWORDS_BOOST` | Boost for keywords matches | `3.0` |
 | `--search-heading-boost` | — | `ACDC_MCP_SEARCH_HEADING_BOOST` | Boost for heading path (`heading_path`) matches | `2.5` |
@@ -29,6 +30,8 @@ When the same setting is specified in multiple places, the following priority ap
 | `--search-content-boost` | — | `ACDC_MCP_SEARCH_CONTENT_BOOST` | Boost for content matches | `1.0` |
 | `--search-result-mode` | — | `ACDC_MCP_SEARCH_RESULT_MODE` | Search output detail: `references` (chunk citations only) or `content` (citations plus the full matched chunk body) | `references` |
 | `--search-in-memory` | — | `ACDC_MCP_SEARCH_IN_MEMORY` | Hold the search index in memory instead of on disk | `true` |
+| `--search-semantic-model` | — | `ACDC_MCP_SEARCH_SEMANTIC_MODEL` | Path to a directory holding a model2vec model — `model.safetensors`, `tokenizer.json` and `config.json`. Empty disables semantic search | _(empty)_ |
+| `--search-semantic-floor` | — | `ACDC_MCP_SEARCH_SEMANTIC_FLOOR` | Minimum cosine similarity a semantic hit must clear to be returned. `-1` disables the floor | `0.10` |
 
 ### What the search boosts actually do
 
@@ -71,6 +74,140 @@ magnitudes no meaningful ranking could use; the boundary itself is accepted, and
 strictly above it are rejected. Setting *all five* boosts to `0` is also rejected: the query
 would carry no clauses at all, so every search would return nothing while reporting success.
 Zeroing any subset of the five remains supported.
+
+### Semantic search
+
+Semantic search is off by default and costs nothing — in dependencies, binary
+size, startup time or ranking — until `--search-semantic-model` names a model
+path.
+
+When it is set, the server embeds every indexed chunk and fuses the semantic
+ranking with the existing full-text ranking using Reciprocal Rank Fusion, so a
+query phrased differently from the corpus still finds the right chunk. Chunk
+boundaries, chunk URIs and the `search` and `read` tool schemas are unchanged
+either way; only result order and the reported score change. Fused scores are
+normalized so the top result reads `1.00`, because Reciprocal Rank Fusion
+values carry rank information, not magnitude.
+
+The semantic side never answers on its own. When the full-text side returns nothing, the
+server skips the semantic scan and reports `No results found`. A similarity floor cannot
+tell a paraphrase from a question the corpus does not answer; an empty full-text result
+can. So semantic search widens the answers to a query the corpus does address, and it
+does not invent an answer to one the corpus does not.
+
+A model path that is missing, unreadable, or fails validation aborts startup
+with an error naming the path. Configuring semantic search and silently
+running without it would hide a broken deployment. A single document that
+cannot be embedded is different: it is skipped, counted in one summary warning
+at the end of indexing, and stays findable by full-text search.
+
+#### The model directory
+
+`--search-semantic-model` takes the path of a directory. The directory must hold three
+files:
+
+- `model.safetensors` — the embedding matrix. The adapter reads one tensor from it,
+  named `embeddings`, and rejects a file that carries any other tensor.
+- `tokenizer.json` — the tokenizer, in HuggingFace format.
+- `config.json` — the model's `hidden_dim` and `normalize` values.
+
+The shipped floor default is calibrated for `minishlab/potion-retrieval-32M`. To get that
+model:
+
+```bash
+mkdir -p /opt/models/potion-retrieval-32M && cd /opt/models/potion-retrieval-32M
+for f in model.safetensors tokenizer.json config.json; do
+  curl -sL -O "https://huggingface.co/minishlab/potion-retrieval-32M/resolve/main/$f"
+done
+```
+
+The server reads that directory and nothing else. It makes no network request, at startup
+or later, so download the model yourself and give the server the path. A path that is
+missing, unreadable or invalid aborts startup with an error that names the path.
+
+Any model2vec or potion model loads. The adapter reads one `embeddings` tensor and takes
+the plain mean of the rows the tokenizer selects, so a different model works if it carries
+that one tensor. But `--search-semantic-floor` is calibrated for the shipped model. If you
+change the model, re-measure the floor first — see below.
+
+#### What it costs
+
+Measured against `minishlab/potion-retrieval-32M`, whose matrix is 129 MB:
+
+| What | Cost |
+|---|---|
+| Cold start of a stdio session, model included | 0.105 s |
+| Model load alone | 77 ms |
+| Corpus embed, the 30 passages of `examples/sample-content` | 11 ms |
+| Corpus embed, a 1596-passage corpus | 0.12 s |
+| Query embed | 34 µs |
+
+The whole corpus embeds once, at startup, in memory. The server writes no vectors to disk
+and caches nothing between runs, because a re-embed of a real corpus costs about a tenth
+of a second. A query costs microseconds, so the semantic side adds nothing you can measure
+to search latency.
+
+#### Text the model cannot represent
+
+The tokenizer carries an English vocabulary. Text outside it — CJK script, for instance —
+reduces to no tokens, and the model then embeds it to a zero vector.
+
+This is a quality limit, not an error, and the server does not fail on it. A chunk that
+embeds to zero is skipped at index time and counted in the summary warning, so full-text
+search still finds it but semantic search never does. A query that embeds to zero
+degrades to full-text search alone. Neither case reports a fault. If your corpus is not
+mostly English, measure the semantic side before you rely on it.
+
+#### Tuning the similarity floor
+
+Cosine similarity always ranks something first: a vector search returns the
+least-dissimilar chunk in the corpus no matter what you ask. `--search-semantic-floor`
+is the threshold below which a semantic hit is discarded instead of returned, and it is
+what preserves the `No results found` answer for a query nothing matches.
+
+The shipped default of `0.10` is measured. It sits below every correct answer the
+calibration found, so it cuts off a tail of coincidental neighbours and nothing more.
+Treat it as a tail guard, not as a relevance gate.
+
+The headroom is thin. On `examples/sample-content` the lowest correct answer scores
+`0.110`, and on a 1596-passage corpus it scores `0.119`. The threshold that separates a
+real match from a coincidentally-nearby one is a property of the model and the corpus
+together, so a different model or a very different corpus needs a new measurement.
+`TestCalibration_SemanticFloor` in `internal/embed/model2vec` does that measurement. It
+prints the score distribution of matching and non-matching pairs:
+
+```bash
+ACDC_MCP_TEST_MODEL_DIR=/opt/models/potion-retrieval-32M \
+  go test ./internal/embed/model2vec/ -run Calibration -v -count=1
+```
+
+By default it measures `examples/sample-content`. To measure your own corpus, write a
+sanity set — a `content_dir` plus paraphrase query and chunk URI pairs — and name it in
+`ACDC_MCP_TEST_SANITY_SET`. Use `testdata/sanity-sample-content.json` as the template.
+
+Raise the floor if unrelated chunks appear in results; lower it if paraphrased queries
+stop finding documents that full-text search also misses. `-1` disables the floor
+entirely, and values above `1` are rejected at startup because nothing could ever clear
+them.
+
+Valid values run from `-1` to `1`. Anything outside that range aborts startup.
+
+To calibrate the floor against your own corpus, start the server with
+`--log-level debug` and run the queries you care about. Every semantic query then
+writes one `Semantic query ranked` line:
+
+```
+DEBUG Semantic query ranked candidates=8 above_floor=2 below_floor=6 top_score=0.41 floor=0.10
+```
+
+`top_score` is the best raw cosine similarity the scan found, reported whether or
+not it cleared the floor. A query that should have matched but returned nothing
+tells you which way to move: a `top_score` just under the floor means the floor is
+too high, and a `top_score` near zero means the model found nothing to match.
+
+> [!WARNING]
+> `debug` writes one line per search request. Use it to calibrate, then return to
+> `info`.
 
 ### How closely a query has to match
 
@@ -216,6 +353,7 @@ The server validates configuration at startup and will fail with a clear error i
 
 - `--uri-scheme` is empty or doesn't match RFC 3986 (must start with a letter, then letters/digits/`+`/`-`/`.`)
 - `--search-result-mode` is set to anything other than `references` or `content`
+- `--log-level` is set to anything other than `debug`, `info`, `warn` or `error`
 - every search boost is `0`, which would leave the query with no clauses and silently return no results
 - a search boost exceeds `1.34e154`, a conservative sanity cap beyond which no meaningful ranking
   could use the value (smaller boosts can still degenerate scoring — see above)

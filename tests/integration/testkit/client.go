@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/spf13/pflag"
 )
 
 // TestClient wraps an MCP ClientSession for testing via stdio or SSE transport.
@@ -54,7 +55,18 @@ func newStdioTestClientForDir(t testing.TB, contentDir, resultMode string, cross
 		CrossRef:   crossRef,
 	})
 
-	service := NewACDCService("acdc-client-test", flags)
+	return NewStdioTestClientWithFlags(t, flags)
+}
+
+// NewStdioTestClientWithFlags connects a test client to an ACDC server started
+// from a caller-built flag set, over stdio. It is the seam for configurations
+// FlagOptions does not model — semantic search, for one — and for server
+// options such as WithEmbedderProvider. The caller is responsible for setting
+// the stdio transport on the flag set.
+func NewStdioTestClientWithFlags(t testing.TB, flags *pflag.FlagSet, opts ...ServiceOption) *TestClient {
+	t.Helper()
+
+	service := NewACDCService("acdc-client-test", flags, opts...)
 	env := NewTestEnv(service)
 
 	props, err := env.Start()

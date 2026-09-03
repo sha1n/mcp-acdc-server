@@ -37,6 +37,19 @@ const (
 	DefaultContentBoost  float64 = 1.0
 )
 
+// DefaultSemanticFloor is the minimum cosine similarity a semantic hit must
+// clear to enter fusion.
+//
+// It is a guard on the degenerate tail, not a relevance gate. Measured on
+// minishlab/potion-retrieval-32M over the real corpus (474 chunks, 1596
+// passages): the correct chunk for a paraphrase query scores a minimum of
+// 0.119 and a p10 of 0.129, while a query with no answer at all reaches 0.324.
+// The two populations overlap almost completely, so no threshold separates
+// them — D11 gives that job to the lexical side instead. This value sits below
+// every correct answer measured, which is the only property it can honestly
+// have.
+const DefaultSemanticFloor float64 = 0.10
+
 // SearchSettings configuration for search service
 type SearchSettings struct {
 	MaxResults    int              `mapstructure:"max_results"`
@@ -47,6 +60,12 @@ type SearchSettings struct {
 	PathBoost     float64          `mapstructure:"path_boost"`
 	ContentBoost  float64          `mapstructure:"content_boost"`
 	ResultMode    SearchResultMode `mapstructure:"result_mode"`
+	// SemanticModel is a filesystem path to an embedding model. Empty
+	// disables semantic search entirely, which is the default.
+	SemanticModel string `mapstructure:"semantic_model"`
+	// SemanticFloor is the minimum cosine similarity a vector hit must clear
+	// to be fused into the results. -1 disables the floor.
+	SemanticFloor float64 `mapstructure:"semantic_floor"`
 }
 
 // Auth type constants
@@ -69,6 +88,18 @@ type BasicAuthSettings struct {
 	Password string `mapstructure:"password"`
 }
 
+// LogLevel names the minimum severity the server emits. Values are the slog
+// level names, matched without regard to case.
+const (
+	LogLevelDebug = "debug"
+	LogLevelInfo  = "info"
+	LogLevelWarn  = "warn"
+	LogLevelError = "error"
+)
+
+// DefaultLogLevel is the level the server runs at when an operator sets none.
+const DefaultLogLevel = LogLevelInfo
+
 // Settings application settings
 type Settings struct {
 	ContentDir string         `mapstructure:"content_dir"`
@@ -79,6 +110,10 @@ type Settings struct {
 	CrossRef   bool           `mapstructure:"cross_ref"`
 	Search     SearchSettings `mapstructure:"search"`
 	Auth       AuthSettings   `mapstructure:"auth"`
+	// LogLevel is the minimum severity written to stderr. Semantic search
+	// reports per-query ranking detail at debug, which is too high a volume
+	// for the default level.
+	LogLevel string `mapstructure:"log_level"`
 }
 
 // LoadSettings loads settings from environment variables and optional .env file
@@ -100,6 +135,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	v.SetDefault("host", "0.0.0.0")
 	v.SetDefault("port", 8080)
 	v.SetDefault("uri_scheme", "acdc")
+	v.SetDefault("log_level", DefaultLogLevel)
 	v.SetDefault("search.max_results", 10)
 	v.SetDefault("search.keywords_boost", DefaultKeywordsBoost)
 	v.SetDefault("search.heading_boost", DefaultHeadingBoost)
@@ -107,6 +143,8 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	v.SetDefault("search.path_boost", DefaultPathBoost)
 	v.SetDefault("search.content_boost", DefaultContentBoost)
 	v.SetDefault("search.result_mode", SearchResultModeReferences)
+	v.SetDefault("search.semantic_model", "")
+	v.SetDefault("search.semantic_floor", DefaultSemanticFloor)
 	v.SetDefault("search.in_memory", true)
 	v.SetDefault("cross_ref", false)
 	v.SetDefault("auth.type", AuthTypeNone)
@@ -127,7 +165,10 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	_ = v.BindEnv("search.title_boost", "ACDC_MCP_SEARCH_TITLE_BOOST")
 	_ = v.BindEnv("search.content_boost", "ACDC_MCP_SEARCH_CONTENT_BOOST")
 	_ = v.BindEnv("search.result_mode", "ACDC_MCP_SEARCH_RESULT_MODE")
+	_ = v.BindEnv("search.semantic_model", "ACDC_MCP_SEARCH_SEMANTIC_MODEL")
+	_ = v.BindEnv("search.semantic_floor", "ACDC_MCP_SEARCH_SEMANTIC_FLOOR")
 
+	_ = v.BindEnv("log_level", "ACDC_MCP_LOG_LEVEL")
 	_ = v.BindEnv("uri_scheme", "ACDC_MCP_URI_SCHEME")
 	_ = v.BindEnv("cross_ref", "ACDC_MCP_CROSS_REF")
 
@@ -143,6 +184,7 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 		_ = v.BindPFlag("host", flags.Lookup("host"))
 		_ = v.BindPFlag("port", flags.Lookup("port"))
 		_ = v.BindPFlag("uri_scheme", flags.Lookup("uri-scheme"))
+		_ = v.BindPFlag("log_level", flags.Lookup("log-level"))
 		_ = v.BindPFlag("cross_ref", flags.Lookup("cross-ref"))
 		_ = v.BindPFlag("search.max_results", flags.Lookup("search-max-results"))
 		_ = v.BindPFlag("search.keywords_boost", flags.Lookup("search-keywords-boost"))
@@ -151,6 +193,8 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 		_ = v.BindPFlag("search.title_boost", flags.Lookup("search-title-boost"))
 		_ = v.BindPFlag("search.content_boost", flags.Lookup("search-content-boost"))
 		_ = v.BindPFlag("search.result_mode", flags.Lookup("search-result-mode"))
+		_ = v.BindPFlag("search.semantic_model", flags.Lookup("search-semantic-model"))
+		_ = v.BindPFlag("search.semantic_floor", flags.Lookup("search-semantic-floor"))
 		_ = v.BindPFlag("search.in_memory", flags.Lookup("search-in-memory"))
 		_ = v.BindPFlag("auth.type", flags.Lookup("auth-type"))
 		_ = v.BindPFlag("auth.basic.username", flags.Lookup("auth-basic-username"))
@@ -197,6 +241,9 @@ func ValidateSettings(s *Settings) error {
 	if err := validateScheme(s.Scheme); err != nil {
 		return err
 	}
+	if _, err := ParseLogLevel(s.LogLevel); err != nil {
+		return err
+	}
 	if err := validateSearch(s.Search); err != nil {
 		return err
 	}
@@ -229,7 +276,11 @@ func validateSearch(s SearchSettings) error {
 		return errors.New("search result mode must be 'references' or 'content', got: " + string(s.ResultMode))
 	}
 
-	return validateBoosts(s)
+	if err := validateBoosts(s); err != nil {
+		return err
+	}
+
+	return validateSemanticFloor(s)
 }
 
 func validateAuth(a AuthSettings) error {
@@ -311,6 +362,23 @@ func validateBoosts(s SearchSettings) error {
 	}
 	if !anyPositive {
 		return errors.New("at least one of search.keywords_boost, search.heading_boost, search.title_boost, search.path_boost, or search.content_boost must be positive; all five at zero disables search entirely")
+	}
+	return nil
+}
+
+// validateSemanticFloor rejects a floor outside the range a cosine of unit
+// vectors can occupy.
+//
+// The upper bound is what matters: above 1 no hit ever clears the floor, so
+// semantic retrieval silently contributes nothing while still paying its
+// indexing cost. That is the one failure mode a configuration error must not
+// be allowed to reach. -1 is the documented way to disable the floor.
+func validateSemanticFloor(s SearchSettings) error {
+	if math.IsNaN(s.SemanticFloor) || math.IsInf(s.SemanticFloor, 0) {
+		return fmt.Errorf("search.semantic_floor must be a finite number, got: %v", s.SemanticFloor)
+	}
+	if s.SemanticFloor < -1 || s.SemanticFloor > 1 {
+		return fmt.Errorf("search.semantic_floor must be between -1 and 1, the range a cosine similarity can occupy, got: %v", s.SemanticFloor)
 	}
 	return nil
 }
