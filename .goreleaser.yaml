@@ -85,6 +85,8 @@ homebrew_casks:
     # `postflight_steps` stanza that Homebrew requires in place of the
     # deprecated `postflight`, so declare it through `custom_block`. The
     # Homebrew `{{staged_path}}` token is escaped from GoReleaser templating.
+    # With `hooks.post.install_steps` (goreleaser/goreleaser#6873), use
+    # `{{ .StagedPath }}`: hooks are templated twice and lose the escape.
     custom_block: |
       postflight_steps do
         on_macos do
