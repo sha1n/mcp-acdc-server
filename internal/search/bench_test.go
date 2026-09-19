@@ -343,7 +343,7 @@ func BenchmarkQuery(b *testing.B) {
 				require.NoError(b, batchIndex(context.Background(), index, chunkStream(corpus), batchSize))
 
 				// Set the field directly rather than calling Index: the index is
-				// already built, and Service.Close would then close it twice.
+				// already built, and TextService.Close would then close it twice.
 				service := NewService(testSettings())
 				service.index = index
 

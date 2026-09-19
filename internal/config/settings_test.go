@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log/slog"
 	"math"
 	"os"
 	"strings"
@@ -351,6 +352,7 @@ func defaultSearchSettings() SearchSettings {
 		TitleBoost:    DefaultTitleBoost,
 		PathBoost:     DefaultPathBoost,
 		ContentBoost:  DefaultContentBoost,
+		SemanticFloor: DefaultSemanticFloor,
 	}
 }
 
@@ -1074,4 +1076,199 @@ func TestUnsetEnvForTest_RestoresOnlyPreviouslySetVariables(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoadSettings_SemanticModelDefaultsToOff(t *testing.T) {
+	settings, err := LoadSettings()
+	require.NoError(t, err)
+	require.Empty(t, settings.Search.SemanticModel, "semantic search is off unless an operator configures a model")
+}
+
+func TestLoadSettings_SemanticModelFromEnv(t *testing.T) {
+	t.Setenv("ACDC_MCP_SEARCH_SEMANTIC_MODEL", "/models/potion-base-8m")
+
+	settings, err := LoadSettings()
+
+	require.NoError(t, err)
+	require.Equal(t, "/models/potion-base-8m", settings.Search.SemanticModel)
+}
+
+func TestLoadSettingsWithFlags_SemanticModelFlagBeatsEnv(t *testing.T) {
+	t.Setenv("ACDC_MCP_SEARCH_SEMANTIC_MODEL", "/models/from-env")
+
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	flags.String("search-semantic-model", "", "")
+	require.NoError(t, flags.Parse([]string{"--search-semantic-model", "/models/from-flag"}))
+
+	settings, err := LoadSettingsWithFlags(flags)
+
+	require.NoError(t, err)
+	require.Equal(t, "/models/from-flag", settings.Search.SemanticModel)
+}
+
+func TestLoadSettings_SemanticFloorDefaultsToThePlaceholder(t *testing.T) {
+	settings, err := LoadSettings()
+	require.NoError(t, err)
+	require.Equal(t, DefaultSemanticFloor, settings.Search.SemanticFloor)
+}
+
+func TestLoadSettings_SemanticFloorFromEnv(t *testing.T) {
+	t.Setenv("ACDC_MCP_SEARCH_SEMANTIC_FLOOR", "0.42")
+
+	settings, err := LoadSettings()
+
+	require.NoError(t, err)
+	require.InDelta(t, 0.42, settings.Search.SemanticFloor, 1e-9)
+}
+
+func TestValidateSettings_SemanticFloorRange(t *testing.T) {
+	tests := []struct {
+		name    string
+		floor   float64
+		wantErr bool
+	}{
+		{name: "the default", floor: DefaultSemanticFloor},
+		{name: "disabled", floor: -1},
+		{name: "exact matches only", floor: 1},
+		{name: "above the cosine range", floor: 1.5, wantErr: true},
+		{name: "below the cosine range", floor: -1.5, wantErr: true},
+		{name: "not a number", floor: math.NaN(), wantErr: true},
+		{name: "infinite", floor: math.Inf(1), wantErr: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			settings := &Settings{
+				Transport: "stdio",
+				Scheme:    "acdc",
+				Search:    defaultSearchSettings(),
+				Auth:      AuthSettings{Type: AuthTypeNone},
+			}
+			settings.Search.SemanticFloor = test.floor
+
+			err := ValidateSettings(settings)
+
+			if test.wantErr {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), "search.semantic_floor")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+// A path that does not load is the factory's error to report, so validation
+// must not reject one here — including a path that does not exist.
+func TestValidateSettings_AcceptsAnySemanticModelPath(t *testing.T) {
+	settings := &Settings{
+		Transport: "stdio",
+		Scheme:    "acdc",
+		Search:    defaultSearchSettings(),
+		Auth:      AuthSettings{Type: AuthTypeNone},
+	}
+	settings.Search.SemanticModel = "/definitely/not/a/real/path"
+
+	require.NoError(t, ValidateSettings(settings))
+}
+
+func TestLoadSettings_LogLevelDefaultsToInfo(t *testing.T) {
+	unsetEnvForTest(t, "ACDC_MCP_LOG_LEVEL")
+
+	settings, err := LoadSettings()
+	require.NoError(t, err)
+	require.Equal(t, "info", settings.LogLevel)
+}
+
+func TestLoadSettings_LogLevelFromEnv(t *testing.T) {
+	unsetEnvForTest(t, "ACDC_MCP_LOG_LEVEL")
+	t.Setenv("ACDC_MCP_LOG_LEVEL", "debug")
+
+	settings, err := LoadSettings()
+	require.NoError(t, err)
+	require.Equal(t, "debug", settings.LogLevel)
+}
+
+func TestLoadSettingsWithFlags_LogLevelFlagOverridesEnv(t *testing.T) {
+	unsetEnvForTest(t, "ACDC_MCP_LOG_LEVEL")
+	t.Setenv("ACDC_MCP_LOG_LEVEL", "error")
+
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	flags.String("log-level", "", "")
+	require.NoError(t, flags.Set("log-level", "warn"))
+
+	settings, err := LoadSettingsWithFlags(flags)
+	require.NoError(t, err)
+	require.Equal(t, "warn", settings.LogLevel)
+}
+
+func TestValidateSettings_LogLevel(t *testing.T) {
+	tests := []struct {
+		level   string
+		wantErr bool
+	}{
+		{"debug", false},
+		{"info", false},
+		{"warn", false},
+		{"error", false},
+		{"DEBUG", false},
+		{"", false},
+		{"trace", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.level, func(t *testing.T) {
+			settings := &Settings{
+				Transport: "stdio",
+				Scheme:    "acdc",
+				LogLevel:  tc.level,
+				Search: SearchSettings{
+					ResultMode:   SearchResultModeReferences,
+					ContentBoost: 1.0,
+				},
+				Auth: AuthSettings{Type: AuthTypeNone},
+			}
+
+			err := ValidateSettings(settings)
+			if tc.wantErr {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), "log level")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestParseLogLevel(t *testing.T) {
+	tests := []struct {
+		level string
+		want  slog.Level
+	}{
+		{"debug", slog.LevelDebug},
+		{"info", slog.LevelInfo},
+		{"warn", slog.LevelWarn},
+		{"error", slog.LevelError},
+		{"Warn", slog.LevelWarn},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.level, func(t *testing.T) {
+			got, err := ParseLogLevel(tc.level)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestParseLogLevel_EmptyResolvesToDefault(t *testing.T) {
+	got, err := ParseLogLevel("")
+	require.NoError(t, err)
+	require.Equal(t, slog.LevelInfo, got)
+}
+
+func TestParseLogLevel_Unknown(t *testing.T) {
+	_, err := ParseLogLevel("trace")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "log level")
 }

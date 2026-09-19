@@ -3,11 +3,13 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/embed/model2vec"
 	"github.com/spf13/pflag"
 )
 
@@ -26,7 +28,15 @@ func DefaultRunParams() RunParams {
 		LoadSettings:   config.LoadSettingsWithFlags,
 		ValidSettings:  config.ValidateSettings,
 		StartSSEServer: StartSSEServer,
-		CreateServer:   CreateMCPServer,
+		// Wrapped rather than assigned directly: CreateMCPServer is
+		// variadic in its options, which RunParams.CreateServer is not.
+		//
+		// The adapter is linked here rather than inside the factory so that
+		// internal/app keeps no compile-time dependency on a model format and
+		// a test can still install a different provider.
+		CreateServer: func(ctx context.Context, settings *config.Settings, version string) (*mcp.Server, func(), error) {
+			return CreateMCPServer(ctx, settings, version, WithEmbedderProvider(model2vec.New))
+		},
 	}
 }
 
@@ -44,8 +54,11 @@ func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, ve
 	}
 
 	// Configure logging - always use stderr to avoid buffering issues
-	handler := slog.NewTextHandler(os.Stderr, nil)
-	slog.SetDefault(slog.New(handler))
+	logger, err := newLogger(os.Stderr, settings.LogLevel)
+	if err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
+	}
+	slog.SetDefault(logger)
 
 	slog.Info("Starting MCP Acdc server", "version", version)
 	config.Log(settings)
@@ -70,4 +83,16 @@ func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, ve
 		slog.Info("Starting SSE server", "host", settings.Host, "port", settings.Port)
 		return params.StartSSEServer(mcpServer, settings)
 	}
+}
+
+// newLogger builds the process logger at the configured severity. Levels are
+// resolved through config.ParseLogLevel so the runner and settings validation
+// accept exactly the same names.
+func newLogger(out io.Writer, level string) (*slog.Logger, error) {
+	parsed, err := config.ParseLogLevel(level)
+	if err != nil {
+		return nil, err
+	}
+
+	return slog.New(slog.NewTextHandler(out, &slog.HandlerOptions{Level: parsed})), nil
 }

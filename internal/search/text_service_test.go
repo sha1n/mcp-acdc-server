@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
@@ -77,7 +81,7 @@ func testSettings() config.SearchSettings {
 	}
 }
 
-func indexChunks(t *testing.T, service *Service, chunks []domain.Chunk) {
+func indexChunks(t *testing.T, service *TextService, chunks []domain.Chunk) {
 	t.Helper()
 	stream := make(chan domain.Chunk, len(chunks))
 	for _, chunk := range chunks {
@@ -471,7 +475,7 @@ func TestService_BatchIndexStartsFreshBatchAfterEachFlush(t *testing.T) {
 func TestService_IndexRebuildsAndBatchesChunks(t *testing.T) {
 	service := NewService(testSettings())
 	defer service.Close()
-	// Indexed through Service.Index, which takes no batch-size argument and
+	// Indexed through TextService.Index, which takes no batch-size argument and
 	// always batches at defaultBatchSize: the corpus must exceed that constant
 	// for the rebuild below to flush more than one batch.
 	chunks := make([]domain.Chunk, defaultBatchSize+50)
@@ -501,7 +505,7 @@ func chunkIDs(results []SearchResult) []string {
 // heading_path clause from the query, letting a body-only match overtake a
 // heading-only one — the ordering TestSearch_ChunkFieldBoosts pins at defaults.
 func TestSearch_ReadsHeadingAndPathBoostsFromSettings(t *testing.T) {
-	newService := func(t *testing.T, mutate func(*config.SearchSettings)) *Service {
+	newService := func(t *testing.T, mutate func(*config.SearchSettings)) *TextService {
 		t.Helper()
 		settings := testSettings()
 		mutate(&settings)
@@ -572,9 +576,9 @@ func rankedScores(results []SearchResult) []rankedScore {
 }
 
 // indexInto indexes chunks into idx at the given batch size and attaches the
-// result to a Service, bypassing Service.newIndex so a test can choose the
+// result to a TextService, bypassing TextService.newIndex so a test can choose the
 // index kind and the batch size independently.
-func indexInto(t *testing.T, idx searchIndex, chunks []domain.Chunk, batchSize int) *Service {
+func indexInto(t *testing.T, idx searchIndex, chunks []domain.Chunk, batchSize int) *TextService {
 	t.Helper()
 
 	stream := make(chan domain.Chunk, len(chunks))
@@ -591,7 +595,7 @@ func indexInto(t *testing.T, idx searchIndex, chunks []domain.Chunk, batchSize i
 }
 
 // searchThrough runs the production query shape against a caller-supplied
-// index, bypassing Service.newIndex so a test can choose the index kind.
+// index, bypassing TextService.newIndex so a test can choose the index kind.
 func searchThrough(t *testing.T, idx searchIndex, chunks []domain.Chunk, query string) []rankedScore {
 	t.Helper()
 
@@ -680,7 +684,7 @@ func syntheticCorpusChunks(n int) []domain.Chunk {
 
 // batchIndexedService indexes chunks into a fresh in-memory index at the
 // given batch size.
-func batchIndexedService(t *testing.T, chunks []domain.Chunk, batchSize int) *Service {
+func batchIndexedService(t *testing.T, chunks []domain.Chunk, batchSize int) *TextService {
 	t.Helper()
 
 	idx, err := newMemoryIndex(buildMapping())
@@ -692,7 +696,7 @@ func batchIndexedService(t *testing.T, chunks []domain.Chunk, batchSize int) *Se
 // across. No settling is needed: these services index in memory, where scorch
 // runs neither the persister nor the merger, so the root snapshot is final the
 // moment batchIndex returns.
-func serviceRootSegments(t *testing.T, service *Service) int {
+func serviceRootSegments(t *testing.T, service *TextService) int {
 	t.Helper()
 
 	idx, ok := service.index.(bleve.Index)
@@ -828,4 +832,265 @@ func TestSearch_CompositeAllFieldIsEmpty(t *testing.T) {
 				"dynamic mapping must not index Chunk fields with no explicit mapping")
 		}
 	})
+}
+
+func TestTextService_FetchReturnsStoredMetadataForKnownIDs(t *testing.T) {
+	service := NewService(testSettings())
+	defer service.Close()
+
+	indexChunks(t, service, []domain.Chunk{
+		{
+			ID: "c1", SourceID: "s1", SourceURI: "acdc://guides/a",
+			ChunkURI: "acdc://guides/a#intro", SourceTitle: "Guide A",
+			SourcePath: "guides/a.md", HeadingPath: []string{"Intro"},
+			StartLine: 3, EndLine: 9, Content: "alpha content",
+		},
+		{
+			ID: "c2", SourceID: "s2", SourceURI: "acdc://guides/b",
+			ChunkURI: "acdc://guides/b#setup", SourceTitle: "Guide B",
+			SourcePath: "guides/b.md", HeadingPath: []string{"Setup"},
+			StartLine: 1, EndLine: 4, Content: "beta content",
+		},
+		{ID: "c3", SourceID: "s3", SourceURI: "acdc://guides/c", Content: "gamma"},
+	})
+
+	results, err := service.Fetch([]string{"c2", "c1"})
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+
+	byID := map[string]SearchResult{}
+	for _, r := range results {
+		byID[r.ChunkID] = r
+	}
+
+	require.Equal(t, "Guide A", byID["c1"].SourceTitle)
+	require.Equal(t, "acdc://guides/a#intro", byID["c1"].ChunkURI)
+	require.Equal(t, []string{"Intro"}, byID["c1"].HeadingPath)
+	require.Equal(t, 3, byID["c1"].StartLine)
+	require.Equal(t, 9, byID["c1"].EndLine)
+	require.Equal(t, "alpha content", byID["c1"].Content)
+	// No Highlight on a DocID lookup, so the snippet falls back to leading content.
+	require.Equal(t, "alpha content", byID["c1"].Snippet)
+	require.Equal(t, "Guide B", byID["c2"].SourceTitle)
+}
+
+func TestTextService_FetchToleratesUnknownAndEmptyIDs(t *testing.T) {
+	service := NewService(testSettings())
+	defer service.Close()
+
+	indexChunks(t, service, []domain.Chunk{
+		{ID: "c1", SourceID: "s1", SourceTitle: "Guide A", Content: "alpha"},
+	})
+
+	results, err := service.Fetch([]string{"c1", "missing"})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, "c1", results[0].ChunkID)
+
+	empty, err := service.Fetch(nil)
+	require.NoError(t, err)
+	require.Empty(t, empty)
+}
+
+func TestTextService_FetchOnEmptyIndexReturnsNothing(t *testing.T) {
+	service := NewService(testSettings())
+	defer service.Close()
+
+	results, err := service.Fetch([]string{"c1"})
+	require.NoError(t, err)
+	require.Empty(t, results)
+}
+
+// A DocID lookup has no query to highlight against, so the snippet is built
+// from leading content. Without a bound the whole chunk becomes the snippet,
+// which content mode then prints a second time as Content.
+func TestTextService_FetchBoundsTheSnippetForLargeChunks(t *testing.T) {
+	service := NewService(testSettings())
+	defer service.Close()
+
+	body := strings.Repeat("alpha ", 400)
+	indexChunks(t, service, []domain.Chunk{
+		{ID: "c1", SourceID: "s1", SourceURI: "acdc://guides/a", Content: body},
+	})
+
+	results, err := service.Fetch([]string{"c1"})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+
+	require.Less(t, len([]rune(results[0].Snippet)), len([]rune(body)),
+		"expected the snippet to be bounded, not the whole chunk")
+	require.Equal(t, body, results[0].Content, "Content must stay whole")
+}
+
+func TestTextService_FetchKeepsShortContentIntactAsTheSnippet(t *testing.T) {
+	service := NewService(testSettings())
+	defer service.Close()
+
+	indexChunks(t, service, []domain.Chunk{
+		{ID: "c1", SourceID: "s1", SourceURI: "acdc://guides/a", Content: "alpha content"},
+	})
+
+	results, err := service.Fetch([]string{"c1"})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, "alpha content", results[0].Snippet)
+}
+
+// build releases the read lock so searches keep answering during a rebuild.
+// Rebuilds still have to run one at a time: two at once would hold two whole
+// indexes in memory, which is what the single lock used to prevent.
+func TestService_ConcurrentRebuildsRunOneAtATime(t *testing.T) {
+	var mu sync.Mutex
+	inFlight, peak := 0, 0
+
+	originalNewMemoryIndex := newMemoryIndex
+	newMemoryIndex = func(m mapping.IndexMapping) (bleve.Index, error) {
+		mu.Lock()
+		inFlight++
+		if inFlight > peak {
+			peak = inFlight
+		}
+		mu.Unlock()
+
+		time.Sleep(20 * time.Millisecond)
+
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+
+		return originalNewMemoryIndex(m)
+	}
+	t.Cleanup(func() { newMemoryIndex = originalNewMemoryIndex })
+
+	service := NewService(testSettings())
+	t.Cleanup(service.Close)
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			stream := make(chan domain.Chunk)
+			close(stream)
+			require.NoError(t, service.Index(context.Background(), stream))
+		}()
+	}
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, 1, peak, "two rebuilds held an index in memory at the same time")
+}
+
+// closeTrackingIndex records whether the index it wraps was released.
+// The field is an alias rather than bleve.Index directly: bleve.Index declares
+// an Index method, which an embedded field of that name would shadow.
+type embeddedBleveIndex = bleve.Index
+
+type closeTrackingIndex struct {
+	embeddedBleveIndex
+	closed *atomic.Bool
+}
+
+func (i *closeTrackingIndex) Close() error {
+	i.closed.Store(true)
+	return i.embeddedBleveIndex.Close()
+}
+
+func trackIndexClose(t *testing.T) *atomic.Bool {
+	t.Helper()
+	var closed atomic.Bool
+	original := newMemoryIndex
+	newMemoryIndex = func(m mapping.IndexMapping) (bleve.Index, error) {
+		index, err := original(m)
+		if err != nil {
+			return nil, err
+		}
+		return &closeTrackingIndex{embeddedBleveIndex: index, closed: &closed}, nil
+	}
+	t.Cleanup(func() { newMemoryIndex = original })
+
+	return &closed
+}
+
+// A rebuild owns the right to publish from the moment it starts building until
+// it publishes. Releasing that right when the build ends would let a rebuild
+// that started later publish first, and leave the older generation installed.
+func TestService_ABuiltGenerationBlocksTheNextRebuild(t *testing.T) {
+	service := NewService(testSettings())
+	t.Cleanup(service.Close)
+
+	first, err := service.build(context.Background(), chunkStream([]domain.Chunk{{
+		ID: "c1", SourceID: "s1", SourceURI: "acdc://s1", ChunkURI: "acdc://s1#c1", Content: "alpha",
+	}}))
+	require.NoError(t, err)
+
+	second := make(chan *lexicalGeneration, 1)
+	go func() {
+		generation, buildErr := service.build(context.Background(), chunkStream([]domain.Chunk{{
+			ID: "c2", SourceID: "s2", SourceURI: "acdc://s2", ChunkURI: "acdc://s2#c2", Content: "beta",
+		}}))
+		if buildErr != nil {
+			close(second)
+			return
+		}
+		second <- generation
+	}()
+
+	select {
+	case <-second:
+		t.Fatal("a rebuild built a generation while an earlier one was still unpublished")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	service.publish(first)
+	later := <-second
+	require.NotNil(t, later)
+	service.publish(later)
+
+	results, err := service.Search("beta", 0)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, "c2", results[0].ChunkID)
+}
+
+// Close can land while a rebuild is still filling its private index. That
+// generation must not become the published one, and it must not stay open.
+func TestService_PublishAfterCloseReleasesTheGeneration(t *testing.T) {
+	closed := trackIndexClose(t)
+
+	service := NewService(testSettings())
+	generation, err := service.build(context.Background(), chunkStream([]domain.Chunk{{
+		ID: "c1", SourceID: "s1", SourceURI: "acdc://s1", ChunkURI: "acdc://s1#c1", Content: "alpha",
+	}}))
+	require.NoError(t, err)
+
+	service.Close()
+	service.publish(generation)
+
+	require.True(t, closed.Load(), "a generation built during shutdown was left open")
+
+	count, err := service.DocCount()
+	require.NoError(t, err)
+	require.Zero(t, count, "a generation became visible after Close")
+}
+
+// The on-disk mode also owns a temporary directory. Rejecting a generation has
+// to remove it, or shutdown leaks a whole index directory.
+func TestService_PublishAfterCloseRemovesTheGenerationIndexDir(t *testing.T) {
+	settings := testSettings()
+	settings.InMemory = false
+
+	service := NewService(settings)
+	generation, err := service.build(context.Background(), chunkStream([]domain.Chunk{{
+		ID: "c1", SourceID: "s1", SourceURI: "acdc://s1", ChunkURI: "acdc://s1#c1", Content: "alpha",
+	}}))
+	require.NoError(t, err)
+	require.NotEmpty(t, generation.indexDir)
+
+	service.Close()
+	service.publish(generation)
+
+	_, statErr := os.Stat(generation.indexDir)
+	require.True(t, os.IsNotExist(statErr), "shutdown left the index directory behind")
 }

@@ -193,13 +193,38 @@ func TestACDCService_StartExit(t *testing.T) {
 	}
 }
 
-func TestACDCService_StdioStartFailureClosesThePipesWithTheStartupError(t *testing.T) {
+// A server that fails before reaching its transport never serves, so Start
+// reports the failure directly rather than handing back pipes that only carry
+// it once someone reads them.
+func TestACDCService_StdioStartReportsAFailureBeforeServing(t *testing.T) {
 	flags := NewTestFlags(t, t.TempDir(), &FlagOptions{Transport: "stdio"})
 
 	service := NewACDCService("stdio-start-failure", flags)
 	acdc := service.(*acdcService)
 	startErr := errors.New("startup failed")
 	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error {
+		return startErr
+	}
+
+	_, err := service.Start()
+	if !errors.Is(err, startErr) {
+		t.Fatalf("Expected Start to report the startup error, got %v", err)
+	}
+}
+
+func TestACDCService_StdioStopFailureClosesThePipesWithTheStopError(t *testing.T) {
+	flags := NewTestFlags(t, t.TempDir(), &FlagOptions{Transport: "stdio"})
+
+	service := NewACDCService("stdio-stop-failure", flags)
+	acdc := service.(*acdcService)
+	startErr := errors.New("server stopped")
+	// Connecting first puts the service past the point where Start can report
+	// the failure itself, which is the only case where a caller is holding the
+	// pipes when the server goes away.
+	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error {
+		if _, err := params.CustomIOTransport.Connect(ctx); err != nil {
+			return err
+		}
 		return startErr
 	}
 

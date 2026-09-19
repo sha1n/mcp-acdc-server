@@ -66,7 +66,7 @@ func floodedCorpus(floodChunks, otherSources int) []domain.Chunk {
 	return chunks
 }
 
-func indexedService(t *testing.T, chunks []domain.Chunk) *search.Service {
+func indexedService(t *testing.T, chunks []domain.Chunk) *search.TextService {
 	t.Helper()
 
 	service := search.NewService(config.SearchSettings{

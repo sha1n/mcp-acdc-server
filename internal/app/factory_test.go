@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/content"
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
+	"github.com/sha1n/mcp-acdc-server/internal/embed"
 	"github.com/sha1n/mcp-acdc-server/internal/resources"
 	"github.com/sha1n/mcp-acdc-server/internal/search"
 	"github.com/stretchr/testify/require"
@@ -811,4 +813,183 @@ func TestCreateMCPServer_CrossRefTransformation_CustomScheme(t *testing.T) {
 	if !strings.Contains(contentA, "myco://b") {
 		t.Errorf("Content should contain 'myco://b', got: %s", contentA)
 	}
+}
+
+const testMetadata = `
+server:
+  name: test
+  version: "1.0"
+  instructions: test
+tools: []
+`
+
+func TestCreateMCPServer_SemanticOffBuildsThePlainLexicalService(t *testing.T) {
+	var built search.Searcher
+	deps := defaultFactoryDeps()
+	deps.newSearch = func(settings config.SearchSettings) search.Searcher {
+		built = search.NewService(settings)
+		return built
+	}
+
+	settings := appTestSettings(writeMetadataOnly(t, testMetadata))
+	_, cleanup, err := createMCPServer(context.Background(), settings, "test", deps)
+	require.NoError(t, err)
+	defer cleanup()
+
+	require.IsType(t, &search.TextService{}, built)
+}
+
+func TestCreateMCPServer_SemanticOffNeverLoadsAModel(t *testing.T) {
+	loaded := false
+	deps := defaultFactoryDeps()
+	deps.newEmbedder = func(string) (embed.Embedder, error) {
+		loaded = true
+		return embed.NewFake(8), nil
+	}
+
+	settings := appTestSettings(writeMetadataOnly(t, testMetadata))
+	_, cleanup, err := createMCPServer(context.Background(), settings, "test", deps)
+	require.NoError(t, err)
+	defer cleanup()
+
+	require.False(t, loaded, "an unset model path must cost nothing")
+}
+
+func TestCreateMCPServer_SemanticOnLoadsTheConfiguredModel(t *testing.T) {
+	var requested string
+	deps := defaultFactoryDeps()
+	deps.newEmbedder = func(modelPath string) (embed.Embedder, error) {
+		requested = modelPath
+		return embed.NewFake(8), nil
+	}
+
+	settings := appTestSettings(writeMetadataOnly(t, testMetadata))
+	settings.Search.SemanticModel = "/models/potion-base-8m"
+
+	_, cleanup, err := createMCPServer(context.Background(), settings, "test", deps)
+	require.NoError(t, err)
+	defer cleanup()
+
+	require.Equal(t, "/models/potion-base-8m", requested)
+}
+
+// The floor reaches the retriever, so a misconfigured one cannot be silently
+// replaced by a compiled-in constant.
+func TestCreateMCPServer_SemanticSettingsReachTheHybridService(t *testing.T) {
+	deps := defaultFactoryDeps()
+	deps.newEmbedder = func(string) (embed.Embedder, error) { return embed.NewFake(8), nil }
+
+	settings := appTestSettings(writeMetadataOnly(t, testMetadata))
+	settings.Search.SemanticModel = "/models/potion-base-8m"
+	settings.Search.SemanticFloor = 0.6
+
+	deps.newSearch = func(searchSettings config.SearchSettings) search.Searcher {
+		require.InDelta(t, 0.6, searchSettings.SemanticFloor, 1e-9)
+		return search.NewService(searchSettings)
+	}
+
+	_, cleanup, err := createMCPServer(context.Background(), settings, "test", deps)
+	require.NoError(t, err)
+	defer cleanup()
+}
+
+// D7: the operator explicitly asked for semantic search, so a model that does
+// not load is a broken deployment, not a degraded one.
+func TestCreateMCPServer_AbortsWhenTheConfiguredModelFailsToLoad(t *testing.T) {
+	deps := defaultFactoryDeps()
+	deps.newEmbedder = func(string) (embed.Embedder, error) {
+		return nil, errors.New("unreadable")
+	}
+
+	settings := appTestSettings(writeMetadataOnly(t, testMetadata))
+	settings.Search.SemanticModel = "/models/broken"
+
+	_, _, err := createMCPServer(context.Background(), settings, "test", deps)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "/models/broken", "the error must name the path the operator configured")
+}
+
+func TestCreateMCPServer_ReportsThatNoBackendIsCompiledIn(t *testing.T) {
+	settings := appTestSettings(writeMetadataOnly(t, testMetadata))
+	settings.Search.SemanticModel = "/models/potion-base-8m"
+
+	_, _, err := createMCPServer(context.Background(), settings, "test", defaultFactoryDeps())
+
+	require.ErrorIs(t, err, embed.ErrNoBackend)
+}
+
+// A failed semantic startup must not leak the lexical index it already built.
+// With --search-in-memory=false that Close is what removes the on-disk index
+// directory, so the abort path owns the cleanup.
+func TestCreateMCPServer_ClosesTheLexicalIndexWhenTheModelFailsToLoad(t *testing.T) {
+	lexical := &fakeSearcher{}
+	deps := defaultFactoryDeps()
+	deps.newSearch = func(config.SearchSettings) search.Searcher { return lexical }
+	deps.newEmbedder = func(string) (embed.Embedder, error) {
+		return nil, errors.New("unreadable")
+	}
+
+	settings := appTestSettings(writeMetadataOnly(t, testMetadata))
+	settings.Search.SemanticModel = "/models/broken"
+
+	_, _, err := createMCPServer(context.Background(), settings, "test", deps)
+
+	require.Error(t, err)
+	require.Equal(t, 1, lexical.closeCalls, "the lexical index built before the failure must be closed")
+}
+
+// fakeSearcher deliberately has no Fetch, which is what NewHybridService
+// requires of its lexical side; this reaches the decoration failure path rather
+// than the model-load one.
+func TestCreateMCPServer_ClosesTheLexicalIndexWhenHybridDecorationFails(t *testing.T) {
+	lexical := &fakeSearcher{}
+	deps := defaultFactoryDeps()
+	deps.newSearch = func(config.SearchSettings) search.Searcher { return lexical }
+	deps.newEmbedder = func(string) (embed.Embedder, error) { return embed.NewFake(8), nil }
+
+	settings := appTestSettings(writeMetadataOnly(t, testMetadata))
+	settings.Search.SemanticModel = "/models/potion-base-8m"
+
+	_, _, err := createMCPServer(context.Background(), settings, "test", deps)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "/models/potion-base-8m", "the error must name the path the operator configured")
+	require.Equal(t, 1, lexical.closeCalls, "the lexical index built before the failure must be closed")
+}
+
+func TestCreateMCPServer_SemanticOffReportsTheServingMode(t *testing.T) {
+	read := captureLogs(t, slog.LevelInfo)
+	deps := defaultFactoryDeps()
+
+	settings := appTestSettings(writeMetadataOnly(t, testMetadata))
+	_, cleanup, err := createMCPServer(context.Background(), settings, "test", deps)
+	require.NoError(t, err)
+	defer cleanup()
+
+	requireLog(t, read(), "Semantic search disabled, serving lexical results only")
+}
+
+func TestCreateMCPServer_SemanticOnReportsTheLoadedModel(t *testing.T) {
+	read := captureLogs(t, slog.LevelInfo)
+	deps := defaultFactoryDeps()
+	deps.newEmbedder = func(string) (embed.Embedder, error) {
+		fake := embed.NewFake(8)
+		fake.MaxTokens = 512
+		return fake, nil
+	}
+
+	settings := appTestSettings(writeMetadataOnly(t, testMetadata))
+	settings.Search.SemanticModel = "/models/potion-base-8m"
+	settings.Search.SemanticFloor = 0.6
+
+	_, cleanup, err := createMCPServer(context.Background(), settings, "test", deps)
+	require.NoError(t, err)
+	defer cleanup()
+
+	record := requireLog(t, read(), "Semantic search enabled")
+	require.Equal(t, "/models/potion-base-8m", record.Attrs["model"])
+	require.EqualValues(t, 8, record.Attrs["dimensions"])
+	require.EqualValues(t, 512, record.Attrs["max_tokens"])
+	require.InDelta(t, 0.6, record.Attrs["floor"], 1e-9)
 }

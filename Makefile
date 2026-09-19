@@ -72,6 +72,10 @@ build:
 .PHONY: test
 test: install go-test
 
+## test-race: Runs all Go tests under the race detector
+.PHONY: test-race
+test-race: install go-test-race
+
 ## coverage: Runs all Go tests and generates a coverage report
 .PHONY: coverage
 coverage: install
@@ -133,7 +137,7 @@ go-build-current:
 	@GOOS=$(GOHOSTOS) GOARCH=$(GOHOSTARCH) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME) $(GOBASE)/cmd/acdc-mcp
 
 .PHONY: go-build
-go-build: go-get go-build-linux-amd64 go-build-linux-arm64 go-build-linux-arm go-build-darwin-amd64 go-build-darwin-arm64 go-build-windows-amd64 go-build-windows-arm
+go-build: go-get go-build-linux-amd64 go-build-linux-arm64 go-build-linux-arm go-build-darwin-amd64 go-build-darwin-arm64 go-build-windows-amd64 go-build-windows-arm64
 
 .PHONY: go-build-linux-amd64
 go-build-linux-amd64:
@@ -165,10 +169,10 @@ go-build-windows-amd64:
 	@echo "  >  Building windows amd64 binaries..."
 	@GOOS=$(GOOS_WINDOWS) GOARCH=$(GOARCH_AMD64) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-$(GOOS_WINDOWS)-$(GOARCH_AMD64).exe $(GOBASE)/cmd/acdc-mcp
 
-.PHONY: go-build-windows-arm
-go-build-windows-arm:
-	@echo "  >  Building windows arm binaries..."
-	@GOOS=$(GOOS_WINDOWS) GOARCH=$(GOARCH_ARM) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-$(GOOS_WINDOWS)-$(GOARCH_ARM).exe $(GOBASE)/cmd/acdc-mcp
+.PHONY: go-build-windows-arm64
+go-build-windows-arm64:
+	@echo "  >  Building windows arm64 binaries..."
+	@GOOS=$(GOOS_WINDOWS) GOARCH=$(GOARCH_ARM64) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-$(GOOS_WINDOWS)-$(GOARCH_ARM64).exe $(GOBASE)/cmd/acdc-mcp
 
 .PHONY: go-generate
 go-generate:
@@ -188,6 +192,11 @@ go-install:
 go-test:
 	@echo "  >  Running tests..."
 	go test $(MODFLAGS) ./...
+
+.PHONY: go-test-race
+go-test-race:
+	@echo "  >  Running tests with the race detector..."
+	go test $(MODFLAGS) -race ./...
 
 .PHONY: go-clean
 go-clean:

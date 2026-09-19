@@ -60,6 +60,10 @@ jobs:
         run: make coverage
         env:
           CI: true
+      - name: Run tests under the race detector
+        run: make test-race
+        env:
+          CI: true
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
         with:
