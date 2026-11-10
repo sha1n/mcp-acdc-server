@@ -8,7 +8,6 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
-	"github.com/sha1n/mcp-acdc-server/internal/webui"
 	"github.com/spf13/pflag"
 )
 
@@ -23,20 +22,20 @@ type RunParams struct {
 
 // DefaultRunParams returns production dependencies
 func DefaultRunParams() RunParams {
-	// The web UI backend is the search service built by CreateServer, so the
+	// The web UI components are built by CreateServer, so the
 	// two closures share it. RunWithDeps always calls CreateServer before
 	// StartSSEServer, which is the ordering this relies on; it keeps the
 	// RunParams function types unchanged.
-	var uiBackend webui.Backend
+	var ui uiComponents
 	return RunParams{
 		LoadSettings:  config.LoadSettingsWithFlags,
 		ValidSettings: config.ValidateSettings,
 		StartSSEServer: func(s *mcp.Server, settings *config.Settings) error {
-			return StartSSEServer(s, settings, WithUIBackend(uiBackend))
+			return StartSSEServer(s, settings, ui.sseOptions()...)
 		},
 		CreateServer: func(ctx context.Context, settings *config.Settings, version string) (*mcp.Server, func(), error) {
-			server, backend, cleanup, err := createServer(ctx, settings, version, defaultFactoryDeps())
-			uiBackend = backend
+			server, components, cleanup, err := createServer(ctx, settings, version, defaultFactoryDeps())
+			ui = components
 			return server, cleanup, err
 		},
 	}

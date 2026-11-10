@@ -15,13 +15,31 @@ import (
 type SSEOption func(*sseOptions)
 
 type sseOptions struct {
-	uiBackend webui.Backend
+	uiBackend   webui.Backend
+	uiDocuments webui.DocumentReader
 }
 
 // WithUIBackend supplies the backend for the web UI. Without one the UI routes
 // are not registered even when ui.enabled is set.
 func WithUIBackend(backend webui.Backend) SSEOption {
 	return func(o *sseOptions) { o.uiBackend = backend }
+}
+
+// WithUIDocumentReader supplies the whole-document reader behind
+// /api/v1/document. Without one that route returns 404.
+func WithUIDocumentReader(reader webui.DocumentReader) SSEOption {
+	return func(o *sseOptions) { o.uiDocuments = reader }
+}
+
+// uiComponents are the web UI dependencies createServer builds alongside the
+// MCP server.
+type uiComponents struct {
+	backend   webui.Backend
+	documents webui.DocumentReader
+}
+
+func (c uiComponents) sseOptions() []SSEOption {
+	return []SSEOption{WithUIBackend(c.backend)}
 }
 
 // StartSSEServer starts the SSE server with authentication

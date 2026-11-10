@@ -34,15 +34,19 @@ type Backend interface {
 }
 
 type handler struct {
-	backend  Backend
-	settings config.UISettings
-	markdown goldmark.Markdown
+	backend   Backend
+	settings  config.UISettings
+	markdown  goldmark.Markdown
+	documents DocumentReader
 }
 
 // NewHandler returns a handler serving the UI under /ui/ and the JSON API
 // under /api/v1/. Callers mount it at those paths unchanged.
-func NewHandler(backend Backend, settings config.UISettings) http.Handler {
+func NewHandler(backend Backend, settings config.UISettings, opts ...HandlerOption) http.Handler {
 	h := &handler{backend: backend, settings: settings, markdown: goldmark.New()}
+	for _, opt := range opts {
+		opt(h)
+	}
 
 	static, err := fs.Sub(staticFiles, "static")
 	if err != nil {

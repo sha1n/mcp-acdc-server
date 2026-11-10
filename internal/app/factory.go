@@ -42,19 +42,19 @@ func createMCPServer(ctx context.Context, settings *config.Settings, version str
 	return server, cleanup, err
 }
 
-// createServer also returns the search service as a web UI backend, or nil
-// when the configured Searcher cannot serve one.
-func createServer(ctx context.Context, settings *config.Settings, version string, deps factoryDeps) (*mcpsdk.Server, webui.Backend, func(), error) {
+// createServer also returns the web UI dependencies built alongside the MCP
+// server.
+func createServer(ctx context.Context, settings *config.Settings, version string, deps factoryDeps) (*mcpsdk.Server, uiComponents, func(), error) {
 	// Initialize content provider
 	cp := content.NewContentProvider(settings.ContentDir)
 
 	if err := rejectLegacyContentLayout(cp); err != nil {
-		return nil, nil, nil, err
+		return nil, uiComponents{}, nil, err
 	}
 
 	resolved, err := resolveMetadata(cp, version)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, uiComponents{}, nil, err
 	}
 	metadata := resolved.metadata
 
@@ -79,20 +79,20 @@ func createServer(ctx context.Context, settings *config.Settings, version string
 	// Discover resources
 	discovery, err := deps.discover(ctx, cp, metadata.Index, settings.Scheme, discoverOpts...)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to discover resources: %w", err)
+		return nil, uiComponents{}, nil, fmt.Errorf("failed to discover resources: %w", err)
 	}
 
 	warnIfLegacyLayoutIgnored(cp, resolved.defaulted, discovery)
 
 	resourceProvider, err := assembleResourceProvider(discovery, settings.CrossRef, settings.Scheme)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to create resource provider: %w", err)
+		return nil, uiComponents{}, nil, fmt.Errorf("failed to create resource provider: %w", err)
 	}
 
 	// Discover prompts
 	promptDefinitions, err := prompts.DiscoverPrompts(cp)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to discover prompts: %w", err)
+		return nil, uiComponents{}, nil, fmt.Errorf("failed to discover prompts: %w", err)
 	}
 
 	promptProvider := prompts.NewPromptProvider(promptDefinitions, cp)
@@ -103,7 +103,7 @@ func createServer(ctx context.Context, settings *config.Settings, version string
 	// Index resources
 	if err := IndexResources(ctx, resourceProvider, searchService); err != nil {
 		searchService.Close()
-		return nil, nil, nil, err
+		return nil, uiComponents{}, nil, err
 	}
 
 	holder := resources.NewCatalogHolder(resourceProvider)
@@ -140,7 +140,7 @@ func createServer(ctx context.Context, settings *config.Settings, version string
 	refresher.bindRegistrar(registrar)
 
 	backend, _ := searchService.(webui.Backend)
-	return mcpServer, backend, searchService.Close, nil
+	return mcpServer, uiComponents{backend: backend}, searchService.Close, nil
 }
 
 // assembleResourceProvider builds the resource catalog from a discovery
