@@ -11,7 +11,7 @@ const App = (() => {
   const LIMIT_CHOICES = [5, 10, 20, 50, 100];
 
   const layouts = new Map();
-  const state = { q: '', labels: [], limit: 20, variant: 'A' };
+  const state = { q: '', labels: [], limit: 20, variant: 'A', doc: '' };
   let cfg = { default_limit: 20, max_limit: 100 };
   let view = { kind: 'empty' };
   let cleanupLayout = null;
@@ -105,6 +105,7 @@ const App = (() => {
     state.limit = Number.isFinite(lim) ? lim : NaN;
     const v = (p.get('variant') || 'A').toUpperCase();
     state.variant = layouts.has(v) ? v : 'A';
+    state.doc = p.get('doc') || '';
   }
   function writeURL() {
     const p = new URLSearchParams();
@@ -112,6 +113,7 @@ const App = (() => {
     for (const l of state.labels) p.append('label', l);
     if (state.limit !== cfg.default_limit) p.set('limit', String(state.limit));
     p.set('variant', state.variant);
+    if (state.doc) p.set('doc', state.doc);
     history.replaceState(null, '', `${location.pathname}?${p}`);
   }
 
@@ -317,8 +319,14 @@ const App = (() => {
 
   function preview(r, opts = {}) {
     const hp = r.heading_path || [];
+    const canOpen = !!r.source_uri;
+    const openDoc = (e) => { e.stopPropagation(); Reader.open(r.source_uri, { heading: hp[hp.length - 1], trigger: e.currentTarget }); };
     return h('article', { class: 'preview' },
-      opts.title === false ? null : h('h2', { class: 'pv-title' }, resultTitle(r)),
+      opts.title === false ? null : h('h2', { class: 'pv-title' }, canOpen
+        ? h('button', { class: 'pv-title-btn', type: 'button', title: 'Open the whole document', onclick: openDoc }, resultTitle(r))
+        : resultTitle(r)),
+      canOpen ? h('div', { class: 'pv-actions' },
+        h('button', { class: 'ghost-btn pv-open', type: 'button', onclick: openDoc }, 'Open document ↗')) : null,
       r.path ? h('div', { class: 'pv-path' }, r.path) : null,
       hp.length ? h('nav', { class: 'crumbs', 'aria-label': 'Heading path' }, hp.map((s) => h('span', {}, s))) : null,
       h('div', { class: 'pv-meta' },
@@ -327,6 +335,129 @@ const App = (() => {
         typeof r.score === 'number' ? h('span', {}, `score ${r.score.toFixed(3)}`) : null),
       h('div', { class: 'pv-body', html: r.content_html || '' }));
   }
+
+  // ---------- full-document reader ----------
+  // One shared overlay for every variant. Escape is handled in the capture phase and stopped so that
+  // layout-level Escape handlers (e.g. variant C's panel) do not also fire underneath it.
+  const Reader = (() => {
+    const FLASH_MS = 2200;
+    let root = null;
+    let scroller = null;
+    let trigger = null;
+    let abort = null;
+    let seq = 0;
+
+    const isOpen = () => !!root;
+
+    function frame(...content) {
+      scroller.replaceChildren(h('div', { class: 'rd-col' }, ...content));
+    }
+
+    function open(uri, opts = {}) {
+      if (!uri) return;
+      if (!root) {
+        trigger = opts.trigger || document.activeElement;
+        scroller = h('div', { class: 'rd-scroll', tabindex: '-1' });
+        root = h('div', { class: 'rd-backdrop', onclick: (e) => { if (e.target === root) close(); } },
+          h('div', { class: 'rd-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Document' },
+            h('button', { class: 'ghost-btn rd-close', type: 'button', 'aria-label': 'Close document', onclick: () => close() }, 'Esc ✕'),
+            scroller));
+        document.body.append(root);
+        document.body.classList.add('rd-locked');
+        window.addEventListener('keydown', onKey, true);
+      }
+      state.doc = uri;
+      writeURL();
+      load(uri, opts.heading);
+    }
+
+    async function load(uri, heading) {
+      if (abort) abort.abort();
+      abort = new AbortController();
+      const mine = ++seq;
+      root.querySelector('.rd-dialog').setAttribute('aria-busy', 'true');
+      frame(h('div', { class: 'state' }, h('div', { class: 'spinner' }), 'Loading document…'));
+      scroller.focus({ preventScroll: true });
+      try {
+        const d = await api(`/api/v1/document?uri=${encodeURIComponent(uri)}`, abort.signal);
+        if (mine !== seq || !root) return;
+        render(d, heading);
+      } catch (err) {
+        if (err.name === 'AbortError' || mine !== seq || !root) return;
+        frame(h('div', { class: 'state error' }, h('h2', {}, 'Could not open document'), err.message,
+          h('div', { class: 'chip-row' }, h('button', { class: 'ghost-btn', type: 'button', onclick: () => load(uri, heading) }, 'Retry'))));
+      } finally {
+        if (mine === seq && root) root.querySelector('.rd-dialog').removeAttribute('aria-busy');
+      }
+    }
+
+    function render(d, heading) {
+      const title = d.title || d.path || d.uri || 'Untitled';
+      root.querySelector('.rd-dialog').setAttribute('aria-label', title);
+      const body = h('div', { class: 'pv-body rd-body', html: d.content_html || '' });
+      frame(
+        h('header', { class: 'rd-head' },
+          h('h1', { class: 'rd-title' }, title),
+          d.path ? h('div', { class: 'pv-path' }, d.path) : null,
+          (d.labels || []).length ? h('div', { class: 'pv-labels rd-labels' }, d.labels.map((l) => h('button', {
+            class: 'chip', type: 'button', style: `--h:${labelHue(l)}`, title: `Filter by label “${l}”`,
+            onclick: () => { close(); addLabel(l); },
+          }, l))) : null),
+        body);
+      scroller.scrollTop = 0;
+      scroller.focus({ preventScroll: true });
+      if (heading) revealHeading(body, heading);
+    }
+
+    function revealHeading(body, heading) {
+      const want = heading.trim().toLowerCase();
+      const target = [...body.querySelectorAll('h1,h2,h3,h4,h5,h6')]
+        .find((n) => n.textContent.trim().toLowerCase() === want);
+      if (!target) return;
+      target.scrollIntoView({ block: 'start' });
+      target.classList.add('rd-flash');
+      setTimeout(() => target.classList.remove('rd-flash'), FLASH_MS);
+    }
+
+    function onKey(e) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        close();
+        return;
+      }
+      if (e.key === 'Tab') trapTab(e);
+    }
+
+    function trapTab(e) {
+      const items = [...root.querySelectorAll('button, a[href], [tabindex]:not([tabindex="-1"])')]
+        .filter((n) => !n.disabled && n.offsetParent !== null);
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      const inside = root.contains(document.activeElement);
+      if (e.shiftKey && (document.activeElement === first || !inside)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (document.activeElement === last || !inside)) { e.preventDefault(); first.focus(); }
+    }
+
+    function close() {
+      if (!root) return;
+      seq++;
+      if (abort) abort.abort();
+      window.removeEventListener('keydown', onKey, true);
+      root.remove();
+      root = null;
+      scroller = null;
+      document.body.classList.remove('rd-locked');
+      state.doc = '';
+      writeURL();
+      const back = trigger && trigger.isConnected ? trigger : el.input;
+      trigger = null;
+      back.focus({ preventScroll: true });
+    }
+
+    return { open, close, isOpen };
+  })();
 
   const ctx = {
     h, labelChip, preview, resultTitle, addLabel,
@@ -379,7 +510,7 @@ const App = (() => {
     $('variant-next').addEventListener('click', () => stepVariant(1));
     document.addEventListener('keydown', (e) => {
       if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-      if (isEditable(document.activeElement)) return;
+      if (isEditable(document.activeElement) || Reader.isOpen()) return;
       e.preventDefault();
       stepVariant(e.key === 'ArrowLeft' ? -1 : 1);
     });
@@ -391,6 +522,7 @@ const App = (() => {
     buildLimit();
     el.input.focus();
     searchNow();
+    if (state.doc) Reader.open(state.doc, { trigger: el.input });
   }
 
   return { register, start };
