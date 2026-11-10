@@ -8,7 +8,20 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/auth"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/webui"
 )
+
+// SSEOption customises NewSSEServer.
+type SSEOption func(*sseOptions)
+
+type sseOptions struct {
+	uiBackend webui.Backend
+}
+
+// WithUIBackend is a stub pending implementation.
+func WithUIBackend(backend webui.Backend) SSEOption {
+	return func(o *sseOptions) { o.uiBackend = backend }
+}
 
 // StartSSEServer starts the SSE server with authentication
 func StartSSEServer(s *mcp.Server, settings *config.Settings) error {
@@ -22,7 +35,7 @@ func StartSSEServer(s *mcp.Server, settings *config.Settings) error {
 }
 
 // NewSSEServer creates a new SSE server with authentication middleware
-func NewSSEServer(s *mcp.Server, settings *config.Settings) (*http.Server, error) {
+func NewSSEServer(s *mcp.Server, settings *config.Settings, _ ...SSEOption) (*http.Server, error) {
 	// Factory function returns the server instance for each request
 	sseHandler := mcp.NewSSEHandler(func(r *http.Request) *mcp.Server {
 		return s

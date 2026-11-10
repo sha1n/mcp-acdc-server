@@ -37,6 +37,15 @@ const (
 	DefaultContentBoost  float64 = 1.0
 )
 
+// MaxUIResultLimit is the upper bound for ui.max_results and per-request web UI limits.
+const MaxUIResultLimit = 100
+
+// UISettings configures the embedded web search UI.
+type UISettings struct {
+	Enabled    bool `mapstructure:"enabled"`
+	MaxResults int  `mapstructure:"max_results"`
+}
+
 // SearchSettings configuration for search service
 type SearchSettings struct {
 	MaxResults    int              `mapstructure:"max_results"`
@@ -79,6 +88,7 @@ type Settings struct {
 	CrossRef   bool           `mapstructure:"cross_ref"`
 	Search     SearchSettings `mapstructure:"search"`
 	Auth       AuthSettings   `mapstructure:"auth"`
+	UI         UISettings     `mapstructure:"ui"`
 }
 
 // LoadSettings loads settings from environment variables and optional .env file

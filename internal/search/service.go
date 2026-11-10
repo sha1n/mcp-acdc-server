@@ -44,6 +44,13 @@ type SearchResult struct {
 	Score       float64
 	Snippet     string
 	Content     string
+	Labels      []string
+}
+
+// LabelCount is a label and the number of indexed chunks carrying it.
+type LabelCount struct {
+	Name  string
+	Count int
 }
 
 // Searcher indexes and searches document chunks.
@@ -458,4 +465,14 @@ func (s *Service) DocCount() (uint64, error) {
 		return 0, nil
 	}
 	return s.index.DocCount()
+}
+
+// SearchLabeled is a stub pending implementation.
+func (s *Service) SearchLabeled(queryStr string, labels []string, limit int) ([]SearchResult, error) {
+	return nil, nil
+}
+
+// Labels is a stub pending implementation.
+func (s *Service) Labels(prefix string, limit int) ([]LabelCount, error) {
+	return nil, nil
 }
