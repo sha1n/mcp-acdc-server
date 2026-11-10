@@ -8,6 +8,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/webui"
 	"github.com/spf13/pflag"
 )
 
@@ -22,11 +23,22 @@ type RunParams struct {
 
 // DefaultRunParams returns production dependencies
 func DefaultRunParams() RunParams {
+	// The web UI backend is the search service built by CreateServer, so the
+	// two closures share it. RunWithDeps always calls CreateServer before
+	// StartSSEServer, which is the ordering this relies on; it keeps the
+	// RunParams function types unchanged.
+	var uiBackend webui.Backend
 	return RunParams{
-		LoadSettings:   config.LoadSettingsWithFlags,
-		ValidSettings:  config.ValidateSettings,
-		StartSSEServer: StartSSEServer,
-		CreateServer:   CreateMCPServer,
+		LoadSettings:  config.LoadSettingsWithFlags,
+		ValidSettings: config.ValidateSettings,
+		StartSSEServer: func(s *mcp.Server, settings *config.Settings) error {
+			return StartSSEServer(s, settings, WithUIBackend(uiBackend))
+		},
+		CreateServer: func(ctx context.Context, settings *config.Settings, version string) (*mcp.Server, func(), error) {
+			server, backend, cleanup, err := createServer(ctx, settings, version, defaultFactoryDeps())
+			uiBackend = backend
+			return server, cleanup, err
+		},
 	}
 }
 
@@ -49,6 +61,9 @@ func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, ve
 
 	slog.Info("Starting MCP Acdc server", "version", version)
 	config.Log(settings)
+	if settings.Transport == "stdio" && settings.UI.Enabled {
+		slog.Warn("Web UI requires the sse transport; ignoring ui.enabled", "transport", settings.Transport)
+	}
 
 	mcpServer, cleanup, err := params.CreateServer(ctx, settings, version)
 	if err != nil {

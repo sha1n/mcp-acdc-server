@@ -29,6 +29,11 @@ func LogWithLogger(s *Settings, logger *slog.Logger) {
 	logger.InfoContext(ctx, "Config: search.content_boost", "value", s.Search.ContentBoost)
 	logger.InfoContext(ctx, "Config: search.result_mode", "value", s.Search.ResultMode)
 
+	logger.InfoContext(ctx, "Config: ui.enabled", "value", s.UI.Enabled)
+	if s.UI.Enabled {
+		logger.InfoContext(ctx, "Config: ui.max_results", "value", s.UI.MaxResults)
+	}
+
 	logger.InfoContext(ctx, "Config: auth.type", "value", s.Auth.Type)
 	switch s.Auth.Type {
 	case AuthTypeBasic:
@@ -83,5 +88,14 @@ func SettingsLogValue(s Settings) slog.Value {
 		slog.Int("port", s.Port),
 		slog.Any("search", SearchSettingsLogValue(s.Search)),
 		slog.Any("auth", AuthSettingsLogValue(s.Auth)),
+		slog.Any("ui", UISettingsLogValue(s.UI)),
+	)
+}
+
+// UISettingsLogValue returns a slog.Value for UISettings
+func UISettingsLogValue(s UISettings) slog.Value {
+	return slog.GroupValue(
+		slog.Bool("enabled", s.Enabled),
+		slog.Int("max_results", s.MaxResults),
 	)
 }

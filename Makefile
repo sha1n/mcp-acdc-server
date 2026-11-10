@@ -132,6 +132,10 @@ go-build-current:
 	@echo "  >  Building $(GOHOSTOS)/$(GOHOSTARCH) binaries..."
 	@GOOS=$(GOHOSTOS) GOARCH=$(GOHOSTARCH) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME) $(GOBASE)/cmd/acdc-mcp
 
+.PHONY: run-ui
+run-ui: go-build-current
+	@$(GOBIN)/$(PROGRAMNAME) --transport sse --ui-enabled --content-dir ./examples/sample-content
+
 .PHONY: go-build
 go-build: go-get go-build-linux-amd64 go-build-linux-arm64 go-build-linux-arm go-build-darwin-amd64 go-build-darwin-arm64 go-build-windows-amd64 go-build-windows-arm
 

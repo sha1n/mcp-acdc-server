@@ -86,6 +86,31 @@ readinessProbe:
     port: 8080
 ```
 
+### Web UI (experimental)
+
+Under `--transport sse`, the server can also serve a browser search UI. It is off by default and sits behind the same authentication as `/sse`. With `stdio` the setting is ignored and a warning is logged.
+
+| Flag | Environment Variable | Default | Description |
+|------|---------------------|---------|-------------|
+| `--ui-enabled` | `ACDC_MCP_UI_ENABLED` | `false` | Serve the UI at `/ui/` and its JSON API under `/api/v1/`. |
+| `--ui-max-results` | `ACDC_MCP_UI_MAX_RESULTS` | `20` | Default result count per UI search, `1`–`100`. |
+
+```bash
+acdc-mcp --transport sse --ui-enabled --content-dir ./content
+# open http://localhost:8080/ui/
+make run-ui   # same, against ./examples/sample-content
+```
+
+The API is read-only (`GET`), returns JSON, and reports errors as `{"error":"..."}`:
+
+| Route | Parameters | Returns |
+|-------|------------|---------|
+| `/api/v1/config` | — | `default_limit`, `max_limit` |
+| `/api/v1/labels` | `q` (case-insensitive name prefix), `limit` (default `10`, `1`–`100`) | Labels with chunk counts, most used first. |
+| `/api/v1/search` | `q`, `label` (repeatable, all must match), `limit` (default `--ui-max-results`, `1`–`100`) | Matching chunks with a highlighted `snippet`, raw `content`, and rendered `content_html`. |
+
+A chunk's labels are its path labels plus its frontmatter `keywords`, lower-cased.
+
 ## Content layout
 
 <details>

@@ -40,6 +40,9 @@ const (
 // MaxUIResultLimit is the upper bound for ui.max_results and per-request web UI limits.
 const MaxUIResultLimit = 100
 
+// DefaultUIMaxResults is the default ui.max_results.
+const DefaultUIMaxResults = 20
+
 // UISettings configures the embedded web search UI.
 type UISettings struct {
 	Enabled    bool `mapstructure:"enabled"`
@@ -120,6 +123,8 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	v.SetDefault("search.in_memory", true)
 	v.SetDefault("cross_ref", false)
 	v.SetDefault("auth.type", AuthTypeNone)
+	v.SetDefault("ui.enabled", false)
+	v.SetDefault("ui.max_results", DefaultUIMaxResults)
 
 	// Environment variables
 	v.SetEnvPrefix("ACDC_MCP")
@@ -146,6 +151,9 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	_ = v.BindEnv("auth.basic.password", "ACDC_MCP_AUTH_BASIC_PASSWORD")
 	_ = v.BindEnv("auth.api_keys", "ACDC_MCP_AUTH_API_KEYS")
 
+	_ = v.BindEnv("ui.enabled", "ACDC_MCP_UI_ENABLED")
+	_ = v.BindEnv("ui.max_results", "ACDC_MCP_UI_MAX_RESULTS")
+
 	// Bind CLI flags if provided (highest priority)
 	if flags != nil {
 		_ = v.BindPFlag("content_dir", flags.Lookup("content-dir"))
@@ -166,6 +174,8 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 		_ = v.BindPFlag("auth.basic.username", flags.Lookup("auth-basic-username"))
 		_ = v.BindPFlag("auth.basic.password", flags.Lookup("auth-basic-password"))
 		_ = v.BindPFlag("auth.api_keys", flags.Lookup("auth-api-keys"))
+		_ = v.BindPFlag("ui.enabled", flags.Lookup("ui-enabled"))
+		_ = v.BindPFlag("ui.max_results", flags.Lookup("ui-max-results"))
 	}
 
 	// Helper to look for .env file
@@ -210,6 +220,9 @@ func ValidateSettings(s *Settings) error {
 	if err := validateSearch(s.Search); err != nil {
 		return err
 	}
+	if err := validateUI(s.UI); err != nil {
+		return err
+	}
 
 	return validateAuth(s.Auth)
 }
@@ -240,6 +253,16 @@ func validateSearch(s SearchSettings) error {
 	}
 
 	return validateBoosts(s)
+}
+
+func validateUI(ui UISettings) error {
+	if !ui.Enabled {
+		return nil
+	}
+	if ui.MaxResults < 1 || ui.MaxResults > MaxUIResultLimit {
+		return fmt.Errorf("ui.max_results must be between 1 and %d, got: %d", MaxUIResultLimit, ui.MaxResults)
+	}
+	return nil
 }
 
 func validateAuth(a AuthSettings) error {

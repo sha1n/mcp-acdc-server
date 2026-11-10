@@ -9,6 +9,7 @@ import (
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/index/scorch"
 	"github.com/blevesearch/bleve/v2/mapping"
+	bsearch "github.com/blevesearch/bleve/v2/search"
 	"github.com/blevesearch/bleve/v2/search/query"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/domain"
@@ -201,7 +202,7 @@ func newBatchWriter(index BatchIndexer, batchSize int) *batchWriter {
 }
 
 func (w *batchWriter) add(chunk domain.Chunk) error {
-	if err := w.batch.Index(chunk.ID, chunk); err != nil {
+	if err := w.batch.Index(chunk.ID, newIndexedChunk(chunk)); err != nil {
 		return fmt.Errorf("failed to add chunk to batch: %w", err)
 	}
 	w.pending++
@@ -270,6 +271,7 @@ func buildMapping() mapping.IndexMapping {
 	} {
 		chunkMapping.AddFieldMappingsAt(field, searchableText)
 	}
+	chunkMapping.AddFieldMappingsAt(fieldLabels, labelMapping())
 	chunkMapping.AddFieldMappingsAt(domain.FieldStartLine, lineNumber)
 	chunkMapping.AddFieldMappingsAt(domain.FieldEndLine, lineNumber)
 
@@ -287,22 +289,37 @@ func (s *Service) Search(queryStr string, candidateLimit int) ([]SearchResult, e
 		return []SearchResult{}, nil
 	}
 
-	maxResults := s.settings.MaxResults
+	hits, err := s.execute(s.textQuery(queryStr), s.resultLimit(candidateLimit))
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]SearchResult, 0, len(hits))
+	for _, hit := range hits {
+		results = append(results, toSearchResult(hit))
+	}
+
+	return results, nil
+}
+
+func (s *Service) resultLimit(candidateLimit int) int {
 	if candidateLimit > 0 {
-		maxResults = candidateLimit
+		return candidateLimit
 	}
+	return s.settings.MaxResults
+}
 
-	// Build query with keyword boosting
-	// Use DisjunctionQuery to search multiple fields with different boosts
-	var q query.Query
+func (s *Service) textQuery(queryStr string) query.Query {
 	if queryStr == "*" {
-		q = bleve.NewMatchAllQuery()
-	} else {
-		q = bleve.NewDisjunctionQuery(s.boostedFieldQueries(queryStr)...)
+		return bleve.NewMatchAllQuery()
 	}
+	return bleve.NewDisjunctionQuery(s.boostedFieldQueries(queryStr)...)
+}
 
+// execute must be called with s.mu held and s.index non-nil.
+func (s *Service) execute(q query.Query, size int) (bsearch.DocumentMatchCollection, error) {
 	searchRequest := bleve.NewSearchRequest(q)
-	searchRequest.Size = maxResults
+	searchRequest.Size = size
 	searchRequest.Fields = []string{"*"}
 	searchRequest.Highlight = bleve.NewHighlight()
 	searchRequest.SortBy([]string{"-_score", domain.FieldSourceURI, domain.FieldChunkID})
@@ -311,34 +328,32 @@ func (s *Service) Search(queryStr string, candidateLimit int) ([]SearchResult, e
 	if err != nil {
 		return nil, fmt.Errorf("search failed: %w", err)
 	}
+	return searchResult.Hits, nil
+}
 
-	results := make([]SearchResult, 0, len(searchResult.Hits))
-	for _, hit := range searchResult.Hits {
-		snippet := fieldString(hit.Fields, domain.FieldContent)
-		if fragments, ok := hit.Fragments[domain.FieldContent]; ok && len(fragments) > 0 {
-			snippet = fragments[0]
-		}
-		if snippet == "" {
-			snippet = fieldString(hit.Fields, domain.FieldSourceTitle)
-		}
-
-		results = append(results, SearchResult{
-			ChunkID:     fieldStringOr(hit.Fields, domain.FieldChunkID, hit.ID),
-			SourceID:    fieldString(hit.Fields, domain.FieldSourceID),
-			SourceURI:   fieldString(hit.Fields, domain.FieldSourceURI),
-			ChunkURI:    fieldString(hit.Fields, domain.FieldChunkURI),
-			SourceTitle: fieldString(hit.Fields, domain.FieldSourceTitle),
-			SourcePath:  fieldString(hit.Fields, domain.FieldSourcePath),
-			HeadingPath: fieldStrings(hit.Fields, domain.FieldHeadingPath),
-			StartLine:   fieldInt(hit.Fields, domain.FieldStartLine),
-			EndLine:     fieldInt(hit.Fields, domain.FieldEndLine),
-			Score:       hit.Score,
-			Snippet:     snippet,
-			Content:     fieldString(hit.Fields, domain.FieldContent),
-		})
+func toSearchResult(hit *bsearch.DocumentMatch) SearchResult {
+	snippet := fieldString(hit.Fields, domain.FieldContent)
+	if fragments, ok := hit.Fragments[domain.FieldContent]; ok && len(fragments) > 0 {
+		snippet = fragments[0]
+	}
+	if snippet == "" {
+		snippet = fieldString(hit.Fields, domain.FieldSourceTitle)
 	}
 
-	return results, nil
+	return SearchResult{
+		ChunkID:     fieldStringOr(hit.Fields, domain.FieldChunkID, hit.ID),
+		SourceID:    fieldString(hit.Fields, domain.FieldSourceID),
+		SourceURI:   fieldString(hit.Fields, domain.FieldSourceURI),
+		ChunkURI:    fieldString(hit.Fields, domain.FieldChunkURI),
+		SourceTitle: fieldString(hit.Fields, domain.FieldSourceTitle),
+		SourcePath:  fieldString(hit.Fields, domain.FieldSourcePath),
+		HeadingPath: fieldStrings(hit.Fields, domain.FieldHeadingPath),
+		StartLine:   fieldInt(hit.Fields, domain.FieldStartLine),
+		EndLine:     fieldInt(hit.Fields, domain.FieldEndLine),
+		Score:       hit.Score,
+		Snippet:     snippet,
+		Content:     fieldString(hit.Fields, domain.FieldContent),
+	}
 }
 
 // boostedFieldQueries builds one match clause per field carrying a positive boost.
@@ -465,14 +480,4 @@ func (s *Service) DocCount() (uint64, error) {
 		return 0, nil
 	}
 	return s.index.DocCount()
-}
-
-// SearchLabeled is a stub pending implementation.
-func (s *Service) SearchLabeled(queryStr string, labels []string, limit int) ([]SearchResult, error) {
-	return nil, nil
-}
-
-// Labels is a stub pending implementation.
-func (s *Service) Labels(prefix string, limit int) ([]LabelCount, error) {
-	return nil, nil
 }

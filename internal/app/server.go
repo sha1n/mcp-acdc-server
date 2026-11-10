@@ -18,14 +18,15 @@ type sseOptions struct {
 	uiBackend webui.Backend
 }
 
-// WithUIBackend is a stub pending implementation.
+// WithUIBackend supplies the backend for the web UI. Without one the UI routes
+// are not registered even when ui.enabled is set.
 func WithUIBackend(backend webui.Backend) SSEOption {
 	return func(o *sseOptions) { o.uiBackend = backend }
 }
 
 // StartSSEServer starts the SSE server with authentication
-func StartSSEServer(s *mcp.Server, settings *config.Settings) error {
-	srv, err := NewSSEServer(s, settings)
+func StartSSEServer(s *mcp.Server, settings *config.Settings, opts ...SSEOption) error {
+	srv, err := NewSSEServer(s, settings, opts...)
 	if err != nil {
 		return err
 	}
@@ -35,7 +36,12 @@ func StartSSEServer(s *mcp.Server, settings *config.Settings) error {
 }
 
 // NewSSEServer creates a new SSE server with authentication middleware
-func NewSSEServer(s *mcp.Server, settings *config.Settings, _ ...SSEOption) (*http.Server, error) {
+func NewSSEServer(s *mcp.Server, settings *config.Settings, opts ...SSEOption) (*http.Server, error) {
+	var options sseOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+
 	// Factory function returns the server instance for each request
 	sseHandler := mcp.NewSSEHandler(func(r *http.Request) *mcp.Server {
 		return s
@@ -48,6 +54,7 @@ func NewSSEServer(s *mcp.Server, settings *config.Settings, _ ...SSEOption) (*ht
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.Handle("/sse", sseHandler)
+	mountUI(mux, settings.UI, options.uiBackend)
 
 	authMiddleware, err := auth.NewMiddleware(settings.Auth)
 	if err != nil {
@@ -61,4 +68,19 @@ func NewSSEServer(s *mcp.Server, settings *config.Settings, _ ...SSEOption) (*ht
 		Addr:    addr,
 		Handler: handler,
 	}, nil
+}
+
+func mountUI(mux *http.ServeMux, ui config.UISettings, backend webui.Backend) {
+	if !ui.Enabled {
+		return
+	}
+	if backend == nil {
+		slog.Warn("Web UI is enabled but no search backend is available; UI not served")
+		return
+	}
+	uiHandler := webui.NewHandler(backend, ui)
+	for _, pattern := range []string{"/ui", "/ui/", "/api/v1/"} {
+		mux.Handle(pattern, uiHandler)
+	}
+	slog.Info("Web UI enabled", "path", "/ui/")
 }

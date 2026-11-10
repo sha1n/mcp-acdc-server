@@ -25,4 +25,6 @@ func RegisterFlags(flags *pflag.FlagSet) {
 	flags.StringP("auth-basic-username", "u", "", "Basic auth username")
 	flags.StringP("auth-basic-password", "P", "", "Basic auth password")
 	flags.StringSliceP("auth-api-keys", "k", nil, "API keys (comma-separated)")
+	flags.Bool("ui-enabled", false, "Serve the experimental web search UI at /ui/ (sse transport only)")
+	flags.Int("ui-max-results", 0, "Default number of web UI search results, 1-100 (default: 20)")
 }
