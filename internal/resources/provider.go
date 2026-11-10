@@ -118,6 +118,16 @@ func (p *ResourceProvider) ReadResource(uri string) (string, error) {
 	return "", fmt.Errorf("%w: %s", ErrUnknownResource, uri)
 }
 
+// Source returns a copy of the source document registered under uri. Its
+// Content is the untransformed body; ReadResource returns the served form.
+func (p *ResourceProvider) Source(uri string) (domain.SourceDocument, bool) {
+	source, ok := p.sourceByURI[uri]
+	if !ok {
+		return domain.SourceDocument{}, false
+	}
+	return cloneSource(source), true
+}
+
 // StreamChunks streams transformed copies in deterministic discovery order.
 func (p *ResourceProvider) StreamChunks(ctx context.Context, ch chan<- domain.Chunk) error {
 	for _, catalogChunk := range p.chunks {

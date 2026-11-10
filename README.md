@@ -106,10 +106,11 @@ The API is read-only (`GET`), returns JSON, and reports errors as `{"error":"...
 | Route | Parameters | Returns |
 |-------|------------|---------|
 | `/api/v1/config` | — | `default_limit`, `max_limit` |
+| `/api/v1/document` | `uri` (required; a search result's `source_uri`) | The whole document as served to MCP clients: `uri`, `title`, `path`, `labels`, raw `content`, and rendered `content_html`. `404` for an unknown `uri`. |
 | `/api/v1/labels` | `q` (case-insensitive name prefix), `limit` (default `10`, `1`–`100`) | Labels with chunk counts, most used first. |
 | `/api/v1/search` | `q`, `label` (repeatable, all must match), `limit` (default `--ui-max-results`, `1`–`100`) | Matching chunks with a highlighted `snippet`, raw `content`, and rendered `content_html`. |
 
-A chunk's labels are its path labels plus its frontmatter `keywords`, lower-cased.
+A chunk's or document's labels are its path labels plus its frontmatter `keywords`, lower-cased.
 
 ## Content layout
 

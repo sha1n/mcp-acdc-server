@@ -68,6 +68,9 @@ func (h *handler) serveAPI(w http.ResponseWriter, r *http.Request) {
 		"/api/v1/labels": h.handleLabels,
 		"/api/v1/search": h.handleSearch,
 	}
+	if h.documents != nil {
+		routes["/api/v1/document"] = h.handleDocument
+	}
 	route, ok := routes[r.URL.Path]
 	if !ok {
 		writeError(w, http.StatusNotFound, "not found")

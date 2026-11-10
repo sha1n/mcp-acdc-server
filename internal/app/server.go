@@ -39,7 +39,7 @@ type uiComponents struct {
 }
 
 func (c uiComponents) sseOptions() []SSEOption {
-	return []SSEOption{WithUIBackend(c.backend)}
+	return []SSEOption{WithUIBackend(c.backend), WithUIDocumentReader(c.documents)}
 }
 
 // StartSSEServer starts the SSE server with authentication
@@ -72,7 +72,7 @@ func NewSSEServer(s *mcp.Server, settings *config.Settings, opts ...SSEOption) (
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.Handle("/sse", sseHandler)
-	mountUI(mux, settings.UI, options.uiBackend)
+	mountUI(mux, settings.UI, options.uiBackend, options.uiDocuments)
 
 	authMiddleware, err := auth.NewMiddleware(settings.Auth)
 	if err != nil {
@@ -88,7 +88,7 @@ func NewSSEServer(s *mcp.Server, settings *config.Settings, opts ...SSEOption) (
 	}, nil
 }
 
-func mountUI(mux *http.ServeMux, ui config.UISettings, backend webui.Backend) {
+func mountUI(mux *http.ServeMux, ui config.UISettings, backend webui.Backend, documents webui.DocumentReader) {
 	if !ui.Enabled {
 		return
 	}
@@ -96,7 +96,11 @@ func mountUI(mux *http.ServeMux, ui config.UISettings, backend webui.Backend) {
 		slog.Warn("Web UI is enabled but no search backend is available; UI not served")
 		return
 	}
-	uiHandler := webui.NewHandler(backend, ui)
+	var opts []webui.HandlerOption
+	if documents != nil {
+		opts = append(opts, webui.WithDocumentReader(documents))
+	}
+	uiHandler := webui.NewHandler(backend, ui, opts...)
 	for _, pattern := range []string{"/ui", "/ui/", "/api/v1/"} {
 		mux.Handle(pattern, uiHandler)
 	}

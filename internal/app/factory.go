@@ -140,7 +140,7 @@ func createServer(ctx context.Context, settings *config.Settings, version string
 	refresher.bindRegistrar(registrar)
 
 	backend, _ := searchService.(webui.Backend)
-	return mcpServer, uiComponents{backend: backend}, searchService.Close, nil
+	return mcpServer, uiComponents{backend: backend, documents: newCatalogDocumentReader(holder)}, searchService.Close, nil
 }
 
 // assembleResourceProvider builds the resource catalog from a discovery
