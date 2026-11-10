@@ -1,3 +1,47 @@
 <!doctype html>
-<title>ACDC</title>
-<p>placeholder</p>
+<!--
+  PROTOTYPE — throwaway UI exploration, not production code.
+  Plan: one shared search shell (box, label chips, theme, API) with three structurally different results+preview layouts (?variant=A|B|C) to decide what the search UI should look like.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ACDC Search</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">ACDC <span>search</span></div>
+  <button id="theme-toggle" class="ghost-btn" type="button" title="Cycle theme: system / light / dark"></button>
+</header>
+
+<section class="search-shell" role="search">
+  <div class="search-box" id="search-box">
+    <div class="chips" id="chips"></div>
+    <input id="q" type="text" autocomplete="off" spellcheck="false"
+           placeholder="Search documents… type to get label suggestions"
+           role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="suggest">
+    <ul id="suggest" class="suggest" role="listbox" hidden></ul>
+  </div>
+  <div class="search-meta">
+    <span id="status" class="status" aria-live="polite"></span>
+    <label class="limit">Top
+      <select id="limit"></select>
+    </label>
+  </div>
+</section>
+
+<main id="results" class="results"></main>
+
+<nav class="switcher" id="switcher" aria-label="Layout variant">
+  <button type="button" id="variant-prev" aria-label="Previous variant">&#8592;</button>
+  <span id="variant-label"></span>
+  <button type="button" id="variant-next" aria-label="Next variant">&#8594;</button>
+</nav>
+
+<script src="app.js"></script>
+<script src="variants.js"></script>
+</body>
+</html>
