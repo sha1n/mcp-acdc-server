@@ -118,6 +118,25 @@ docker run -d -p 8080:8080 \
 
 Startup fails fast on contradictory auth configuration — for example `basic` without credentials, or `basic` combined with API keys.
 
+### Web UI (SSE only)
+
+| Environment Variable | Description | Default |
+|---|---|---|
+| `ACDC_MCP_UI_ENABLED` | Serve the read-only browser UI at `/ui/` and its JSON API at `/api/v1/` | `false` |
+| `ACDC_MCP_UI_MAX_RESULTS` | Default number of web UI search results, `1`–`100`; validated only when the UI is enabled | `20` |
+
+```bash
+docker run -d -p 8080:8080 \
+  -e ACDC_MCP_TRANSPORT=sse \
+  -e ACDC_MCP_UI_ENABLED=true \
+  -v "$(pwd)/content:/app/content:ro" \
+  sha1n/mcp-acdc-server:latest
+```
+
+Then open `http://<host>:8080/ui/`. The UI uses the same port and authentication as `/sse`: basic auth works through the browser's login prompt, while API-key auth needs a reverse proxy that adds the `X-API-Key` header. Under `stdio` the setting is ignored with a warning.
+
+Details: [Web UI Guide](https://github.com/sha1n/mcp-acdc-server/blob/master/docs/web-ui.md).
+
 Full reference: [Configuration Guide](https://github.com/sha1n/mcp-acdc-server/blob/master/docs/configuration.md).
 
 ---
@@ -214,6 +233,7 @@ For authenticated servers, supply the `Authorization` or `X-API-Key` header thro
 - **MCP compliant** — works with any MCP-capable agent
 - **Dual transport** — `stdio` for local agents, `sse` for remote/containerized deployments
 - **Optional authentication** — basic auth or API keys
+- **Optional web UI** — read-only browser search and document viewer on the SSE port, off by default
 
 ---
 

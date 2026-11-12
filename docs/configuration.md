@@ -165,6 +165,15 @@ change briefly holds two complete indexes at once.
 | `--auth-basic-password` | `-P` | `ACDC_MCP_AUTH_BASIC_PASSWORD` | Basic auth password | — |
 | `--auth-api-keys` | `-k` | `ACDC_MCP_AUTH_API_KEYS` | Comma-separated API keys | — |
 
+## Web UI Settings
+
+| CLI Flag | Short | Environment Variable | Description | Default |
+|----------|-------|---------------------|-------------|---------|
+| `--ui-enabled` | — | `ACDC_MCP_UI_ENABLED` | Serve the read-only [web UI](web-ui.md) at `/ui/` and its JSON API at `/api/v1/` (SSE mode only) | `false` |
+| `--ui-max-results` | — | `ACDC_MCP_UI_MAX_RESULTS` | Default number of web UI search results, `1`–`100`. Independent of `--search-max-results` | `20` |
+
+The `.env` keys are `ui.enabled` and `ui.max_results`. The UI shares the SSE server's host, port, and authentication. Under `--transport stdio`, `--ui-enabled` is ignored and the server logs a warning instead of failing. See [Web UI](web-ui.md) for routes, the API, and authentication behaviour.
+
 ## Examples
 
 **CLI flags (stdio mode - default):**
@@ -180,6 +189,11 @@ change briefly holds two complete indexes at once.
 **CLI flags (SSE with basic auth):**
 ```bash
 ./bin/acdc-mcp -t sse --port 9000 --auth-type basic -u admin -P secret
+```
+
+**CLI flags (SSE with the web UI):**
+```bash
+./bin/acdc-mcp -t sse --ui-enabled --ui-max-results 50
 ```
 
 **CLI flags (custom URI scheme):**
@@ -223,6 +237,7 @@ The server validates configuration at startup and will fail with a clear error i
 - `--auth-type=apikey` is set without API keys
 - `--auth-type=none` is set with auth credentials (conflicting intent)
 - `--auth-type=basic` is combined with `--auth-api-keys` (mutually exclusive)
+- `--ui-enabled` is set and `--ui-max-results` is outside `1`–`100`. While the UI is disabled, `--ui-max-results` is not validated
 
 API keys must be provided via the `X-API-Key` header in HTTP requests.
 

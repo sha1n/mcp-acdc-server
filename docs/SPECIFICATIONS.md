@@ -35,6 +35,8 @@ The server is configured via environment variables, command-line flags, or a `.e
 | `ACDC_MCP_AUTH_BASIC_PASSWORD` | `--auth-basic-password`, `-P` | Password for Basic Auth. | - |
 | `ACDC_MCP_URI_SCHEME` | `--uri-scheme`, `-s` | URI scheme for resource URIs (RFC 3986 compliant). | `acdc` |
 | `ACDC_MCP_AUTH_API_KEYS` | `--auth-api-keys`, `-k` | Comma-separated list of valid API keys for `apikey` auth. | - |
+| `ACDC_MCP_UI_ENABLED` | `--ui-enabled` | Serve the read-only web UI (`/ui/`) and its JSON API (`/api/v1/`) on the SSE server. Ignored with a warning under `stdio`. | `false` |
+| `ACDC_MCP_UI_MAX_RESULTS` | `--ui-max-results` | Default number of web UI search results; must be `1`–`100`, validated only when the UI is enabled. | `20` |
 
 ---
 
@@ -233,6 +235,21 @@ Used for remote connections.
 *   **Basic**: Standard `Authorization: Basic <base64>` header.
 *   **API Key**: `X-API-Key: <key>` header.
 *   *Note: Only `/health` is always public.*
+
+### Web UI (SSE Only, Optional)
+Enabled by `ui.enabled`; when disabled, none of these routes is registered and they return `404`. They share the SSE listener and sit behind the same authentication middleware as `/sse`. Full reference: [Web UI](web-ui.md).
+
+*   **GET /ui**: `301` to `/ui/`, query string kept.
+*   **GET /ui/**: Search page. URL state: `?q=<text>&label=<label>&limit=<n>` (`label` repeatable).
+*   **GET /ui/doc?uri=<source URI>**: Document page, always `200`; the page reports missing or unknown URIs.
+*   **GET /api/v1/config**: `{"default_limit", "max_limit"}`.
+*   **GET /api/v1/labels?q=<prefix>&limit=<1-100, default 10>**: `{"labels": [{"name", "count"}]}`, count descending then name.
+*   **GET /api/v1/search?q=<text>&label=<label>&limit=<1-100, default ui.max_results>**: `{"query", "labels", "limit", "total", "results"}`. Labels combine with AND; with neither `q` nor `label`, `results` is empty. Each result's `snippet` is HTML-escaped plain text (Markdown syntax removed, at most 200 characters, `…` marking omitted text) whose only markup is `<mark>` around matches.
+*   **GET /api/v1/document?uri=<source URI>**: `{"uri", "title", "path", "labels", "content", "content_html"}`.
+
+Page and asset responses carry `Content-Security-Policy: default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and `Cache-Control: no-cache`; `/ui` routes accept `GET` and `HEAD` only (`405` otherwise). API responses are JSON with `Cache-Control: no-store`; errors are `{"error": "<message>"}` with `400` (bad `limit`, missing `uri`), `404` (unknown path or document), `405` (non-`GET`), or `500` (cause logged, never returned).
+
+A chunk's labels are its path labels plus frontmatter `keywords`, lower-cased and de-duplicated; label filters are exact matches. Rendered Markdown never includes raw HTML or images (images become placeholders, so the page makes no external requests); catalog links point to document pages, `http(s)` links open in a new tab, `mailto:` renders as text, and any other target is marked as a broken link.
 
 ---
 

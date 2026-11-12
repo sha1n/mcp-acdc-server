@@ -26,6 +26,7 @@ services:
       - ACDC_MCP_PORT=${ACDC_MCP_PORT:-8080}
       - ACDC_MCP_SEARCH_MAX_RESULTS=${ACDC_MCP_SEARCH_MAX_RESULTS:-10}
       - ACDC_MCP_AUTH_TYPE=${ACDC_MCP_AUTH_TYPE:-none}
+      - ACDC_MCP_UI_ENABLED=${ACDC_MCP_UI_ENABLED:-false}
     volumes:
       # Mount content from named volume (populated by content-init)
       - content-data:/app/content:ro
