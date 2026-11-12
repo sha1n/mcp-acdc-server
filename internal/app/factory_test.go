@@ -121,7 +121,7 @@ func TestShouldWarnLegacyLayoutIgnored_ConditionMatrix(t *testing.T) {
 	}
 }
 
-func TestCreateMCPServer_Success(t *testing.T) {
+func TestCreateServer_Success(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
 	resourcesDir := content.NewContentProvider(contentDir).ResourcesDir
@@ -153,7 +153,9 @@ tools: []
 		},
 	}
 
-	server, cleanup, err := CreateMCPServer(context.Background(), settings, "test")
+	components, err := CreateServer(context.Background(), settings, "test")
+
+	server, cleanup := components.MCP, components.Cleanup
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
@@ -164,12 +166,12 @@ tools: []
 	}
 }
 
-// TestCreateMCPServer_MissingManifestNoDefaultDocsSucceedsLeniently covers the
+// TestCreateServer_MissingManifestNoDefaultDocsSucceedsLeniently covers the
 // zero-config path: with no .acdc/config.yaml and neither README.md nor docs/,
 // the built-in defaults apply and the empty match is tolerated rather than
 // failing startup. This supersedes the pre-zero-config behavior where an
 // absent manifest was a hard configuration error.
-func TestCreateMCPServer_MissingManifestNoDefaultDocsSucceedsLeniently(t *testing.T) {
+func TestCreateServer_MissingManifestNoDefaultDocsSucceedsLeniently(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
 	_ = os.MkdirAll(contentDir, 0755)
@@ -182,7 +184,9 @@ func TestCreateMCPServer_MissingManifestNoDefaultDocsSucceedsLeniently(t *testin
 		},
 	}
 
-	server, cleanup, err := CreateMCPServer(context.Background(), settings, "test")
+	components, err := CreateServer(context.Background(), settings, "test")
+
+	server, cleanup := components.MCP, components.Cleanup
 	if err != nil {
 		t.Fatalf("Expected success under the zero-config default, got: %v", err)
 	}
@@ -193,22 +197,24 @@ func TestCreateMCPServer_MissingManifestNoDefaultDocsSucceedsLeniently(t *testin
 	}
 }
 
-// TestCreateMCPServer_MissingManifestWithDefaultDocsSucceeds covers the
+// TestCreateServer_MissingManifestWithDefaultDocsSucceeds covers the
 // zero-config path where the content root has README.md and docs/**/*.md,
 // matching the built-in default include patterns.
-func TestCreateMCPServer_MissingManifestWithDefaultDocsSucceeds(t *testing.T) {
+func TestCreateServer_MissingManifestWithDefaultDocsSucceeds(t *testing.T) {
 	contentDir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "README.md"), []byte("# Hello\n"), 0o644))
 	require.NoError(t, os.MkdirAll(filepath.Join(contentDir, "docs"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "a.md"), []byte("# Doc A\n"), 0o644))
 
-	server, cleanup, err := CreateMCPServer(context.Background(), appTestSettings(contentDir), "test")
+	components, err := CreateServer(context.Background(), appTestSettings(contentDir), "test")
+
+	server, cleanup := components.MCP, components.Cleanup
 	require.NoError(t, err)
 	defer cleanup()
 	require.NotNil(t, server)
 }
 
-// TestCreateMCPServer_MissingManifestOverLegacyLayoutSucceeds covers a
+// TestCreateServer_MissingManifestOverLegacyLayoutSucceeds covers a
 // content root laid out for legacy discovery (.acdc/resources/**.md) but
 // missing .acdc/config.yaml. Zero-config defaults always set a non-nil Index,
 // so discovery never reaches the legacy .acdc/resources scan; startup must
@@ -217,27 +223,31 @@ func TestCreateMCPServer_MissingManifestWithDefaultDocsSucceeds(t *testing.T) {
 // source count is verified separately by
 // TestZeroConfig_LegacyResourcesLayoutIsNotDiscovered in
 // tests/integration/zero_config_test.go.
-func TestCreateMCPServer_MissingManifestOverLegacyLayoutSucceeds(t *testing.T) {
+func TestCreateServer_MissingManifestOverLegacyLayoutSucceeds(t *testing.T) {
 	contentDir := t.TempDir()
 	resourcesDir := content.NewContentProvider(contentDir).ResourcesDir
 	require.NoError(t, os.MkdirAll(resourcesDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(resourcesDir, "guide.md"),
 		[]byte("---\nname: Guide\ndescription: A guide.\n---\ncontent"), 0o644))
 
-	server, cleanup, err := CreateMCPServer(context.Background(), appTestSettings(contentDir), "test")
+	components, err := CreateServer(context.Background(), appTestSettings(contentDir), "test")
+
+	server, cleanup := components.MCP, components.Cleanup
 	require.NoError(t, err)
 	defer cleanup()
 	require.NotNil(t, server)
 }
 
-// TestCreateMCPServer_DefaultedMetadataCarriesInjectedVersion verifies the
+// TestCreateServer_DefaultedMetadataCarriesInjectedVersion verifies the
 // build-injected version reaches the metadata used to build the server: with
 // no manifest, Server.Version has no other source than the version parameter.
-func TestCreateMCPServer_DefaultedMetadataCarriesInjectedVersion(t *testing.T) {
+func TestCreateServer_DefaultedMetadataCarriesInjectedVersion(t *testing.T) {
 	contentDir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "README.md"), []byte("# Hello\n"), 0o644))
 
-	server, cleanup, err := CreateMCPServer(context.Background(), appTestSettings(contentDir), "9.9.9")
+	components, err := CreateServer(context.Background(), appTestSettings(contentDir), "9.9.9")
+
+	server, cleanup := components.MCP, components.Cleanup
 	require.NoError(t, err)
 	defer cleanup()
 
@@ -256,7 +266,7 @@ func TestCreateMCPServer_DefaultedMetadataCarriesInjectedVersion(t *testing.T) {
 	require.Equal(t, "9.9.9", session.InitializeResult().ServerInfo.Version)
 }
 
-func TestCreateMCPServer_InvalidMetadataYAML(t *testing.T) {
+func TestCreateServer_InvalidMetadataYAML(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
 	cp := content.NewContentProvider(contentDir)
@@ -273,7 +283,7 @@ func TestCreateMCPServer_InvalidMetadataYAML(t *testing.T) {
 		},
 	}
 
-	_, _, err := CreateMCPServer(context.Background(), settings, "test")
+	_, err := CreateServer(context.Background(), settings, "test")
 	if err == nil {
 		t.Fatal("Expected error for invalid YAML")
 	}
@@ -282,7 +292,7 @@ func TestCreateMCPServer_InvalidMetadataYAML(t *testing.T) {
 	}
 }
 
-func TestCreateMCPServer_MetadataValidationFails(t *testing.T) {
+func TestCreateServer_MetadataValidationFails(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
 	cp := content.NewContentProvider(contentDir)
@@ -305,7 +315,7 @@ server:
 		},
 	}
 
-	_, _, err := CreateMCPServer(context.Background(), settings, "test")
+	_, err := CreateServer(context.Background(), settings, "test")
 	if err == nil {
 		t.Fatal("Expected error for invalid metadata")
 	}
@@ -314,7 +324,7 @@ server:
 	}
 }
 
-func TestCreateMCPServer_InvalidResourceIsSkipped(t *testing.T) {
+func TestCreateServer_InvalidResourceIsSkipped(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
 	resourcesDir := content.NewContentProvider(contentDir).ResourcesDir
@@ -342,7 +352,8 @@ tools: []
 	}
 
 	// Invalid resources are skipped, not failed
-	server, cleanup, err := CreateMCPServer(context.Background(), settings, "test")
+	components, err := CreateServer(context.Background(), settings, "test")
+	server, cleanup := components.MCP, components.Cleanup
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -354,7 +365,7 @@ tools: []
 	}
 }
 
-func TestCreateMCPServer_ResourceWithKeywords(t *testing.T) {
+func TestCreateServer_ResourceWithKeywords(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
 	resourcesDir := content.NewContentProvider(contentDir).ResourcesDir
@@ -373,7 +384,9 @@ func TestCreateMCPServer_ResourceWithKeywords(t *testing.T) {
 		Search:     config.SearchSettings{InMemory: true, MaxResults: 10},
 	}
 
-	server, cleanup, err := CreateMCPServer(context.Background(), settings, "test")
+	components, err := CreateServer(context.Background(), settings, "test")
+
+	server, cleanup := components.MCP, components.Cleanup
 	if err != nil {
 		t.Fatalf("Failed: %v", err)
 	}
@@ -384,7 +397,7 @@ func TestCreateMCPServer_ResourceWithKeywords(t *testing.T) {
 	}
 }
 
-func TestCreateMCPServer_NoResources(t *testing.T) {
+func TestCreateServer_NoResources(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
 	resourcesDir := content.NewContentProvider(contentDir).ResourcesDir
@@ -409,7 +422,8 @@ tools: []
 	}
 
 	// Should succeed with no resources
-	server, cleanup, err := CreateMCPServer(context.Background(), settings, "test")
+	components, err := CreateServer(context.Background(), settings, "test")
+	server, cleanup := components.MCP, components.Cleanup
 	if err != nil {
 		t.Fatalf("Failed to create server with no resources: %v", err)
 	}
@@ -421,7 +435,7 @@ tools: []
 	}
 }
 
-func TestCreateMCPServer_ConfiguredDiscoveryFailure(t *testing.T) {
+func TestCreateServer_ConfiguredDiscoveryFailure(t *testing.T) {
 	contentDir := writeMetadataOnly(t, `server:
   name: test
   version: "1"
@@ -430,13 +444,15 @@ index:
   include: ["docs/**/*.md"]
 `)
 
-	_, cleanup, err := CreateMCPServer(context.Background(), appTestSettings(contentDir), "test")
+	components, err := CreateServer(context.Background(), appTestSettings(contentDir), "test")
+
+	cleanup := components.Cleanup
 
 	require.ErrorContains(t, err, "configured index matched no files")
 	require.Nil(t, cleanup)
 }
 
-func TestCreateMCPServer_IndexFailureStopsConstruction(t *testing.T) {
+func TestCreateServer_IndexFailureStopsConstruction(t *testing.T) {
 	contentDir := writeMetadataOnly(t, `server:
   name: test
   version: "1"
@@ -447,11 +463,13 @@ func TestCreateMCPServer_IndexFailureStopsConstruction(t *testing.T) {
 	deps.discover = func(context.Context, *content.ContentProvider, *domain.IndexMetadata, string, ...resources.DiscoverOption) (resources.DiscoveryResult, error) {
 		return resources.DiscoveryResult{}, nil
 	}
-	deps.newSearch = func(config.SearchSettings) search.Searcher {
+	deps.newSearch = func(config.SearchSettings) uiSearcher {
 		return indexer
 	}
 
-	server, cleanup, err := createMCPServer(context.Background(), appTestSettings(contentDir), "test", deps)
+	components, err := createServer(context.Background(), appTestSettings(contentDir), "test", deps)
+
+	server, cleanup := components.MCP, components.Cleanup
 
 	require.ErrorContains(t, err, "index chunks: index failed")
 	require.Nil(t, server)
@@ -459,7 +477,7 @@ func TestCreateMCPServer_IndexFailureStopsConstruction(t *testing.T) {
 	require.Equal(t, 1, indexer.closeCalls)
 }
 
-func TestCreateMCPServer_PassesCallerContextToDiscovery(t *testing.T) {
+func TestCreateServer_PassesCallerContextToDiscovery(t *testing.T) {
 	contentDir := writeMetadataOnly(t, `server:
   name: test
   version: "1"
@@ -472,11 +490,13 @@ func TestCreateMCPServer_PassesCallerContextToDiscovery(t *testing.T) {
 		discoveryCtx = gotCtx
 		return resources.DiscoveryResult{}, nil
 	}
-	deps.newSearch = func(config.SearchSettings) search.Searcher {
+	deps.newSearch = func(config.SearchSettings) uiSearcher {
 		return &fakeSearcher{drain: true}
 	}
 
-	server, cleanup, err := createMCPServer(ctx, appTestSettings(contentDir), "test", deps)
+	components, err := createServer(ctx, appTestSettings(contentDir), "test", deps)
+
+	server, cleanup := components.MCP, components.Cleanup
 
 	require.NoError(t, err)
 	require.NotNil(t, server)
@@ -485,14 +505,14 @@ func TestCreateMCPServer_PassesCallerContextToDiscovery(t *testing.T) {
 	cleanup()
 }
 
-// TestCreateMCPServer_FingerprintFailureAtStartupDoesNotStopConstruction pins
+// TestCreateServer_FingerprintFailureAtStartupDoesNotStopConstruction pins
 // the deliberate startup design: a fingerprint failure only warns and seeds an
 // empty walk digest, it never fails construction. The manifest's include
 // pattern is invalid, which fails the real resources.Fingerprint call inside
-// createMCPServer; deps.discover is injected to succeed regardless of that
+// createServer; deps.discover is injected to succeed regardless of that
 // same metadata, isolating the fingerprint failure from the discovery failure
 // that identical invalid metadata would otherwise also produce.
-func TestCreateMCPServer_FingerprintFailureAtStartupDoesNotStopConstruction(t *testing.T) {
+func TestCreateServer_FingerprintFailureAtStartupDoesNotStopConstruction(t *testing.T) {
 	contentDir := writeMetadataOnly(t, `server:
   name: test
   version: "1"
@@ -504,11 +524,13 @@ index:
 	deps.discover = func(context.Context, *content.ContentProvider, *domain.IndexMetadata, string, ...resources.DiscoverOption) (resources.DiscoveryResult, error) {
 		return resources.DiscoveryResult{}, nil
 	}
-	deps.newSearch = func(config.SearchSettings) search.Searcher {
+	deps.newSearch = func(config.SearchSettings) uiSearcher {
 		return &fakeSearcher{drain: true}
 	}
 
-	server, cleanup, err := createMCPServer(context.Background(), appTestSettings(contentDir), "test", deps)
+	components, err := createServer(context.Background(), appTestSettings(contentDir), "test", deps)
+
+	server, cleanup := components.MCP, components.Cleanup
 
 	require.NoError(t, err)
 	require.NotNil(t, server)
@@ -516,7 +538,7 @@ index:
 	cleanup()
 }
 
-func TestCreateMCPServer_FailsWhenConfiguredDiscoveryFails(t *testing.T) {
+func TestCreateServer_FailsWhenConfiguredDiscoveryFails(t *testing.T) {
 	contentDir := t.TempDir()
 	metadata := `
 server: { name: test, version: 1.0, instructions: inst }
@@ -530,12 +552,12 @@ index:
 	require.NoError(t, os.MkdirAll(filepath.Join(contentDir, "docs"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "data.txt"), []byte("not markdown"), 0o644))
 
-	_, _, err := CreateMCPServer(context.Background(), &config.Settings{ContentDir: contentDir, Scheme: "acdc", Search: config.SearchSettings{InMemory: true}}, "test")
+	_, err := CreateServer(context.Background(), &config.Settings{ContentDir: contentDir, Scheme: "acdc", Search: config.SearchSettings{InMemory: true}}, "test")
 	require.ErrorContains(t, err, "failed to discover resources")
 	require.ErrorContains(t, err, "configured index selected non-Markdown file")
 }
 
-func TestCreateMCPServer_StartsWhenDiscoveredSourcesShareURI(t *testing.T) {
+func TestCreateServer_StartsWhenDiscoveredSourcesShareURI(t *testing.T) {
 	contentDir := t.TempDir()
 	metadata := `
 server: { name: test, version: 1.0, instructions: inst }
@@ -550,13 +572,15 @@ index:
 	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "guide.md"), []byte("# Guide"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "guide.markdown"), []byte("# Guide duplicate"), 0o644))
 
-	server, cleanup, err := CreateMCPServer(context.Background(), &config.Settings{ContentDir: contentDir, Scheme: "acdc", Search: config.SearchSettings{InMemory: true}}, "test")
+	components, err := CreateServer(context.Background(), &config.Settings{ContentDir: contentDir, Scheme: "acdc", Search: config.SearchSettings{InMemory: true}}, "test")
+
+	server, cleanup := components.MCP, components.Cleanup
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	t.Cleanup(cleanup)
 }
 
-func TestCreateMCPServer_InvalidToolMetadata_MissingName(t *testing.T) {
+func TestCreateServer_InvalidToolMetadata_MissingName(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
 	cp := content.NewContentProvider(contentDir)
@@ -571,13 +595,13 @@ tools:
 	_ = os.WriteFile(cp.ConfigFile, []byte(metadataContent), 0644)
 
 	settings := &config.Settings{ContentDir: contentDir}
-	_, _, err := CreateMCPServer(context.Background(), settings, "test")
+	_, err := CreateServer(context.Background(), settings, "test")
 	if err == nil || !strings.Contains(err.Error(), "metadata validation failed") {
 		t.Errorf("Expected metadata validation error, got: %v", err)
 	}
 }
 
-func TestCreateMCPServer_InvalidToolMetadata_MissingDescription(t *testing.T) {
+func TestCreateServer_InvalidToolMetadata_MissingDescription(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
 	cp := content.NewContentProvider(contentDir)
@@ -592,13 +616,13 @@ tools:
 	_ = os.WriteFile(cp.ConfigFile, []byte(metadataContent), 0644)
 
 	settings := &config.Settings{ContentDir: contentDir}
-	_, _, err := CreateMCPServer(context.Background(), settings, "test")
+	_, err := CreateServer(context.Background(), settings, "test")
 	if err == nil || !strings.Contains(err.Error(), "metadata validation failed") {
 		t.Errorf("Expected metadata validation error, got: %v", err)
 	}
 }
 
-func TestCreateMCPServer_InvalidToolMetadata_DuplicateNames(t *testing.T) {
+func TestCreateServer_InvalidToolMetadata_DuplicateNames(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
 	cp := content.NewContentProvider(contentDir)
@@ -613,12 +637,12 @@ tools:
 	_ = os.WriteFile(cp.ConfigFile, []byte(metadataContent), 0644)
 
 	settings := &config.Settings{ContentDir: contentDir}
-	_, _, err := CreateMCPServer(context.Background(), settings, "test")
+	_, err := CreateServer(context.Background(), settings, "test")
 	if err == nil || !strings.Contains(err.Error(), "duplicate tool name") {
 		t.Errorf("Expected duplicate tool name error, got: %v", err)
 	}
 }
-func TestCreateMCPServer_PromptDiscoveryError(t *testing.T) {
+func TestCreateServer_PromptDiscoveryError(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
 	cp := content.NewContentProvider(contentDir)
@@ -638,7 +662,7 @@ func TestCreateMCPServer_PromptDiscoveryError(t *testing.T) {
 		Search:     config.SearchSettings{InMemory: true},
 	}
 
-	_, _, err := CreateMCPServer(context.Background(), settings, "test")
+	_, err := CreateServer(context.Background(), settings, "test")
 	if err == nil {
 		t.Fatal("Expected error for prompt discovery failure")
 	}
@@ -647,7 +671,7 @@ func TestCreateMCPServer_PromptDiscoveryError(t *testing.T) {
 	}
 }
 
-func TestCreateMCPServer_CrossRefTransformation(t *testing.T) {
+func TestCreateServer_CrossRefTransformation(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
 	resourcesDir := content.NewContentProvider(contentDir).ResourcesDir
@@ -673,7 +697,9 @@ func TestCreateMCPServer_CrossRefTransformation(t *testing.T) {
 		Search:     config.SearchSettings{InMemory: true, MaxResults: 10},
 	}
 
-	server, cleanup, err := CreateMCPServer(context.Background(), settings, "test")
+	components, err := CreateServer(context.Background(), settings, "test")
+
+	server, cleanup := components.MCP, components.Cleanup
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
@@ -684,7 +710,7 @@ func TestCreateMCPServer_CrossRefTransformation(t *testing.T) {
 	}
 }
 
-func TestCreateMCPServer_CrossRefTransformation_ContentVerification(t *testing.T) {
+func TestCreateServer_CrossRefTransformation_ContentVerification(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
 	resourcesDir := content.NewContentProvider(contentDir).ResourcesDir
@@ -737,7 +763,7 @@ func TestCreateMCPServer_CrossRefTransformation_ContentVerification(t *testing.T
 	}
 }
 
-func TestCreateMCPServer_CrossRefDisabledByDefault(t *testing.T) {
+func TestCreateServer_CrossRefDisabledByDefault(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
 	resourcesDir := content.NewContentProvider(contentDir).ResourcesDir
@@ -780,7 +806,7 @@ func TestCreateMCPServer_CrossRefDisabledByDefault(t *testing.T) {
 	}
 }
 
-func TestCreateMCPServer_CrossRefTransformation_CustomScheme(t *testing.T) {
+func TestCreateServer_CrossRefTransformation_CustomScheme(t *testing.T) {
 	tempDir := t.TempDir()
 	contentDir := filepath.Join(tempDir, "content")
 	resourcesDir := content.NewContentProvider(contentDir).ResourcesDir
@@ -811,4 +837,141 @@ func TestCreateMCPServer_CrossRefTransformation_CustomScheme(t *testing.T) {
 	if !strings.Contains(contentA, "myco://b") {
 		t.Errorf("Content should contain 'myco://b', got: %s", contentA)
 	}
+}
+
+func writeZeroConfigContent(t *testing.T) string {
+	t.Helper()
+	contentDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "README.md"), []byte("# Hello\n\nSee [Doc A](docs/a.md).\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(contentDir, "docs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "a.md"), []byte("# Doc A\n\nBody of A.\n"), 0o644))
+	return contentDir
+}
+
+func applySSEOptions(opts []SSEOption) sseOptions {
+	var applied sseOptions
+	for _, opt := range opts {
+		opt(&applied)
+	}
+	return applied
+}
+
+func TestCreateServer_SSEOptionsSupplyWebUIComponents(t *testing.T) {
+	components, err := CreateServer(context.Background(), appTestSettings(writeZeroConfigContent(t)), "test")
+	require.NoError(t, err)
+	defer components.Cleanup()
+
+	applied := applySSEOptions(components.SSEOptions)
+
+	require.NotEmpty(t, components.SSEOptions)
+	backend, ok := applied.uiBackend.(revalidatingSearchBackend)
+	require.True(t, ok, "web UI backend must revalidate the catalog, got %T", applied.uiBackend)
+	require.IsType(t, &search.Service{}, backend.inner)
+	require.IsType(t, &catalogRefresher{}, backend.revalidator)
+	documents, ok := applied.uiDocuments.(revalidatingDocuments)
+	require.True(t, ok, "web UI documents must revalidate the catalog, got %T", applied.uiDocuments)
+	require.IsType(t, catalogDocuments{}, documents.inner)
+	require.Same(t, backend.revalidator, documents.revalidator)
+	doc, err := applied.uiDocuments.Snapshot(context.Background()).Document("acdc://docs/a")
+	require.NoError(t, err)
+	require.Equal(t, "acdc://docs/a", doc.URI)
+	require.Equal(t, "docs/a.md", doc.Path)
+	require.Contains(t, doc.Content, "Body of A.")
+	uri, ok := applied.uiDocuments.Snapshot(context.Background()).ResolvePath("README.md", "docs/a.md")
+	require.True(t, ok)
+	require.Equal(t, "acdc://docs/a", uri)
+}
+
+func TestCreateServer_SSEOptionsSuppliedWhenUIDisabled(t *testing.T) {
+	settings := appTestSettings(writeZeroConfigContent(t))
+	settings.UI = config.UISettings{Enabled: false}
+
+	components, err := CreateServer(context.Background(), settings, "test")
+	require.NoError(t, err)
+	defer components.Cleanup()
+
+	applied := applySSEOptions(components.SSEOptions)
+	require.NotNil(t, applied.uiBackend)
+	require.NotNil(t, applied.uiDocuments)
+}
+
+func TestCreateServer_DocumentsFollowCrossRefSetting(t *testing.T) {
+	tests := []struct {
+		name     string
+		crossRef bool
+		want     string
+	}{
+		{name: "cross-ref off keeps relative link", crossRef: false, want: "[Doc A](docs/a.md)"},
+		{name: "cross-ref on serves resource uri", crossRef: true, want: "[Doc A](acdc://docs/a)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			settings := appTestSettings(writeZeroConfigContent(t))
+			settings.CrossRef = tt.crossRef
+			components, err := CreateServer(context.Background(), settings, "test")
+			require.NoError(t, err)
+			defer components.Cleanup()
+
+			documents := applySSEOptions(components.SSEOptions).uiDocuments
+			require.NotNil(t, documents)
+			doc, err := documents.Snapshot(context.Background()).Document("acdc://README")
+
+			require.NoError(t, err)
+			require.Contains(t, doc.Content, tt.want)
+		})
+	}
+}
+
+func TestCreateServer_ErrorReturnsZeroComponents(t *testing.T) {
+	contentDir := writeMetadataOnly(t, `server:
+  name: test
+  version: "1"
+  instructions: test
+`)
+	deps := defaultFactoryDeps()
+	deps.discover = func(context.Context, *content.ContentProvider, *domain.IndexMetadata, string, ...resources.DiscoverOption) (resources.DiscoveryResult, error) {
+		return resources.DiscoveryResult{}, errors.New("discovery failed")
+	}
+
+	components, err := createServer(context.Background(), appTestSettings(contentDir), "test", deps)
+
+	require.ErrorContains(t, err, "discovery failed")
+	require.Nil(t, components.MCP)
+	require.Nil(t, components.SSEOptions)
+	require.Nil(t, components.Cleanup)
+}
+
+func TestCreateServer_WebUIBackendIsTheIndexedSearcher(t *testing.T) {
+	searcher := &fakeSearcher{drain: true}
+	deps := defaultFactoryDeps()
+	deps.newSearch = func(config.SearchSettings) uiSearcher { return searcher }
+
+	components, err := createServer(context.Background(), appTestSettings(writeZeroConfigContent(t)), "test", deps)
+	require.NoError(t, err)
+	defer components.Cleanup()
+
+	applied := applySSEOptions(components.SSEOptions)
+	backend, ok := applied.uiBackend.(revalidatingSearchBackend)
+	require.True(t, ok, "web UI backend must revalidate the catalog, got %T", applied.uiBackend)
+	require.Same(t, searcher, backend.inner)
+	require.NotEmpty(t, searcher.indexed)
+}
+
+func TestCreateServer_DuplicateDiscoveredSourceURIStopsConstruction(t *testing.T) {
+	contentDir := writeMetadataOnly(t, `server:
+  name: test
+  version: "1"
+  instructions: test
+`)
+	deps := defaultFactoryDeps()
+	deps.discover = func(context.Context, *content.ContentProvider, *domain.IndexMetadata, string, ...resources.DiscoverOption) (resources.DiscoveryResult, error) {
+		duplicate := domain.SourceDocument{URI: "acdc://docs/guide"}
+		return resources.DiscoveryResult{Sources: []domain.SourceDocument{duplicate, duplicate}}, nil
+	}
+
+	components, err := createServer(context.Background(), appTestSettings(contentDir), "test", deps)
+
+	require.ErrorContains(t, err, "failed to create resource provider: duplicate source URI: acdc://docs/guide")
+	require.Nil(t, components.MCP)
+	require.Nil(t, components.Cleanup)
 }

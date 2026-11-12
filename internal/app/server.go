@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -8,11 +9,28 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/auth"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/webui"
 )
 
+type sseOptions struct {
+	uiBackend   webui.SearchBackend
+	uiDocuments webui.DocumentReader
+}
+
+// SSEOption configures optional SSE server capabilities.
+type SSEOption func(*sseOptions)
+
+// WithWebUI supplies the components the web UI serves when it is enabled.
+func WithWebUI(backend webui.SearchBackend, documents webui.DocumentReader) SSEOption {
+	return func(o *sseOptions) {
+		o.uiBackend = backend
+		o.uiDocuments = documents
+	}
+}
+
 // StartSSEServer starts the SSE server with authentication
-func StartSSEServer(s *mcp.Server, settings *config.Settings) error {
-	srv, err := NewSSEServer(s, settings)
+func StartSSEServer(s *mcp.Server, settings *config.Settings, opts ...SSEOption) error {
+	srv, err := NewSSEServer(s, settings, opts...)
 	if err != nil {
 		return err
 	}
@@ -22,7 +40,12 @@ func StartSSEServer(s *mcp.Server, settings *config.Settings) error {
 }
 
 // NewSSEServer creates a new SSE server with authentication middleware
-func NewSSEServer(s *mcp.Server, settings *config.Settings) (*http.Server, error) {
+func NewSSEServer(s *mcp.Server, settings *config.Settings, opts ...SSEOption) (*http.Server, error) {
+	var options sseOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+
 	// Factory function returns the server instance for each request
 	sseHandler := mcp.NewSSEHandler(func(r *http.Request) *mcp.Server {
 		return s
@@ -35,6 +58,12 @@ func NewSSEServer(s *mcp.Server, settings *config.Settings) (*http.Server, error
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.Handle("/sse", sseHandler)
+	if settings.UI.Enabled {
+		if options.uiBackend == nil || options.uiDocuments == nil {
+			return nil, errors.New("web UI enabled but no UI components supplied")
+		}
+		webui.Mount(mux, options.uiBackend, options.uiDocuments, settings.UI)
+	}
 
 	authMiddleware, err := auth.NewMiddleware(settings.Auth)
 	if err != nil {

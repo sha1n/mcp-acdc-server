@@ -57,6 +57,12 @@ func (s *fakeSearcher) Index(_ context.Context, chunks <-chan domain.Chunk) erro
 func (*fakeSearcher) Search(string, int) ([]search.SearchResult, error) { return nil, nil }
 func (s *fakeSearcher) Close()                                          { s.closeCalls++ }
 
+func (*fakeSearcher) LabelledSearch(string, []string, int) ([]search.LabelledResult, error) {
+	return nil, nil
+}
+
+func (*fakeSearcher) Labels(string, int) ([]search.LabelCount, error) { return nil, nil }
+
 func TestIndexResources_Success(t *testing.T) {
 	streamer := &fakeChunkStreamer{chunks: []domain.Chunk{{ID: "one"}}}
 	indexer := &fakeSearcher{drain: true}

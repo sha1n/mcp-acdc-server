@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCreateMCPServer_RefusesLegacyLayout(t *testing.T) {
+func TestCreateServer_RefusesLegacyLayout(t *testing.T) {
 	tests := []struct {
 		name    string
 		create  func(t *testing.T, root string)
@@ -34,7 +34,7 @@ func TestCreateMCPServer_RefusesLegacyLayout(t *testing.T) {
 			root := t.TempDir()
 			tt.create(t, root)
 
-			_, _, err := CreateMCPServer(context.Background(), &config.Settings{ContentDir: root}, "1.0.0")
+			_, err := CreateServer(context.Background(), &config.Settings{ContentDir: root}, "1.0.0")
 
 			require.Error(t, err)
 			require.Contains(t, err.Error(), tt.wantOld)
@@ -43,13 +43,13 @@ func TestCreateMCPServer_RefusesLegacyLayout(t *testing.T) {
 	}
 }
 
-func TestCreateMCPServer_ReportsEveryLegacyMarker(t *testing.T) {
+func TestCreateServer_ReportsEveryLegacyMarker(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "mcp-metadata.yaml"), []byte("x"), 0o600))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "mcp-prompts"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "mcp-resources"), 0o755))
 
-	_, _, err := CreateMCPServer(context.Background(), &config.Settings{ContentDir: root}, "1.0.0")
+	_, err := CreateServer(context.Background(), &config.Settings{ContentDir: root}, "1.0.0")
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "mcp-metadata.yaml")
@@ -59,14 +59,14 @@ func TestCreateMCPServer_ReportsEveryLegacyMarker(t *testing.T) {
 
 // A half-migrated root must still refuse: the config moved but the prompts did
 // not, and starting here would drop them silently.
-func TestCreateMCPServer_RefusesHalfMigratedRoot(t *testing.T) {
+func TestCreateServer_RefusesHalfMigratedRoot(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".acdc"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".acdc", "config.yaml"),
 		[]byte("server:\n  name: test\n  version: \"1.0\"\n  instructions: test\n"), 0o600))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "mcp-prompts"), 0o755))
 
-	_, _, err := CreateMCPServer(context.Background(), &config.Settings{ContentDir: root}, "1.0.0")
+	_, err := CreateServer(context.Background(), &config.Settings{ContentDir: root}, "1.0.0")
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "mcp-prompts/")
@@ -75,14 +75,14 @@ func TestCreateMCPServer_RefusesHalfMigratedRoot(t *testing.T) {
 // A half-migrated root with a leftover mcp-resources/ must still refuse once
 // the config has moved to .acdc/config.yaml: this is the case the resources
 // marker's manifest-present narrowing must not lose sight of.
-func TestCreateMCPServer_RefusesResourcesAlongsideCurrentConfig(t *testing.T) {
+func TestCreateServer_RefusesResourcesAlongsideCurrentConfig(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".acdc"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".acdc", "config.yaml"),
 		[]byte("server:\n  name: test\n  version: \"1.0\"\n  instructions: test\n"), 0o600))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "mcp-resources"), 0o755))
 
-	_, _, err := CreateMCPServer(context.Background(), &config.Settings{ContentDir: root}, "1.0.0")
+	_, err := CreateServer(context.Background(), &config.Settings{ContentDir: root}, "1.0.0")
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "mcp-resources/")
@@ -93,12 +93,14 @@ func TestCreateMCPServer_RefusesResourcesAlongsideCurrentConfig(t *testing.T) {
 // configured-index path), so there is no silent behavior change to convert
 // into a refusal, and mcp-resources is too plausible a directory name in an
 // unrelated repository to hard-fail startup over.
-func TestCreateMCPServer_StartsOnBareResourcesDir(t *testing.T) {
+func TestCreateServer_StartsOnBareResourcesDir(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "mcp-resources"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "README.md"), []byte("# Test\n\nBody.\n"), 0o600))
 
-	_, cleanup, err := CreateMCPServer(context.Background(), appTestSettings(root), "1.0.0")
+	components, err := CreateServer(context.Background(), appTestSettings(root), "1.0.0")
+
+	cleanup := components.Cleanup
 
 	require.NoError(t, err)
 	cleanup()
@@ -106,24 +108,26 @@ func TestCreateMCPServer_StartsOnBareResourcesDir(t *testing.T) {
 
 // A mistyped --content-dir must keep reporting the directory problem rather
 // than a misleading "no legacy layout here" pass-through.
-func TestCreateMCPServer_MissingContentDirStillReportsDirectoryError(t *testing.T) {
+func TestCreateServer_MissingContentDirStillReportsDirectoryError(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "nope")
 
-	_, _, err := CreateMCPServer(context.Background(), &config.Settings{ContentDir: missing}, "1.0.0")
+	_, err := CreateServer(context.Background(), &config.Settings{ContentDir: missing}, "1.0.0")
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not found or not a directory")
 }
 
 // The refusal must not fire on a repository that has already migrated.
-func TestCreateMCPServer_StartsOnMigratedRoot(t *testing.T) {
+func TestCreateServer_StartsOnMigratedRoot(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(root, ".acdc"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".acdc", "config.yaml"),
 		[]byte("server:\n  name: test\n  version: \"1.0\"\n  instructions: test\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "README.md"), []byte("# Test\n\nBody.\n"), 0o600))
 
-	_, cleanup, err := CreateMCPServer(context.Background(), appTestSettings(root), "1.0.0")
+	components, err := CreateServer(context.Background(), appTestSettings(root), "1.0.0")
+
+	cleanup := components.Cleanup
 
 	require.NoError(t, err)
 	cleanup()
