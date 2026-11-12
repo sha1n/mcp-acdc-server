@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/sha1n/mcp-acdc-server/internal/app"
@@ -214,6 +215,10 @@ type FlagOptions struct {
 	Scheme     string // Defaults to "" (uses config default "acdc")
 	ResultMode string // Defaults to "" (uses config default "references"); sets --search-result-mode only when non-empty
 	CrossRef   bool   // Defaults to false; sets --cross-ref only when true
+	// UIEnabled sets --ui-enabled only when true.
+	UIEnabled bool
+	// UIMaxResults sets --ui-max-results only when non-zero, so tests can pass out-of-range values.
+	UIMaxResults int
 }
 
 // NewTestFlags creates a configured pflag.FlagSet for testing
@@ -242,6 +247,12 @@ func NewTestFlags(t testing.TB, contentDir string, opts *FlagOptions) *pflag.Fla
 	if resolved.CrossRef {
 		_ = flags.Set("cross-ref", "true")
 	}
+	if resolved.UIEnabled {
+		_ = flags.Set("ui-enabled", "true")
+	}
+	if resolved.UIMaxResults != 0 {
+		_ = flags.Set("ui-max-results", fmt.Sprintf("%d", resolved.UIMaxResults))
+	}
 
 	return flags
 }
@@ -262,6 +273,8 @@ func resolveFlagOptions(opts *FlagOptions) FlagOptions {
 	resolved.Scheme = opts.Scheme
 	resolved.ResultMode = opts.ResultMode
 	resolved.CrossRef = opts.CrossRef
+	resolved.UIEnabled = opts.UIEnabled
+	resolved.UIMaxResults = opts.UIMaxResults
 	if opts.Transport != "" {
 		resolved.Transport = opts.Transport
 	}
@@ -273,4 +286,32 @@ func resolveFlagOptions(opts *FlagOptions) FlagOptions {
 	}
 
 	return resolved
+}
+
+// StartSSE starts an SSE server over a fresh content directory and returns its
+// base URL and an idempotent stop function that is also registered on t.Cleanup.
+// The transport is always SSE regardless of flagOpts.Transport.
+func StartSSE(t testing.TB, contentOpts *ContentDirOptions, flagOpts *FlagOptions) (baseURL string, stop func()) {
+	t.Helper()
+
+	resolved := resolveFlagOptions(flagOpts)
+	resolved.Transport = "sse"
+	contentDir := CreateTestContentDir(t, contentOpts)
+	env := NewTestEnv(NewACDCService("acdc-sse", NewTestFlags(t, contentDir, &resolved)))
+	if _, err := env.Start(); err != nil {
+		t.Fatalf("Failed to start SSE server: %v", err)
+	}
+
+	var once sync.Once
+	stop = func() {
+		once.Do(func() {
+			if err := env.Stop(); err != nil {
+				t.Errorf("Failed to stop SSE server: %v", err)
+			}
+		})
+	}
+	t.Cleanup(stop)
+
+	url, _ := env.GetContext().GetProperty("acdc.baseURL")
+	return url.(string), stop
 }
