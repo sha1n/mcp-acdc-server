@@ -1,6 +1,7 @@
 package app
 
 import (
+	"os"
 	"testing"
 
 	"github.com/sha1n/mcp-acdc-server/internal/config"
@@ -191,4 +192,89 @@ func TestCLI_SearchInMemoryDefaultsToTrueWhenFlagIsNotPassed(t *testing.T) {
 
 	require.NoError(t, err)
 	require.True(t, settings.Search.InMemory)
+}
+
+func TestRegisterFlags_UIFlags(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	RegisterFlags(flags)
+
+	tests := []struct {
+		name       string
+		valueType  string
+		defValue   string
+		usageMatch string
+	}{
+		{name: "ui-enabled", valueType: "bool", defValue: "false"},
+		{name: "ui-max-results", valueType: "int", defValue: "0", usageMatch: "(default: 20)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := flags.Lookup(tt.name)
+			require.NotNil(t, f, "flag --%s not registered", tt.name)
+			require.Equal(t, tt.valueType, f.Value.Type())
+			require.Equal(t, tt.defValue, f.DefValue)
+			require.Empty(t, f.Shorthand)
+			require.NotEmpty(t, f.Usage)
+			if tt.usageMatch != "" {
+				require.Contains(t, f.Usage, tt.usageMatch)
+			}
+		})
+	}
+}
+
+func TestCLI_FlagParsing_UISettings(t *testing.T) {
+	tests := []struct {
+		name     string
+		env      map[string]string
+		args     []string
+		expected config.UISettings
+	}{
+		{
+			name:     "no flags keep defaults",
+			expected: config.UISettings{Enabled: false, MaxResults: config.DefaultUIMaxResults},
+		},
+		{
+			name:     "flags set both keys",
+			args:     []string{"--ui-enabled", "--ui-max-results=55"},
+			expected: config.UISettings{Enabled: true, MaxResults: 55},
+		},
+		{
+			name:     "unset max results flag keeps default",
+			args:     []string{"--ui-enabled"},
+			expected: config.UISettings{Enabled: true, MaxResults: config.DefaultUIMaxResults},
+		},
+		{
+			name:     "unset flags keep env values",
+			env:      map[string]string{"ACDC_MCP_UI_ENABLED": "true", "ACDC_MCP_UI_MAX_RESULTS": "33"},
+			expected: config.UISettings{Enabled: true, MaxResults: 33},
+		},
+		{
+			name:     "flags beat env",
+			env:      map[string]string{"ACDC_MCP_UI_ENABLED": "true", "ACDC_MCP_UI_MAX_RESULTS": "33"},
+			args:     []string{"--ui-enabled=false", "--ui-max-results=77"},
+			expected: config.UISettings{Enabled: false, MaxResults: 77},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			t.Setenv("ACDC_MCP_UI_ENABLED", "")
+			t.Setenv("ACDC_MCP_UI_MAX_RESULTS", "")
+			require.NoError(t, os.Unsetenv("ACDC_MCP_UI_ENABLED"))
+			require.NoError(t, os.Unsetenv("ACDC_MCP_UI_MAX_RESULTS"))
+			for key, value := range tt.env {
+				t.Setenv(key, value)
+			}
+			flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+			RegisterFlags(flags)
+			require.NoError(t, flags.Parse(tt.args))
+
+			settings, err := config.LoadSettingsWithFlags(flags)
+
+			require.NoError(t, err)
+			require.Equal(t, tt.expected, settings.UI)
+		})
+	}
 }

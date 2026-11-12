@@ -37,6 +37,14 @@ func LogWithLogger(s *Settings, logger *slog.Logger) {
 	case AuthTypeAPIKey:
 		logger.InfoContext(ctx, "Config: auth.api_keys", "count", len(s.Auth.APIKeys))
 	}
+
+	logger.InfoContext(ctx, "Config: ui.enabled", "value", s.UI.Enabled)
+	if s.UI.Enabled {
+		logger.InfoContext(ctx, "Config: ui.max_results", "value", s.UI.MaxResults)
+		if s.Transport == "stdio" {
+			logger.WarnContext(ctx, "Web UI requires the sse transport; ui.enabled is ignored")
+		}
+	}
 }
 
 // SearchSettingsLogValue returns a slog.Value for SearchSettings with masked data if needed
@@ -74,6 +82,14 @@ func BasicAuthSettingsLogValue(s BasicAuthSettings) slog.Value {
 	)
 }
 
+// UISettingsLogValue returns a slog.Value for UISettings
+func UISettingsLogValue(s UISettings) slog.Value {
+	return slog.GroupValue(
+		slog.Bool("enabled", s.Enabled),
+		slog.Int("max_results", s.MaxResults),
+	)
+}
+
 // SettingsLogValue returns a slog.Value for Settings with masked data
 func SettingsLogValue(s Settings) slog.Value {
 	return slog.GroupValue(
@@ -83,5 +99,6 @@ func SettingsLogValue(s Settings) slog.Value {
 		slog.Int("port", s.Port),
 		slog.Any("search", SearchSettingsLogValue(s.Search)),
 		slog.Any("auth", AuthSettingsLogValue(s.Auth)),
+		slog.Any("ui", UISettingsLogValue(s.UI)),
 	)
 }
