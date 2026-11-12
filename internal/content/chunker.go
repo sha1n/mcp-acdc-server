@@ -36,17 +36,16 @@ func ChunkMarkdown(source domain.SourceDocument, parsed *ParsedMarkdown) ([]doma
 		return nil, fmt.Errorf("parsed markdown AST is required")
 	}
 
-	sections := []markdownSection{{base: "document"}}
+	sections := []markdownSection{{base: preambleFragment}}
 	current := 0
-	usedFragments := map[string]bool{"document": true}
-	fragmentCounts := map[string]int{"document": 1}
+	fragments := newFragmentAllocator()
 	var headingStack [6]string
 
 	for node := parsed.root.FirstChild(); node != nil; node = node.NextSibling() {
 		heading, isHeading := node.(*ast.Heading)
 		if isHeading {
 			level := heading.Level
-			headingStack[level-1] = strings.TrimSpace(nodeText(heading, parsed.Body))
+			headingStack[level-1] = headingLabel(heading, parsed.Body)
 			for index := level; index < len(headingStack); index++ {
 				headingStack[index] = ""
 			}
@@ -58,7 +57,7 @@ func ChunkMarkdown(source domain.SourceDocument, parsed *ParsedMarkdown) ([]doma
 			path := headingPath(headingStack)
 			section := markdownSection{
 				headings: path,
-				base:     allocateFragment(slugifyHeading(headingStack[level-1]), usedFragments, fragmentCounts),
+				base:     fragments.allocate(headingStack[level-1]),
 			}
 			section.blocks = append(section.blocks, sourceBlock(node, parsed.Body, parsed.BodyStartLine))
 			sections = append(sections, section)
@@ -125,23 +124,6 @@ func headingPath(stack [6]string) []string {
 		}
 	}
 	return path
-}
-
-func allocateFragment(base string, used map[string]bool, counts map[string]int) string {
-	if !used[base] {
-		used[base] = true
-		counts[base] = 1
-		return base
-	}
-
-	for suffix := counts[base]; ; suffix++ {
-		candidate := fmt.Sprintf("%s-%d", base, suffix)
-		if !used[candidate] {
-			used[candidate] = true
-			counts[base] = suffix + 1
-			return candidate
-		}
-	}
 }
 
 func splitSection(section markdownSection, source []byte) [][]markdownBlock {
