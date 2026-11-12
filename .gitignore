@@ -20,3 +20,5 @@ dist/
 # Local configuration
 .env
 .gemini
+
+!internal/webui/static/**

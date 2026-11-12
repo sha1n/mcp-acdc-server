@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Search · ACDC</title>
+<link rel="icon" href="/ui/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/style.css">
+<script src="/ui/common.js"></script>
+<script src="/ui/app.js" defer></script>
+</head>
+<body class="page-search">
+<a class="skip-link" href="#mainContent">Skip to main content</a>
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="/ui/">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="2" y="2" width="20" height="20" rx="6"/><path d="M8 16.5l4-9 4 9M9.6 13h4.8"/></svg>
+      <span class="brand-name">ACDC</span>
+      <span class="brand-sub">Content search</span>
+    </a>
+    <button type="button" id="themeToggle" class="theme-toggle">
+      <svg class="icon theme-icon theme-icon-system" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="1.5" y="2.5" width="13" height="9" rx="1.5"/><path d="M5.5 14h5M8 11.5V14"/></svg>
+      <svg class="icon theme-icon theme-icon-light" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="3"/><path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3.05 3.05l1.06 1.06M11.89 11.89l1.06 1.06M3.05 12.95l1.06-1.06M11.89 4.11l1.06-1.06"/></svg>
+      <svg class="icon theme-icon theme-icon-dark" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7z"/></svg>
+      <span class="theme-toggle-label">System</span>
+    </button>
+  </div>
+</header>
+<main id="mainContent" class="search-main" tabindex="-1">
+  <section class="search-panel" aria-labelledby="searchTitle">
+    <div class="search-intro">
+      <h1 id="searchTitle" class="search-title">Search the content</h1>
+      <p class="search-lede">Full-text search over every document this server gives to agents. Narrow it down with labels.</p>
+    </div>
+    <form id="searchForm" class="search-form" role="search" autocomplete="off">
+      <div class="searchbox" id="searchBox">
+        <svg class="icon searchbox-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M7 12.5a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11zM11 11l3.5 3.5"/></svg>
+        <div class="searchbox-field">
+          <div id="searchChips" class="chips" role="list" aria-label="Active label filters"></div>
+          <label class="visually-hidden" for="searchQuery">Search query or label</label>
+          <input id="searchQuery" class="searchbox-input" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="searchSuggest" aria-describedby="searchHint" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" placeholder="Search, or type a label…">
+        </div>
+        <ul id="searchSuggest" class="suggest" role="listbox" aria-label="Label suggestions" hidden></ul>
+      </div>
+      <div class="search-bar">
+        <div id="searchStatus" class="status" data-state="idle"></div>
+        <div class="limit-control">
+          <label for="searchLimit">Show</label>
+          <select id="searchLimit" class="select"></select>
+        </div>
+      </div>
+      <div id="searchNotice" class="search-notice"></div>
+      <p id="searchAnnouncer" class="visually-hidden" role="status" aria-live="polite"></p>
+      <p id="searchHint" class="visually-hidden">Type to search. Matching labels appear as suggestions; use the arrow keys and Enter or Tab to add one as a filter. Backspace in an empty box removes the last label.</p>
+    </form>
+  </section>
+  <section class="browse" aria-labelledby="browseTitle">
+    <h2 id="browseTitle" class="browse-title">Browse by label</h2>
+    <div id="browseLabels" class="browse-labels"></div>
+  </section>
+  <div id="searchResults" class="results" role="region" aria-label="Search results"></div>
+</main>
+</body>
+</html>
