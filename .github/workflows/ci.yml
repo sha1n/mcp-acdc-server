@@ -56,10 +56,19 @@ jobs:
         run: make install
       - name: Run linting and format checks
         run: make lint
+      - name: Set up Chrome
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+      # Ubuntu 24.04 runners restrict unprivileged user namespaces through AppArmor,
+      # which Chrome's sandbox needs; relaxing it keeps the browser tests sandboxed.
+      - name: Allow the Chrome sandbox
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Run tests
         run: make coverage
         env:
           CI: true
+          ACDC_TEST_CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
+          ACDC_REQUIRE_BROWSER: "1"
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
         with:
