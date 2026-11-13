@@ -6,7 +6,7 @@ require (
 	github.com/blevesearch/bleve/v2 v2.6.3
 	github.com/blevesearch/bleve_index_api v1.4.1
 	github.com/bmatcuk/doublestar/v4 v4.10.4
-	github.com/chromedp/cdproto v0.159.0
+	github.com/chromedp/cdproto v0.159.3
 	github.com/chromedp/chromedp v0.23.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/spf13/cobra v1.10.2
