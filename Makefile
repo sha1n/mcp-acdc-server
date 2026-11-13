@@ -28,6 +28,12 @@ MODFLAGS=-mod=readonly
 # make bench BENCHFLAGS="-corpus=$HOME/docs -corpus-dup=2"
 BENCHFLAGS ?=
 
+# Coverage measures production packages only. Whether a fixture's failure branches
+# under tests/ run depends on timing (e.g. a server shutdown that hits its timeout),
+# so instrumenting them makes the total differ between runs of identical code.
+# Recursively expanded so that only the coverage target pays for `go list`.
+COVERPKG = $(shell go list $(MODFLAGS) ./... | grep -v "/tests/" | sed "s,^$$(go list -m),.," | paste -sd, -)
+
 # Use linker flags to provide version/build settings
 LDFLAGS=-ldflags "-w -s -X=main.Version=$(VERSION) -X=main.Build=$(BUILD) -X=main.ProgramName=$(PROGRAMNAME)"
 
@@ -76,7 +82,7 @@ test: install go-test
 .PHONY: coverage
 coverage: install
 	@echo "  >  Running tests with coverage (bypassing cache)..."
-	go test $(MODFLAGS) -count=1 -coverpkg=./... -coverprofile=coverage.out ./...
+	go test $(MODFLAGS) -count=1 -coverpkg=$(COVERPKG) -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out
 
 ## coverage-html: Runs tests and opens the coverage report in a browser

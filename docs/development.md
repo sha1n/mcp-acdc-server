@@ -43,7 +43,7 @@ make build-docker
 | `make build-current` | Build for current OS/Arch only |
 | `make build-docker` | Build Docker image |
 | `make test` | Run all tests |
-| `make coverage` | Run tests with coverage report |
+| `make coverage` | Run all tests and report coverage of production packages (`tests/` is not measured) |
 | `make bench` | Run the search measurement benchmarks |
 | `make lint` | Run linters (go vet, golangci-lint, format check) |
 | `make complexity` | Run function-level complexity analysis only |
