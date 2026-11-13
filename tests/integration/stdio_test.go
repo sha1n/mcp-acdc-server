@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestStdioServer(t *testing.T) {
@@ -32,7 +33,7 @@ func TestStdioServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to start env: %v", err)
 	}
-	defer func() { _ = env.Stop() }()
+	t.Cleanup(func() { require.NoError(t, env.Stop()) })
 
 	stdin := props["acdc.stdin"].(io.Writer)
 	stdout := props["acdc.stdout"].(io.Reader)
@@ -106,7 +107,7 @@ func TestStdioServer_HTTPPortNotListening(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to start env: %v", err)
 	}
-	defer func() { _ = env.Stop() }()
+	t.Cleanup(func() { require.NoError(t, env.Stop()) })
 
 	stdin := props["acdc.stdin"].(io.Writer)
 	stdout := props["acdc.stdout"].(io.Reader)

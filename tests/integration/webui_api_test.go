@@ -326,7 +326,7 @@ func TestWebUIAPI_RoutesRequireAuth(t *testing.T) {
 			env := testkit.NewTestEnv(testkit.NewACDCService("acdc", flags))
 			props, err := env.Start()
 			require.NoError(t, err)
-			defer func() { _ = env.Stop() }()
+			t.Cleanup(func() { require.NoError(t, env.Stop()) })
 			baseURL := props["acdc.baseURL"].(string)
 
 			for _, path := range []string{"/ui/", "/ui/doc?uri=acdc://guide", "/api/v1/config", "/api/v1/search?q=guide", "/api/v1/labels", "/api/v1/document?uri=acdc://guide"} {
@@ -345,6 +345,10 @@ func doGet(t *testing.T, rawURL string, authorize func(*http.Request)) int {
 	authorize(req)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	_ = resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
+	// A body closed unread is drained in the background, so the next request can
+	// dial a second connection that then sits in the pool without ever being used.
+	_, err = io.Copy(io.Discard, resp.Body)
+	require.NoError(t, err)
 	return resp.StatusCode
 }

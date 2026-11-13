@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSSEServer(t *testing.T) {
@@ -24,7 +25,7 @@ func TestSSEServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to start env: %v", err)
 	}
-	defer func() { _ = env.Stop() }()
+	t.Cleanup(func() { require.NoError(t, env.Stop()) })
 
 	baseURL := props["acdc.baseURL"].(string)
 	url := baseURL + "/sse"

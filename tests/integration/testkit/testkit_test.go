@@ -163,7 +163,7 @@ func TestACDCService_Discovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer func() { _ = env.Stop() }()
+	t.Cleanup(func() { require.NoError(t, env.Stop()) })
 
 	baseURL, ok := env.GetContext().GetProperty("acdc.baseURL")
 	if !ok {
