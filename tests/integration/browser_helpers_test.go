@@ -157,11 +157,9 @@ func (s *browserSession) documentPageURL(uri, fragment string) string {
 
 func (s *browserSession) openSearchPage() {
 	s.t.Helper()
-	s.run(
-		chromedp.Navigate(s.searchPageURL(nil)),
-		chromedp.WaitReady(chromedp.CSS(`#searchStatus[data-state="idle"]`)),
-		chromedp.WaitVisible(chromedp.CSS(`#searchQuery`)),
-	)
+	s.run(chromedp.Navigate(s.searchPageURL(nil)))
+	s.waitForSearchState("idle")
+	s.run(chromedp.WaitVisible(chromedp.CSS(`#searchQuery`)))
 }
 
 func (s *browserSession) typeQuery(text string) {
@@ -178,7 +176,7 @@ func (s *browserSession) waitForResultCount(n int) {
 
 func (s *browserSession) waitForSearchState(state string) {
 	s.t.Helper()
-	s.waitUntil(fmt.Sprintf(`document.querySelector('#searchStatus[data-state=%q]') !== null`, state))
+	s.waitUntil(fmt.Sprintf(`%s && document.querySelector('#searchStatus[data-state=%q]') !== null`, searchPageStartedJS, state))
 }
 
 func (s *browserSession) waitForDocumentState(state string) {
@@ -484,6 +482,12 @@ func focusRingContrastJS(id string) string {
 	return best;
 })()`, id)
 }
+
+// searchPageStartedJS guards waits on #searchStatus: the served markup already
+// carries data-state="idle", so the state alone cannot tell a started page from
+// one still fetching its config. The limit options are rendered in the same task
+// that first sets the state from script, once the config request has settled.
+const searchPageStartedJS = `document.getElementById('searchLimit')?.options.length > 0`
 
 const resultArticlesJS = `Array.from(document.querySelectorAll('#searchResults article.result[data-chunk-id]'))`
 
