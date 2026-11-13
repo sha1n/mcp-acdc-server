@@ -163,7 +163,7 @@ jobs:
             acdc-mcp:smoke)
           trap 'docker logs "$container"; docker rm -f "$container" > /dev/null' EXIT
           for _ in $(seq 1 30); do
-            if [ "$(curl -fsS http://127.0.0.1:8080/health 2> /dev/null)" = "ok" ]; then
+            if [ "$(curl -fsS --max-time 2 http://127.0.0.1:8080/health 2> /dev/null)" = "ok" ]; then
               echo "Image is healthy."
               exit 0
             fi
