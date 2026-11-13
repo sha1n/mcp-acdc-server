@@ -33,3 +33,7 @@ _Avoid_: Client, connection, active session
 **Linger**:
 The time a shared server stays up with no attached sessions before it shuts down.
 _Avoid_: Idle timeout, grace period, keep-alive
+
+**Recovery**:
+What a session proxy does after losing its shared server: find or start a replacement and resume the session on it.
+_Avoid_: Reconnect, failover, restart
