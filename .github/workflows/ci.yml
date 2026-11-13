@@ -140,6 +140,63 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
+      # The smoke-test builds run before the publishing build so a broken image
+      # fails the job instead of being pushed. Their layers stay in the builder's
+      # local cache, so the multi-platform build below reuses them.
+      - name: Build amd64 image for smoke test
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: acdc-mcp:smoke
+          provenance: false
+          cache-from: type=gha
+      - name: Smoke test amd64 image
+        run: |
+          set -euo pipefail
+          # Only the transport is overridden: the image's own CMD, host, port and
+          # content directory defaults are what is under test.
+          container=$(docker run -d -p 127.0.0.1:8080:8080 \
+            -e ACDC_MCP_TRANSPORT=sse \
+            -v "$PWD/examples/sample-content:/app/content:ro" \
+            acdc-mcp:smoke)
+          trap 'docker logs "$container"; docker rm -f "$container" > /dev/null' EXIT
+          deadline=$((SECONDS + 30))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            if [ "$(curl -fsS --max-time 2 http://127.0.0.1:8080/health 2> /dev/null)" = "ok" ]; then
+              echo "Image is healthy."
+              exit 0
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' "$container")" != "true" ]; then
+              echo "::error::Container exited before answering /health."
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "::error::/health did not answer within 30 seconds."
+          exit 1
+      # Exported instead of run: executing arm64 needs QEMU, and reading the ELF
+      # headers already shows whether cross-compilation targeted the platform.
+      - name: Export arm64 image filesystem
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/arm64
+          outputs: type=local,dest=${{ runner.temp }}/image-arm64
+          provenance: false
+          cache-from: type=gha
+      - name: Verify arm64 image contents
+        run: |
+          set -euo pipefail
+          for binary in app/acdc-mcp bin/busybox; do
+            machine=$(readelf -h "${{ runner.temp }}/image-arm64/$binary" | awk -F: '/Machine:/ {gsub(/^[ \t]+/, "", $2); print $2}')
+            echo "$binary: $machine"
+            if [ "$machine" != "AArch64" ]; then
+              echo "::error::$binary in the arm64 image is built for $machine."
+              exit 1
+            fi
+          done
       - name: Build and push Docker image
         uses: docker/build-push-action@v7
         with:

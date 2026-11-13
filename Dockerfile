@@ -13,7 +13,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /app/acdc-mcp ./cmd/acdc-mcp
 
 # Stage 2: Runtime
-FROM alpine:latest
+FROM alpine:3.24
 WORKDIR /app
 COPY --from=builder /app/acdc-mcp .
 # Install ca-certificates for external requests if needed
