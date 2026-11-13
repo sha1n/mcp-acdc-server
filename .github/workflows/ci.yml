@@ -117,6 +117,11 @@ jobs:
       (needs.changes.outputs.docker == 'true' || github.event_name == 'push' && contains(github.ref, 'refs/tags/')) &&
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
+    env:
+      # Pull requests keep their build cache in a scope master never writes, and
+      # every build reads one scope only. A pull request can read master's cache
+      # as well as its own, and BuildKit misses layers when it imports both.
+      BUILD_CACHE_SCOPE: ${{ github.event_name == 'pull_request' && 'buildkit-pr' || 'buildkit' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -151,7 +156,7 @@ jobs:
           load: true
           tags: acdc-mcp:smoke
           provenance: false
-          cache-from: type=gha
+          cache-from: type=gha,scope=${{ env.BUILD_CACHE_SCOPE }}
       - name: Smoke test amd64 image
         run: |
           set -euo pipefail
@@ -185,7 +190,7 @@ jobs:
           platforms: linux/arm64
           outputs: type=local,dest=${{ runner.temp }}/image-arm64
           provenance: false
-          cache-from: type=gha
+          cache-from: type=gha,scope=${{ env.BUILD_CACHE_SCOPE }}
       - name: Verify arm64 image contents
         run: |
           set -euo pipefail
@@ -205,8 +210,8 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ env.BUILD_CACHE_SCOPE }}
+          cache-to: type=gha,mode=max,scope=${{ env.BUILD_CACHE_SCOPE }}
 
   # Publishes docs/dockerhub-overview.md as the Docker Hub repository overview.
   # Deliberately not a dependency of status-check: it only runs on the default
