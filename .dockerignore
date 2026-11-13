@@ -1,14 +1,9 @@
-.git
-.github
-bin
-build
-dist
-docs
-examples
-tests
-*.out
-.gitignore
-.goreleaser.yaml
-README.md
-GEMINI.md
-LICENSE
+# Allow-list: only the inputs of `go build ./cmd/acdc-mcp` enter the build
+# context, so a change to anything else cannot invalidate the cached build layer.
+*
+!go.mod
+!go.sum
+!cmd
+!internal
+**/*_test.go
+**/testdata

@@ -33,9 +33,17 @@ jobs:
             src:
               - '**'
               - '!(README.md|docs/**|examples/**)'
+            # Mirrors the .dockerignore allow-list plus the files that define the
+            # build. Rules are OR-ed, so a '**' rule next to negations matches
+            # every change; list the inputs positively instead.
             docker:
-              - '**'
-              - '!({README.md,GEMINI.md,LICENSE,.gitignore,.goreleaser.yaml,.github/**,docs/**,examples/**,tests/**,bin/**,build/**,dist/**,*.out})'
+              - 'Dockerfile'
+              - '.dockerignore'
+              - 'go.mod'
+              - 'go.sum'
+              - 'cmd/**'
+              - 'internal/**'
+              - '.github/workflows/ci.yml'
             # The 'docker' job builds and pushes the image but never publishes the
             # repository overview, so the description needs its own trigger.
             dockerhub_description:
