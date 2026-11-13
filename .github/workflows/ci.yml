@@ -162,7 +162,8 @@ jobs:
             -v "$PWD/examples/sample-content:/app/content:ro" \
             acdc-mcp:smoke)
           trap 'docker logs "$container"; docker rm -f "$container" > /dev/null' EXIT
-          for _ in $(seq 1 30); do
+          deadline=$((SECONDS + 30))
+          while [ "$SECONDS" -lt "$deadline" ]; do
             if [ "$(curl -fsS --max-time 2 http://127.0.0.1:8080/health 2> /dev/null)" = "ok" ]; then
               echo "Image is healthy."
               exit 0
