@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAPIKeyAuthIntegration(t *testing.T) {
@@ -30,14 +31,14 @@ func TestAPIKeyAuthIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to start env: %v", err)
 	}
-	defer func() { _ = env.Stop() }()
+	t.Cleanup(func() { require.NoError(t, env.Stop()) })
 
 	baseURL := props["acdc.baseURL"].(string)
 	url := baseURL + "/sse"
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := &http.Client{}
+			client := newSingleUseHTTPClient()
 			req, _ := http.NewRequest("GET", url, nil)
 			if tt.apiKey != "" {
 				req.Header.Set("X-API-Key", tt.apiKey)
@@ -81,14 +82,14 @@ func TestBasicAuthIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to start env: %v", err)
 	}
-	defer func() { _ = env.Stop() }()
+	t.Cleanup(func() { require.NoError(t, env.Stop()) })
 
 	baseURL := props["acdc.baseURL"].(string)
 	url := baseURL + "/sse"
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := &http.Client{}
+			client := newSingleUseHTTPClient()
 			req, _ := http.NewRequest("GET", url, nil)
 			if tt.username != "" || tt.password != "" {
 				req.SetBasicAuth(tt.username, tt.password)
@@ -105,4 +106,14 @@ func TestBasicAuthIntegration(t *testing.T) {
 			}
 		})
 	}
+}
+
+// newSingleUseHTTPClient returns a client that never pools connections. An
+// authorised /sse response is an endless stream that can only be closed unread,
+// and the transport returns such a connection to its pool in the background: the
+// next request may dial a second one that is then left unused, and the server
+// does not treat a connection it has read no request from as idle until it is
+// five seconds old, which stalls its graceful shutdown.
+func newSingleUseHTTPClient() *http.Client {
+	return &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
 }

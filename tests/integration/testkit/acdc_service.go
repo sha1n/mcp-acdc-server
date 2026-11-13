@@ -2,6 +2,7 @@ package testkit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -99,7 +100,13 @@ func (s *acdcService) Start() (map[string]any, error) {
 	baseURL := fmt.Sprintf("http://%s:%d", host, port)
 
 	deadline := time.Now().Add(s.StartTimeout)
-	client := &http.Client{Timeout: 100 * time.Millisecond}
+	// The probe closes its responses unread, and the transport hands such a
+	// connection back to its pool in the background. On the shared default pool
+	// that races the test's first request into dialling a connection it never uses.
+	client := &http.Client{
+		Timeout:   100 * time.Millisecond,
+		Transport: &http.Transport{DisableKeepAlives: true},
+	}
 	for time.Now().Before(deadline) {
 		select {
 		case err := <-s.errChan:
@@ -136,13 +143,7 @@ func (s *acdcService) closeStdioPipes(cause error) {
 }
 
 func (s *acdcService) Stop() error {
-	if s.srv != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), s.StopDelay)
-		defer cancel()
-		if err := s.srv.Shutdown(ctx); err != nil {
-			return err
-		}
-	}
+	shutdownErr := s.shutdownHTTPServer()
 
 	if s.ctxCancel != nil {
 		s.ctxCancel()
@@ -154,14 +155,39 @@ func (s *acdcService) Stop() error {
 		_ = s.stdoutWriter.Close()
 	}
 
+	return errors.Join(shutdownErr, s.awaitRunner())
+}
+
+func (s *acdcService) shutdownHTTPServer() error {
+	if s.srv == nil {
+		return nil
+	}
+
+	// A pooled client connection the server has not yet read a request from counts
+	// as busy for its first five seconds (golang/go#22682), which would hold the
+	// graceful shutdown for the whole StopDelay. Tests reach the server through the
+	// default transport, so its pool is emptied before the server is asked to stop.
+	http.DefaultClient.CloseIdleConnections()
+
+	ctx, cancel := context.WithTimeout(context.Background(), s.StopDelay)
+	defer cancel()
+	if err := s.srv.Shutdown(ctx); err != nil {
+		// Shutdown only stops accepting; without this the connections it gave up
+		// on, and the goroutines serving them, would outlive the test.
+		_ = s.srv.Close()
+		return fmt.Errorf("graceful shutdown of %s failed, connections were closed forcibly: %w", s.name, err)
+	}
+	return nil
+}
+
+func (s *acdcService) awaitRunner() error {
 	select {
 	case err := <-s.errChan:
 		if err != nil && err != http.ErrServerClosed && err != context.Canceled {
 			return err
 		}
+		return nil
 	case <-time.After(s.StopDelay):
 		return fmt.Errorf("timed out waiting for server to stop")
 	}
-
-	return nil
 }

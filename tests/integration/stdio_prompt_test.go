@@ -9,6 +9,7 @@ import (
 
 	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPromptIntegration(t *testing.T) {
@@ -38,7 +39,7 @@ Hello {{.arg1}}`
 
 	props, err := env.Start()
 	assert.NoError(t, err)
-	defer func() { _ = env.Stop() }()
+	t.Cleanup(func() { require.NoError(t, env.Stop()) })
 
 	stdin := props["acdc.stdin"].(io.Writer)
 	stdout := props["acdc.stdout"].(io.Reader)

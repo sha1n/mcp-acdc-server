@@ -155,7 +155,9 @@ func (tc *TestClient) Close() {
 		_ = tc.Session.Close()
 	}
 	if tc.env != nil {
-		_ = tc.env.Stop()
+		if err := tc.env.Stop(); err != nil {
+			tc.t.Errorf("Failed to stop server: %v", err)
+		}
 	}
 }
 

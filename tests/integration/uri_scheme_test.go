@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 // TestURISchemeIntegration verifies that the server uses the configured URI scheme in resource URIs,
@@ -55,7 +56,7 @@ func TestURISchemeIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to start env: %v", err)
 			}
-			defer func() { _ = env.Stop() }()
+			t.Cleanup(func() { require.NoError(t, env.Stop()) })
 
 			stdin := props["acdc.stdin"].(io.Writer)
 			stdout := props["acdc.stdout"].(io.Reader)

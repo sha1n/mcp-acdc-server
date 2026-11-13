@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 // TestSSEResourceListAndRead tests that resources can be listed and read via SSE transport
@@ -47,7 +48,7 @@ tools:
 	if err != nil {
 		t.Fatalf("Failed to start env: %v", err)
 	}
-	defer func() { _ = env.Stop() }()
+	t.Cleanup(func() { require.NoError(t, env.Stop()) })
 
 	baseURL := props["acdc.baseURL"].(string)
 
