@@ -21,3 +21,11 @@ _Avoid_: Standalone server, legacy mode, private server
 **Server identity**:
 The value derived from the settings and binary version that make two launches interchangeable; sessions share a server only when their server identities are equal.
 _Avoid_: Args hash, config hash, instance key
+
+**Attached session**:
+A session currently connected to a shared server.
+_Avoid_: Client, connection, active session
+
+**Linger**:
+The time a shared server stays up with no attached sessions before it shuts down.
+_Avoid_: Idle timeout, grace period, keep-alive
