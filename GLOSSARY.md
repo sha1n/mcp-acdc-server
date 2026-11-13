@@ -23,7 +23,7 @@ A server that owns its own catalog and search index for a single session; what a
 _Avoid_: Standalone server, legacy mode, private server
 
 **Server identity**:
-The value derived from the settings and binary version that make two launches interchangeable; sessions share a server only when their server identities are equal.
+The value derived from the settings, the binary version and the content fixed at startup that make two launches interchangeable; sessions share a server only when their server identities are equal.
 _Avoid_: Args hash, config hash, instance key
 
 **Attached session**:
@@ -37,3 +37,9 @@ _Avoid_: Idle timeout, grace period, keep-alive
 **Recovery**:
 What a session proxy does after losing its shared server: find or start a replacement and resume the session on it.
 _Avoid_: Reconnect, failover, restart
+
+### Content
+
+**Content refresh**:
+The in-place update of a running server's catalog and search index after its documents change.
+_Avoid_: Reload, hot reload, watching
