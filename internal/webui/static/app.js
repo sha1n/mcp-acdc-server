@@ -40,6 +40,7 @@
   let activeSuggestion = -1;
   let pendingRestore = null;
   let announceTimer = 0;
+  let started = false;
 
   // ---------- state & URL ----------
 
@@ -56,8 +57,12 @@
     state.query = params.get("q") || "";
     state.labels = [];
     params.getAll("label").forEach((label) => addUnique(state.labels, label));
-    const limit = Number.parseInt(params.get("limit") || "", 10);
-    state.limit = isValidLimit(limit) ? limit : config.default_limit;
+    state.limit = limitFromURL();
+  }
+
+  function limitFromURL() {
+    const limit = Number.parseInt(new URLSearchParams(window.location.search).get("limit") || "", 10);
+    return isValidLimit(limit) ? limit : config.default_limit;
   }
 
   function addUnique(labels, label) {
@@ -89,9 +94,13 @@
   }
 
   function syncControls() {
+    syncCriteriaControls();
+    renderLimitOptions();
+  }
+
+  function syncCriteriaControls() {
     dom.input.value = state.query;
     renderChips();
-    renderLimitOptions();
     updateMode();
   }
 
@@ -353,7 +362,11 @@
     runSearch(true);
   }
 
+  // Until startup completes the URL is the only record of a deep-linked limit, and
+  // the limit cannot be validated without the config, so nothing may search or
+  // rewrite the URL yet. start() runs the search for whatever was entered meanwhile.
   async function runSearch(committed) {
+    if (!started) return;
     window.clearTimeout(announceTimer);
     updateMode();
     writeURL();
@@ -742,7 +755,7 @@
   // A page restored from the back/forward cache still shows its old response; the
   // catalog may have changed since, so the search always runs again from the URL.
   function onPageShow(event) {
-    if (!event.persisted) return;
+    if (!event.persisted || !started) return;
     pendingRestore = takeRestorePoint() || captureRestorePoint();
     readURL();
     syncControls();
@@ -779,10 +792,15 @@
 
   async function start() {
     if ("scrollRestoration" in window.history) window.history.scrollRestoration = "manual";
+    // The URL is applied to the controls in the same task that binds their handlers,
+    // and never again during startup, so input made while the config loads is kept.
+    readURL();
+    syncCriteriaControls();
     bindEvents();
     await loadConfig();
-    readURL();
-    syncControls();
+    state.limit = limitFromURL();
+    renderLimitOptions();
+    started = true;
     pendingRestore = takeRestorePoint();
     loadBrowseLabels();
     searchNow();
