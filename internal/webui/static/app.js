@@ -60,6 +60,14 @@
     state.limit = limitFromURL();
   }
 
+  // The script is deferred, so the search box accepts text before any handler
+  // exists. Only typing can make it differ from the markup by then: its
+  // autocomplete="off" keeps browsers from refilling it on reload or history
+  // navigation, which would otherwise pass for typed text and override the URL.
+  function adoptQueryTypedBeforeScript() {
+    if (dom.input.value !== dom.input.defaultValue) state.query = dom.input.value;
+  }
+
   function limitFromURL() {
     const limit = Number.parseInt(new URLSearchParams(window.location.search).get("limit") || "", 10);
     return isValidLimit(limit) ? limit : config.default_limit;
@@ -795,6 +803,7 @@
     // The URL is applied to the controls in the same task that binds their handlers,
     // and never again during startup, so input made while the config loads is kept.
     readURL();
+    adoptQueryTypedBeforeScript();
     syncCriteriaControls();
     bindEvents();
     await loadConfig();

@@ -98,7 +98,7 @@ type browserSession struct {
 	baseURL string
 }
 
-func startBrowserSession(t *testing.T) *browserSession {
+func startBrowserSession(t *testing.T, browserOptions ...chromedp.ExecAllocatorOption) *browserSession {
 	t.Helper()
 	browserPath := requireBrowserOrSkip(t)
 
@@ -111,6 +111,7 @@ func startBrowserSession(t *testing.T) *browserSession {
 		chromedp.ExecPath(browserPath),
 		chromedp.WindowSize(1024, 768),
 	)
+	opts = append(opts, browserOptions...)
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(context.Background(), opts...)
 	timeoutCtx, cancelTimeout := context.WithTimeout(allocCtx, browserTestTimeout)
 	ctx, cancelBrowser := chromedp.NewContext(timeoutCtx)
