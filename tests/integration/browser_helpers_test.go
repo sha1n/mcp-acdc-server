@@ -359,6 +359,31 @@ func (s *browserSession) delayRequests(urlPattern string, delay time.Duration) *
 	return settled
 }
 
+// holdRequests pauses matching requests through the Fetch domain until the
+// returned release function is called, so a test can act while a response is
+// outstanding without depending on how long those actions take.
+func (s *browserSession) holdRequests(urlPattern string) (release func()) {
+	s.t.Helper()
+	released := make(chan struct{})
+	require.NoError(s.t, chromedp.Listen(s.ctx, func(ev any) {
+		paused, ok := ev.(*fetch.EventRequestPaused)
+		if !ok {
+			return
+		}
+		go func() {
+			select {
+			case <-released:
+			case <-s.ctx.Done():
+				return
+			}
+			_, _ = chromedp.Call(s.ctx, fetch.ContinueRequest, fetch.ContinueRequestParams{RequestID: paused.RequestID})
+		}()
+	}))
+	_, err := chromedp.Call(s.ctx, fetch.Enable, fetch.EnableParams{Patterns: []*fetch.RequestPattern{{URLPattern: urlPattern}}})
+	require.NoError(s.t, err)
+	return sync.OnceFunc(func() { close(released) })
+}
+
 // failRequests makes matching requests fail as if the server refused the
 // connection. Stopping the real server mid-test is not equivalent: Chrome keeps
 // speculative connections open without sending a request, and http.Server.Shutdown
