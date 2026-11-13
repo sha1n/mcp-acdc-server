@@ -4,7 +4,11 @@ An MCP server that exposes a directory of authored content to agents as searchab
 
 ## Language
 
-### Singleton mode
+### Server mode
+
+**Server mode**:
+Whether a stdio launch joins a shared server or runs as a per-session server.
+_Avoid_: Singleton mode
 
 **Shared server**:
 The one process that owns the catalog and search index for a server identity, serving every session that has that identity.
@@ -15,7 +19,7 @@ The per-session process an MCP host launches over stdio, which relays that sessi
 _Avoid_: Client, secondary, follower
 
 **Per-session server**:
-A server that owns its own catalog and search index for a single session; what a stdio launch is without singleton mode, and what it becomes when singleton mode cannot be used.
+A server that owns its own catalog and search index for a single session; what a stdio launch is when the server mode is not shared, and what it becomes when a shared server cannot be used.
 _Avoid_: Standalone server, legacy mode, private server
 
 **Server identity**:
