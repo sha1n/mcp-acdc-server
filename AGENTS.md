@@ -33,3 +33,17 @@ Use Conventional Commits, as reflected in history: `feat(scope): summary`, `fix:
 ## Security & Configuration Tips
 
 Configuration may come from flags, files, or `ACDC_MCP_*` environment variables. Never commit credentials, API keys, generated coverage files, or local content indexes. Preserve the unauthenticated `/health` endpoint contract when changing SSE middleware.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in GitHub Issues (`sha1n/mcp-acdc-server`), via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` at the repo root and ADRs in `docs/adr/`. See `docs/agents/domain.md`.
