@@ -27,15 +27,24 @@ jobs:
       - uses: dorny/paths-filter@v4
         id: filter
         with:
+          # Rules are OR-ed by default, so a '**' rule next to negations matches
+          # every change. This makes a leading '!' exclude instead, and leaves
+          # filters without negations OR-ed.
+          predicate-quantifier: 'some-with-excludes'
           filters: |
-            # 'src' is true if any file NOT in the list below has changed.
-            # This captures all code and configuration changes that require testing.
+            # Deny-list rather than allow-list, so a path nobody anticipated runs
+            # the tests instead of skipping them. Only prose that no test, embed
+            # or lint reads may be excluded, and nothing the 'docker' filter lists:
+            # 'docker' needs 'test', so it is skipped whenever 'test' is.
+            # '*.md' is root-level only; Markdown under internal/ is test data.
             src:
               - '**'
-              - '!(README.md|docs/**|examples/**)'
+              - '!*.md'
+              - '!LICENSE'
+              - '!docs/**'
+              - '!examples/**'
             # Mirrors the .dockerignore allow-list plus the files that define the
-            # build. Rules are OR-ed, so a '**' rule next to negations matches
-            # every change; list the inputs positively instead.
+            # build.
             docker:
               - 'Dockerfile'
               - '.dockerignore'
@@ -50,9 +59,11 @@ jobs:
               - 'docs/dockerhub-overview.md'
               - '.github/workflows/ci.yml'
 
+  # Only pull requests may skip on the path filter: pushes keep a coverage
+  # baseline on every master commit, and a scheduled run has no diff to filter.
   test:
     needs: changes
-    if: needs.changes.outputs.src == 'true' || github.event_name == 'push' && contains(github.ref, 'refs/tags/')
+    if: needs.changes.outputs.src == 'true' || github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -89,7 +100,7 @@ jobs:
   # also enforced by `make lint`.
   complexity:
     needs: changes
-    if: needs.changes.outputs.src == 'true' || github.event_name == 'push' && contains(github.ref, 'refs/tags/')
+    if: needs.changes.outputs.src == 'true' || github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
