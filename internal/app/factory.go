@@ -17,36 +17,49 @@ import (
 	"github.com/sha1n/mcp-acdc-server/internal/search"
 )
 
+type uiSearcher interface {
+	search.Searcher
+	LabelledSearch(query string, labels []string, limit int) ([]search.LabelledResult, error)
+	Labels(prefix string, limit int) ([]search.LabelCount, error)
+}
+
 type factoryDeps struct {
 	discover  func(context.Context, *content.ContentProvider, *domain.IndexMetadata, string, ...resources.DiscoverOption) (resources.DiscoveryResult, error)
-	newSearch func(config.SearchSettings) search.Searcher
+	newSearch func(config.SearchSettings) uiSearcher
 }
 
 func defaultFactoryDeps() factoryDeps {
 	return factoryDeps{
 		discover: resources.Discover,
-		newSearch: func(settings config.SearchSettings) search.Searcher {
+		newSearch: func(settings config.SearchSettings) uiSearcher {
 			return search.NewService(settings)
 		},
 	}
 }
 
-// CreateMCPServer initializes the core MCP server components.
-func CreateMCPServer(ctx context.Context, settings *config.Settings, version string) (*mcpsdk.Server, func(), error) {
-	return createMCPServer(ctx, settings, version, defaultFactoryDeps())
+// Components are the long-lived server parts produced by CreateServer.
+type Components struct {
+	MCP        *mcpsdk.Server
+	SSEOptions []SSEOption
+	Cleanup    func()
 }
 
-func createMCPServer(ctx context.Context, settings *config.Settings, version string, deps factoryDeps) (*mcpsdk.Server, func(), error) {
+// CreateServer initializes the core server components.
+func CreateServer(ctx context.Context, settings *config.Settings, version string) (Components, error) {
+	return createServer(ctx, settings, version, defaultFactoryDeps())
+}
+
+func createServer(ctx context.Context, settings *config.Settings, version string, deps factoryDeps) (Components, error) {
 	// Initialize content provider
 	cp := content.NewContentProvider(settings.ContentDir)
 
 	if err := rejectLegacyContentLayout(cp); err != nil {
-		return nil, nil, err
+		return Components{}, err
 	}
 
 	resolved, err := resolveMetadata(cp, version)
 	if err != nil {
-		return nil, nil, err
+		return Components{}, err
 	}
 	metadata := resolved.metadata
 
@@ -71,20 +84,20 @@ func createMCPServer(ctx context.Context, settings *config.Settings, version str
 	// Discover resources
 	discovery, err := deps.discover(ctx, cp, metadata.Index, settings.Scheme, discoverOpts...)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to discover resources: %w", err)
+		return Components{}, fmt.Errorf("failed to discover resources: %w", err)
 	}
 
 	warnIfLegacyLayoutIgnored(cp, resolved.defaulted, discovery)
 
 	resourceProvider, err := assembleResourceProvider(discovery, settings.CrossRef, settings.Scheme)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create resource provider: %w", err)
+		return Components{}, fmt.Errorf("failed to create resource provider: %w", err)
 	}
 
 	// Discover prompts
 	promptDefinitions, err := prompts.DiscoverPrompts(cp)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to discover prompts: %w", err)
+		return Components{}, fmt.Errorf("failed to discover prompts: %w", err)
 	}
 
 	promptProvider := prompts.NewPromptProvider(promptDefinitions, cp)
@@ -95,7 +108,7 @@ func createMCPServer(ctx context.Context, settings *config.Settings, version str
 	// Index resources
 	if err := IndexResources(ctx, resourceProvider, searchService); err != nil {
 		searchService.Close()
-		return nil, nil, err
+		return Components{}, err
 	}
 
 	holder := resources.NewCatalogHolder(resourceProvider)
@@ -131,7 +144,14 @@ func createMCPServer(ctx context.Context, settings *config.Settings, version str
 	mcpServer, registrar := mcp.CreateServer(metadata, holder, promptProvider, searchService, settings.Search, refresher)
 	refresher.bindRegistrar(registrar)
 
-	return mcpServer, searchService.Close, nil
+	return Components{
+		MCP: mcpServer,
+		SSEOptions: []SSEOption{WithWebUI(
+			newRevalidatingSearchBackend(searchService, refresher),
+			newRevalidatingDocuments(newCatalogDocuments(holder), refresher),
+		)},
+		Cleanup: searchService.Close,
+	}, nil
 }
 
 // assembleResourceProvider builds the resource catalog from a discovery

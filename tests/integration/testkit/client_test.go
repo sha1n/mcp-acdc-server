@@ -195,7 +195,7 @@ func TestNewSSETestClient_StartError(t *testing.T) {
 	}()
 
 	// Use metadata that is valid YAML but fails validation (missing required fields)
-	// This will cause CreateMCPServer to fail, which triggers the Start error path
+	// This will cause CreateServer to fail, which triggers the Start error path
 	// Note: This only works for SSE which polls and detects startup errors
 	NewSSETestClient(mockT, &ContentDirOptions{
 		Metadata: "server: { name: \"\", version: \"\", instructions: \"\" }",

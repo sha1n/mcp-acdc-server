@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLog(t *testing.T) {
@@ -228,3 +229,97 @@ func (h *mapHandler) Handle(_ context.Context, r slog.Record) error {
 }
 func (h *mapHandler) WithAttrs(attrs []slog.Attr) slog.Handler { return h }
 func (h *mapHandler) WithGroup(name string) slog.Handler       { return h }
+
+const uiStdioWarning = "Web UI requires the sse transport; ui.enabled is ignored"
+
+type recordingHandler struct {
+	records []slog.Record
+}
+
+func (h *recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *recordingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.records = append(h.records, r)
+	return nil
+}
+func (h *recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *recordingHandler) WithGroup(string) slog.Handler      { return h }
+
+func (h *recordingHandler) warnings() []string {
+	var messages []string
+	for _, r := range h.records {
+		if r.Level >= slog.LevelWarn {
+			messages = append(messages, r.Message)
+		}
+	}
+	return messages
+}
+
+func TestLogWithLogger_UIStdioWarning(t *testing.T) {
+	tests := []struct {
+		name         string
+		transport    string
+		enabled      bool
+		wantWarnings []string
+	}{
+		{name: "stdio enabled", transport: "stdio", enabled: true, wantWarnings: []string{uiStdioWarning}},
+		{name: "stdio disabled", transport: "stdio", enabled: false},
+		{name: "sse enabled", transport: "sse", enabled: true},
+		{name: "sse disabled", transport: "sse", enabled: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &recordingHandler{}
+
+			LogWithLogger(&Settings{
+				Transport: tt.transport,
+				Auth:      AuthSettings{Type: AuthTypeNone},
+				UI:        UISettings{Enabled: tt.enabled, MaxResults: DefaultUIMaxResults},
+			}, slog.New(h))
+
+			assert.Equal(t, tt.wantWarnings, h.warnings())
+		})
+	}
+}
+
+func TestLogWithLogger_LogsUISettings(t *testing.T) {
+	captured := make(map[string]any)
+
+	LogWithLogger(&Settings{
+		Transport: "sse",
+		Auth:      AuthSettings{Type: AuthTypeNone},
+		UI:        UISettings{Enabled: true, MaxResults: 42},
+	}, slog.New(&mapHandler{attrs: captured}))
+
+	assert.Equal(t, true, captured["Config: ui.enabled"])
+	assert.Equal(t, int64(42), captured["Config: ui.max_results"])
+}
+
+func TestLogWithLogger_LogsUIEnabledWhenDisabled(t *testing.T) {
+	captured := make(map[string]any)
+
+	LogWithLogger(&Settings{
+		Transport: "sse",
+		Auth:      AuthSettings{Type: AuthTypeNone},
+		UI:        UISettings{Enabled: false},
+	}, slog.New(&mapHandler{attrs: captured}))
+
+	assert.Equal(t, false, captured["Config: ui.enabled"])
+}
+
+func TestSettingsLogValue_IncludesUIGroup(t *testing.T) {
+	attrs := SettingsLogValue(Settings{UI: UISettings{Enabled: true, MaxResults: 42}}).Group()
+
+	var ui slog.Value
+	found := false
+	for _, a := range attrs {
+		if a.Key == "ui" {
+			ui, found = a.Value.Resolve(), true
+		}
+	}
+	require.True(t, found, "SettingsLogValue must include a \"ui\" attribute")
+	require.Equal(t, slog.KindGroup, ui.Kind())
+	uiAttrs := groupAttrs(ui)
+	assert.Equal(t, true, uiAttrs["enabled"].Bool())
+	assert.Equal(t, int64(42), uiAttrs["max_results"].Int64())
+}

@@ -7,14 +7,17 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/sha1n/mcp-acdc-server/internal/app"
 	"github.com/sha1n/mcp-acdc-server/internal/content"
 	"github.com/spf13/pflag"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetFreePort_Errors(t *testing.T) {
@@ -644,5 +647,104 @@ func TestNewTestFlags_WithoutCrossRef(t *testing.T) {
 	crossRef, _ := flags.GetBool("cross-ref")
 	if crossRef {
 		t.Error("Expected cross-ref false (use config default), got true")
+	}
+}
+
+func TestNewTestFlags_WithUIOptions(t *testing.T) {
+	contentDir := CreateTestContentDir(t, nil)
+	flags := NewTestFlags(t, contentDir, &FlagOptions{UIEnabled: true, UIMaxResults: 42})
+
+	enabled, err := flags.GetBool("ui-enabled")
+	require.NoError(t, err)
+	require.True(t, enabled)
+	require.True(t, flags.Changed("ui-enabled"))
+	maxResults, err := flags.GetInt("ui-max-results")
+	require.NoError(t, err)
+	require.Equal(t, 42, maxResults)
+	require.True(t, flags.Changed("ui-max-results"))
+}
+
+func TestNewTestFlags_UIMaxResultsPassesOutOfRangeValues(t *testing.T) {
+	contentDir := CreateTestContentDir(t, nil)
+	flags := NewTestFlags(t, contentDir, &FlagOptions{UIEnabled: true, UIMaxResults: -1})
+
+	maxResults, err := flags.GetInt("ui-max-results")
+	require.NoError(t, err)
+	require.Equal(t, -1, maxResults)
+}
+
+func TestNewTestFlags_WithoutUIOptions(t *testing.T) {
+	contentDir := CreateTestContentDir(t, nil)
+	flags := NewTestFlags(t, contentDir, nil)
+
+	require.False(t, flags.Changed("ui-enabled"))
+	require.False(t, flags.Changed("ui-max-results"))
+}
+
+func getStatus(t *testing.T, url string) int {
+	t.Helper()
+	resp, err := http.Get(url)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	return resp.StatusCode
+}
+
+func TestStartSSE_ServesAndStopsIdempotently(t *testing.T) {
+	baseURL, stop := StartSSE(t, nil, nil)
+
+	require.True(t, strings.HasPrefix(baseURL, "http://localhost:"), baseURL)
+	require.Equal(t, http.StatusOK, getStatus(t, baseURL+"/health"))
+
+	stop()
+	stop()
+
+	client := &http.Client{Timeout: time.Second}
+	_, err := client.Get(baseURL + "/health")
+	require.Error(t, err)
+}
+
+func TestStartSSE_ForcesSSETransport(t *testing.T) {
+	baseURL, _ := StartSSE(t, nil, &FlagOptions{Transport: "stdio"})
+
+	require.Equal(t, http.StatusOK, getStatus(t, baseURL+"/health"))
+}
+
+func TestStartSSE_UsesContentOptions(t *testing.T) {
+	baseURL, _ := StartSSE(t, &ContentDirOptions{
+		Resources: map[string]string{"guide.md": "---\nname: Guide\ndescription: Guide\n---\n# Guide\n"},
+	}, &FlagOptions{UIEnabled: true})
+
+	resp, err := http.Get(baseURL + "/api/v1/document?uri=" + url.QueryEscape("acdc://guide"))
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestStartSSE_PassesWebUIOptionsToServer(t *testing.T) {
+	tests := []struct {
+		name       string
+		opts       *FlagOptions
+		wantStatus int
+		wantBody   string
+	}{
+		{name: "ui enabled with max results", opts: &FlagOptions{UIEnabled: true, UIMaxResults: 7}, wantStatus: http.StatusOK, wantBody: `{"default_limit":7,"max_limit":100}`},
+		{name: "ui enabled with default max results", opts: &FlagOptions{UIEnabled: true}, wantStatus: http.StatusOK, wantBody: `{"default_limit":20,"max_limit":100}`},
+		{name: "ui disabled", opts: nil, wantStatus: http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			baseURL, _ := StartSSE(t, nil, tt.opts)
+
+			resp, err := http.Get(baseURL + "/api/v1/config")
+			require.NoError(t, err)
+			defer func() { _ = resp.Body.Close() }()
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+
+			require.Equal(t, tt.wantStatus, resp.StatusCode)
+			if tt.wantBody != "" {
+				require.JSONEq(t, tt.wantBody, string(body))
+			}
+		})
 	}
 }

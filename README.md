@@ -28,6 +28,8 @@ The server reads Markdown from a content root, splits each document into heading
 
 **Prompts.** Markdown files under `.acdc/prompts/` are exposed as MCP prompt templates with typed arguments. See [Authoring Prompts](docs/authoring-resources.md#authoring-prompts).
 
+**Web UI (optional, SSE only).** With `--ui-enabled`, the SSE server also serves a read-only browser interface at `/ui/` for searching the same index, filtering by label, and reading rendered documents. It is off by default. See [Web UI](docs/web-ui.md).
+
 ## Effect on agent work
 
 The design targets four costs that an agent pays when it reads documentation:
@@ -72,6 +74,11 @@ docker run -p 8080:8080 \
   -e ACDC_MCP_TRANSPORT=sse \
   -v $(pwd)/content:/app/content \
   sha1n/mcp-acdc-server:latest
+```
+
+**Web UI (SSE only).** Add `--ui-enabled` (or `ACDC_MCP_UI_ENABLED=true`) and open `http://<host>:<port>/ui/`. It shares the port and authentication of `/sse`:
+```bash
+acdc-mcp --transport sse --ui-enabled --content-dir ./content
 ```
 
 **Health check (SSE only).** The SSE server serves an unauthenticated `/health` endpoint that returns `200 OK`. Use it as a Kubernetes liveness or readiness probe:
@@ -148,6 +155,8 @@ Rows marked **SSE** are read only under `--transport sse`. The `stdio` transport
 | `--host`, `-H` | `ACDC_MCP_HOST` | `0.0.0.0` | **SSE** — interface to bind. |
 | `--port`, `-p` | `ACDC_MCP_PORT` | `8080` | **SSE** — port to listen on. |
 | `--auth-type`, `-a` | `ACDC_MCP_AUTH_TYPE` | `none` | **SSE** — `none`, `basic`, or `apikey`. `/health` stays public in every mode. |
+| `--ui-enabled` | `ACDC_MCP_UI_ENABLED` | `false` | **SSE** — serve the [web UI](docs/web-ui.md) at `/ui/` and its API at `/api/v1/`. Under `stdio` it is ignored with a warning. |
+| `--ui-max-results` | `ACDC_MCP_UI_MAX_RESULTS` | `20` | **SSE** — default number of web UI search results, `1`–`100`. Validated only when the UI is enabled. |
 
 The credential flags (`--auth-basic-username`, `--auth-basic-password`, `--auth-api-keys`) and the four remaining boost factors (`heading`, `title`, `path`, `content`) are listed in the [Configuration Reference](docs/configuration.md).
 

@@ -451,3 +451,38 @@ func TestCatalogRefresher_Revalidate_ConcurrentCalls_SingleChangeProducesOneRebu
 	require.Equal(t, int32(1), reindexCalls.Load())
 	require.Same(t, assembled, r.holder.Current())
 }
+
+func TestCatalogRefresher_Revalidate_CancelledContext_KeepsPreviousGenerationAndLaterRequestRefreshes(t *testing.T) {
+	clock := newFakeClock()
+	initial := mustProvider(t, nil)
+	r, server := newTestRefresher(t, initial, clock)
+	r.walkDigest = "digest-a"
+	r.contentDigest = "content-a"
+
+	discovery := resources.DiscoveryResult{
+		Sources: []resources.ResourceDefinition{
+			{URI: "acdc://new", Name: "New", MIMEType: "text/markdown", Content: "new", Fingerprint: "f2"},
+		},
+	}
+	newProvider := mustProvider(t, discovery.Sources)
+	r.fingerprint = func(context.Context) (string, error) { return "digest-b", nil }
+	r.discover = func(context.Context) (resources.DiscoveryResult, error) { return discovery, nil }
+	r.assemble = func(resources.DiscoveryResult) (*resources.ResourceProvider, error) { return newProvider, nil }
+	r.reindex = func(ctx context.Context, _ *resources.ResourceProvider) error { return ctx.Err() }
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	r.Revalidate(cancelled)
+
+	require.Same(t, initial, r.holder.Current(), "a cancelled refresh must keep serving the previous generation")
+	require.Equal(t, "digest-a", r.walkDigest)
+	require.Equal(t, "content-a", r.contentDigest)
+	require.Empty(t, listResourceURIs(t, server), "a cancelled refresh must not sync the registrar")
+
+	clock.Advance(refreshInterval)
+	r.Revalidate(context.Background())
+
+	require.Same(t, newProvider, r.holder.Current(), "a later request must refresh successfully")
+	require.ElementsMatch(t, []string{"acdc://new"}, listResourceURIs(t, server))
+	require.Equal(t, "digest-b", r.walkDigest)
+}

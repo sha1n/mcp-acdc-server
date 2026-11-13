@@ -66,9 +66,9 @@ func (s *acdcService) Start() (map[string]any, error) {
 		}
 	} else {
 		// For SSE, use custom handler that captures server instance
-		params.StartSSEServer = func(mcpSrv *mcp.Server, settings *config.Settings) error {
+		params.StartSSEServer = func(mcpSrv *mcp.Server, settings *config.Settings, opts ...app.SSEOption) error {
 			var err error
-			s.srv, err = app.NewSSEServer(mcpSrv, settings)
+			s.srv, err = app.NewSSEServer(mcpSrv, settings, opts...)
 			if err != nil {
 				return err
 			}

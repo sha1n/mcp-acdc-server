@@ -132,6 +132,12 @@ go-build-current:
 	@echo "  >  Building $(GOHOSTOS)/$(GOHOSTARCH) binaries..."
 	@GOOS=$(GOHOSTOS) GOARCH=$(GOHOSTARCH) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME) $(GOBASE)/cmd/acdc-mcp
 
+## run-ui: Builds the current binary and serves the web UI over the sample content
+.PHONY: run-ui
+run-ui: go-build-current
+	@echo "  >  Serving the web UI at http://localhost:8080/ui/ ..."
+	$(GOBIN)/$(PROGRAMNAME) --transport sse --ui-enabled --content-dir $(GOBASE)/examples/sample-content
+
 .PHONY: go-build
 go-build: go-get go-build-linux-amd64 go-build-linux-arm64 go-build-linux-arm go-build-darwin-amd64 go-build-darwin-arm64 go-build-windows-amd64 go-build-windows-arm
 

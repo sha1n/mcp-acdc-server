@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Document · ACDC</title>
+<link rel="icon" href="/ui/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/style.css">
+<script src="/ui/common.js"></script>
+<script src="/ui/doc.js" defer></script>
+</head>
+<body class="page-doc">
+<a class="skip-link" href="#mainContent">Skip to main content</a>
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand brand-compact" href="/ui/" aria-label="ACDC search home">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="2" y="2" width="20" height="20" rx="6"/><path d="M8 16.5l4-9 4 9M9.6 13h4.8"/></svg>
+      <span class="brand-name">ACDC</span>
+    </a>
+    <a id="backToSearch" class="back-link" href="/ui/">
+      <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13 8H3M7 4L3 8l4 4"/></svg>
+      <span>Search</span>
+    </a>
+    <span class="topbar-title" id="topbarTitle" aria-hidden="true"></span>
+    <button type="button" id="themeToggle" class="theme-toggle">
+      <svg class="icon theme-icon theme-icon-system" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><rect x="1.5" y="2.5" width="13" height="9" rx="1.5"/><path d="M5.5 14h5M8 11.5V14"/></svg>
+      <svg class="icon theme-icon theme-icon-light" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="3"/><path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3.05 3.05l1.06 1.06M11.89 11.89l1.06 1.06M3.05 12.95l1.06-1.06M11.89 4.11l1.06-1.06"/></svg>
+      <svg class="icon theme-icon theme-icon-dark" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7z"/></svg>
+      <span class="theme-toggle-label">System</span>
+    </button>
+  </div>
+</header>
+<main id="mainContent" class="doc-main" tabindex="-1">
+  <div id="docStatus" class="doc-status" data-state="loading" role="status" aria-live="polite">
+    <div class="doc-state doc-state-loading" aria-hidden="true">
+      <div class="delayed">
+        <span class="skeleton-line skeleton-meta"></span>
+        <span class="skeleton-line skeleton-heading"></span>
+        <span class="skeleton-line"></span>
+        <span class="skeleton-line"></span>
+        <span class="skeleton-line skeleton-short"></span>
+      </div>
+    </div>
+    <div class="doc-state doc-state-missing-uri">
+      <div class="notice">
+        <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 14.5a6.5 6.5 0 1 1 0-13 6.5 6.5 0 0 1 0 13zM8 7.5v4M8 5v.01"/></svg>
+        <div class="notice-body">
+          <h1 class="notice-title">No document selected</h1>
+          <p class="notice-text">This page shows one document at a time, and the link that led here does not say which one.</p>
+          <p class="notice-actions"><a class="button" href="/ui/">Go to search</a></p>
+        </div>
+      </div>
+    </div>
+    <div class="doc-state doc-state-not-found">
+      <div class="notice">
+        <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M7 12.5a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11zM11 11l3.5 3.5"/></svg>
+        <div class="notice-body">
+          <h1 class="notice-title">This document no longer exists</h1>
+          <p class="notice-text">It may have been renamed or removed since this link was made. The server itself is working.</p>
+          <p class="notice-uri" id="docMissingUri"></p>
+          <p class="notice-actions"><a class="button" id="docSearchLink" href="/ui/">Search for it</a></p>
+        </div>
+      </div>
+    </div>
+    <div class="doc-state doc-state-error">
+      <div class="notice notice-danger">
+        <svg class="icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 5v4M8 11.5v.01M8 1.5l6.5 12h-13z"/></svg>
+        <div class="notice-body">
+          <h1 class="notice-title">The document could not be loaded</h1>
+          <p class="notice-text" id="docErrorMessage">Something went wrong while loading this document.</p>
+          <p class="notice-actions"><button type="button" id="docRetry" class="button">Try again</button></p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <article class="doc" id="docArticle" hidden>
+    <header class="doc-header">
+      <p id="docPath" class="doc-path"></p>
+      <h1 id="docTitle" class="doc-title"></h1>
+      <div id="docLabels" class="doc-labels" role="group" aria-label="Labels"></div>
+    </header>
+    <div id="docContent" class="prose doc-content"></div>
+  </article>
+  <p id="docAnnouncer" class="visually-hidden" aria-live="polite"></p>
+</main>
+</body>
+</html>

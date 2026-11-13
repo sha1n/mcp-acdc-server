@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -35,6 +36,7 @@ type ResourceProvider struct {
 	sources      []domain.SourceDocument
 	chunks       []domain.Chunk
 	sourceByURI  map[string]domain.SourceDocument
+	sourceByPath map[string]domain.SourceDocument
 	chunkByURI   map[string]domain.Chunk
 	sectionByURI map[string][]domain.Chunk
 	transformers []ContentTransformer
@@ -46,6 +48,7 @@ func NewResourceProvider(sources []domain.SourceDocument, chunks []domain.Chunk,
 		sources:      make([]domain.SourceDocument, 0, len(sources)),
 		chunks:       make([]domain.Chunk, 0, len(chunks)),
 		sourceByURI:  make(map[string]domain.SourceDocument, len(sources)),
+		sourceByPath: make(map[string]domain.SourceDocument, len(sources)),
 		chunkByURI:   make(map[string]domain.Chunk, len(chunks)),
 		sectionByURI: make(map[string][]domain.Chunk),
 	}
@@ -57,6 +60,9 @@ func NewResourceProvider(sources []domain.SourceDocument, chunks []domain.Chunk,
 		copy := cloneSource(source)
 		provider.sources = append(provider.sources, copy)
 		provider.sourceByURI[copy.URI] = copy
+		if copy.RelativePath != "" {
+			provider.sourceByPath[filepath.ToSlash(copy.RelativePath)] = copy
+		}
 	}
 
 	chunkIDs := make(map[string]struct{}, len(chunks))
@@ -93,6 +99,34 @@ func (p *ResourceProvider) ListResources() []mcp.Resource {
 		}
 	}
 	return resources
+}
+
+// Source returns a copy of the source document registered under uri.
+func (p *ResourceProvider) Source(uri string) (domain.SourceDocument, bool) {
+	return lookupSource(p.sourceByURI, uri)
+}
+
+// SourceWithContent returns a copy of the source document registered under uri
+// together with its content as ReadResource serves it.
+func (p *ResourceProvider) SourceWithContent(uri string) (domain.SourceDocument, string, bool) {
+	source, ok := p.sourceByURI[uri]
+	if !ok {
+		return domain.SourceDocument{}, "", false
+	}
+	return cloneSource(source), p.transform(source.Content, source), true
+}
+
+// SourceByPath returns a copy of the source document at the catalog-relative slash path.
+func (p *ResourceProvider) SourceByPath(relativePath string) (domain.SourceDocument, bool) {
+	return lookupSource(p.sourceByPath, relativePath)
+}
+
+func lookupSource(index map[string]domain.SourceDocument, key string) (domain.SourceDocument, bool) {
+	source, ok := index[key]
+	if !ok {
+		return domain.SourceDocument{}, false
+	}
+	return cloneSource(source), true
 }
 
 // ReadResource reads a source, exact chunk, or logical section URI.

@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -176,4 +177,141 @@ func TestDiscoverResources_LegacyCompatibility(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, definitions, 1)
 	require.Equal(t, "acdc://nested/guide", definitions[0].URI)
+}
+
+func newLookupProvider(t *testing.T) *ResourceProvider {
+	t.Helper()
+	sources := []domain.SourceDocument{
+		{ID: "acdc://guide", URI: "acdc://guide", Name: "Guide", RelativePath: "docs/guide.md", Content: "# Guide", Keywords: []string{"setup"}, PathLabels: []string{"docs"}},
+		{ID: "acdc://readme", URI: "acdc://readme", Name: "Readme", RelativePath: "README.md", Content: "# Readme"},
+	}
+	chunks := []domain.Chunk{
+		{ID: "acdc://guide#guide", SourceID: "acdc://guide", SourceURI: "acdc://guide", ChunkURI: "acdc://guide#guide", SectionFragment: "guide", Fragment: "guide", Content: "# Guide"},
+	}
+	provider, err := NewResourceProvider(sources, chunks)
+	require.NoError(t, err)
+	return provider
+}
+
+func TestResourceProvider_Source_LookupByURI(t *testing.T) {
+	provider := newLookupProvider(t)
+	tests := []struct {
+		name     string
+		uri      string
+		wantOK   bool
+		wantName string
+	}{
+		{name: "source uri", uri: "acdc://guide", wantOK: true, wantName: "Guide"},
+		{name: "second source uri", uri: "acdc://readme", wantOK: true, wantName: "Readme"},
+		{name: "chunk uri is not a source", uri: "acdc://guide#guide", wantOK: false},
+		{name: "section uri is not a source", uri: "acdc://guide#missing", wantOK: false},
+		{name: "unknown uri", uri: "acdc://missing", wantOK: false},
+		{name: "empty uri", uri: "", wantOK: false},
+		{name: "relative path is not a uri", uri: "docs/guide.md", wantOK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := provider.Source(tt.uri)
+			require.Equal(t, tt.wantOK, ok)
+			if !tt.wantOK {
+				require.Equal(t, domain.SourceDocument{}, got)
+				return
+			}
+			require.Equal(t, tt.uri, got.URI)
+			require.Equal(t, tt.wantName, got.Name)
+		})
+	}
+}
+
+func TestResourceProvider_Source_ReturnsFullDocument(t *testing.T) {
+	provider := newLookupProvider(t)
+
+	got, ok := provider.Source("acdc://guide")
+
+	require.True(t, ok)
+	require.Equal(t, domain.SourceDocument{
+		ID: "acdc://guide", URI: "acdc://guide", Name: "Guide", RelativePath: "docs/guide.md", Content: "# Guide",
+		Keywords: []string{"setup"}, PathLabels: []string{"docs"},
+	}, got)
+}
+
+func TestResourceProvider_Source_ReturnsClone(t *testing.T) {
+	provider := newLookupProvider(t)
+
+	first, ok := provider.Source("acdc://guide")
+	require.True(t, ok)
+	first.Keywords[0] = "mutated"
+	first.PathLabels[0] = "mutated"
+	first.Name = "mutated"
+
+	second, ok := provider.Source("acdc://guide")
+	require.True(t, ok)
+	require.Equal(t, []string{"setup"}, second.Keywords)
+	require.Equal(t, []string{"docs"}, second.PathLabels)
+	require.Equal(t, "Guide", second.Name)
+}
+
+func TestResourceProvider_Source_IsolatedFromConstructorInput(t *testing.T) {
+	keywords := []string{"setup"}
+	provider, err := NewResourceProvider([]domain.SourceDocument{{ID: "acdc://guide", URI: "acdc://guide", RelativePath: "guide.md", Keywords: keywords}}, nil)
+	require.NoError(t, err)
+	keywords[0] = "mutated"
+
+	got, ok := provider.Source("acdc://guide")
+
+	require.True(t, ok)
+	require.Equal(t, []string{"setup"}, got.Keywords)
+}
+
+func TestResourceProvider_SourceByPath_LookupByRelativePath(t *testing.T) {
+	provider := newLookupProvider(t)
+	tests := []struct {
+		name    string
+		path    string
+		wantOK  bool
+		wantURI string
+	}{
+		{name: "nested path", path: "docs/guide.md", wantOK: true, wantURI: "acdc://guide"},
+		{name: "root path", path: "README.md", wantOK: true, wantURI: "acdc://readme"},
+		{name: "unknown path", path: "docs/missing.md", wantOK: false},
+		{name: "path match is exact", path: "./docs/guide.md", wantOK: false},
+		{name: "path match is case-sensitive", path: "docs/Guide.md", wantOK: false},
+		{name: "uri is not a path", path: "acdc://guide", wantOK: false},
+		{name: "empty path", path: "", wantOK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := provider.SourceByPath(tt.path)
+			require.Equal(t, tt.wantOK, ok)
+			if !tt.wantOK {
+				require.Equal(t, domain.SourceDocument{}, got)
+				return
+			}
+			require.Equal(t, tt.wantURI, got.URI)
+			require.Equal(t, tt.path, got.RelativePath)
+		})
+	}
+}
+
+func TestResourceProvider_SourceByPath_ReturnsClone(t *testing.T) {
+	provider := newLookupProvider(t)
+
+	first, ok := provider.SourceByPath("docs/guide.md")
+	require.True(t, ok)
+	first.Keywords[0] = "mutated"
+
+	second, ok := provider.SourceByPath("docs/guide.md")
+	require.True(t, ok)
+	require.Equal(t, []string{"setup"}, second.Keywords)
+}
+
+func TestResourceProvider_SourceByPath_UsesNativeSeparatorsAsSlashKey(t *testing.T) {
+	native := filepath.Join("docs", "nested", "guide.md")
+	provider, err := NewResourceProvider([]domain.SourceDocument{{ID: "acdc://nested", URI: "acdc://nested", RelativePath: native}}, nil)
+	require.NoError(t, err)
+
+	got, ok := provider.SourceByPath("docs/nested/guide.md")
+
+	require.True(t, ok)
+	require.Equal(t, "acdc://nested", got.URI)
 }

@@ -18,6 +18,8 @@ The ACDC server can be configured through CLI flags, environment variables, or a
 | `--uri-scheme` | `ACDC_MCP_URI_SCHEME` | `acdc` | Scheme used in resource URIs (e.g., `acdc://guides/getting-started`) |
 | `--cross-ref` | `ACDC_MCP_CROSS_REF` | `false` | Transform relative Markdown links into `<scheme>://` URIs |
 | `--auth-type` | `ACDC_MCP_AUTH_TYPE` | `none` | Authentication mode: `none`, `basic`, or `apikey` |
+| `--ui-enabled` | `ACDC_MCP_UI_ENABLED` | `false` | Serve the read-only web UI at `/ui/` (SSE transport only) |
+| `--ui-max-results` | `ACDC_MCP_UI_MAX_RESULTS` | `20` | Default number of web UI search results, `1`–`100` |
 
 ## Environment Variables
 
@@ -41,18 +43,27 @@ No authentication. Suitable for local development and stdio transport.
 
 ```bash
 export ACDC_MCP_AUTH_TYPE=basic
-export ACDC_MCP_AUTH_USERNAME=admin
-export ACDC_MCP_AUTH_PASSWORD=secret
+export ACDC_MCP_AUTH_BASIC_USERNAME=admin
+export ACDC_MCP_AUTH_BASIC_PASSWORD=secret
 ```
 
 ### API Key
 
 ```bash
 export ACDC_MCP_AUTH_TYPE=apikey
-export ACDC_MCP_AUTH_KEYS=key1,key2
+export ACDC_MCP_AUTH_API_KEYS=key1,key2
 ```
 
 Multiple keys can be provided as a comma-separated list.
+
+## Web UI
+
+With the SSE transport, `--ui-enabled` adds a browser interface at `/ui/` for searching this content, filtering by label, and reading rendered documents. It uses the same port and authentication as `/sse`:
+
+```bash
+export ACDC_MCP_TRANSPORT=sse
+export ACDC_MCP_UI_ENABLED=true
+```
 
 ## URI Scheme
 

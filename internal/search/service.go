@@ -194,7 +194,7 @@ func newBatchWriter(index BatchIndexer, batchSize int) *batchWriter {
 }
 
 func (w *batchWriter) add(chunk domain.Chunk) error {
-	if err := w.batch.Index(chunk.ID, chunk); err != nil {
+	if err := w.batch.Index(chunk.ID, newIndexedChunk(chunk)); err != nil {
 		return fmt.Errorf("failed to add chunk to batch: %w", err)
 	}
 	w.pending++
@@ -251,6 +251,7 @@ func buildMapping() mapping.IndexMapping {
 		domain.FieldSourceURI,
 		domain.FieldChunkURI,
 		domain.FieldSourcePath,
+		labelsField,
 	} {
 		chunkMapping.AddFieldMappingsAt(field, storedIdentifier)
 	}
@@ -280,25 +281,11 @@ func (s *Service) Search(queryStr string, candidateLimit int) ([]SearchResult, e
 		return []SearchResult{}, nil
 	}
 
-	maxResults := s.settings.MaxResults
-	if candidateLimit > 0 {
-		maxResults = candidateLimit
-	}
-
-	// Build query with keyword boosting
-	// Use DisjunctionQuery to search multiple fields with different boosts
-	var q query.Query
-	if queryStr == "*" {
-		q = bleve.NewMatchAllQuery()
-	} else {
-		q = bleve.NewDisjunctionQuery(s.boostedFieldQueries(queryStr)...)
-	}
-
-	searchRequest := bleve.NewSearchRequest(q)
-	searchRequest.Size = maxResults
+	searchRequest := bleve.NewSearchRequest(s.textQuery(queryStr))
+	searchRequest.Size = s.resultLimit(candidateLimit)
 	searchRequest.Fields = []string{"*"}
 	searchRequest.Highlight = bleve.NewHighlight()
-	searchRequest.SortBy([]string{"-_score", domain.FieldSourceURI, domain.FieldChunkID})
+	searchRequest.SortBy(rankedSortOrder)
 
 	searchResult, err := s.index.Search(searchRequest)
 	if err != nil {
@@ -332,6 +319,23 @@ func (s *Service) Search(queryStr string, candidateLimit int) ([]SearchResult, e
 	}
 
 	return results, nil
+}
+
+var rankedSortOrder = []string{"-_score", domain.FieldSourceURI, domain.FieldChunkID}
+
+func (s *Service) resultLimit(limit int) int {
+	if limit > 0 {
+		return limit
+	}
+	return s.settings.MaxResults
+}
+
+// textQuery matches queryStr across the boosted fields, or every chunk for "*".
+func (s *Service) textQuery(queryStr string) query.Query {
+	if queryStr == "*" {
+		return bleve.NewMatchAllQuery()
+	}
+	return bleve.NewDisjunctionQuery(s.boostedFieldQueries(queryStr)...)
 }
 
 // boostedFieldQueries builds one match clause per field carrying a positive boost.
