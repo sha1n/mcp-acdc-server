@@ -14,6 +14,10 @@ _Avoid_: Primary, master, daemon, singleton
 The per-session process an MCP host launches over stdio, which relays that session to a shared server instead of owning a catalog and index itself.
 _Avoid_: Client, secondary, follower
 
+**Per-session server**:
+A server that owns its own catalog and search index for a single session; what a stdio launch is without singleton mode, and what it becomes when singleton mode cannot be used.
+_Avoid_: Standalone server, legacy mode, private server
+
 **Server identity**:
 The value derived from the settings and binary version that make two launches interchangeable; sessions share a server only when their server identities are equal.
 _Avoid_: Args hash, config hash, instance key
