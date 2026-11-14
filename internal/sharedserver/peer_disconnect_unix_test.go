@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"os"
@@ -14,9 +15,11 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/endpoint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -81,33 +84,172 @@ func TestAttach_PeerClosingWithUnreadDataIsNotLogged(t *testing.T) {
 	assert.Empty(t, errorOrWarnRecords(a.awaitLogs(t)))
 }
 
-func TestRun_PeerClosingBeforeTheReadyLineIsNotLogged(t *testing.T) {
+// peerBeforeReadyAttempt is one shared server whose build waits for the
+// test. Its initial linger starts at bind, so an attempt whose dial or accept
+// misses the first second is lost and repeated with a fresh identity
+// directory (#196).
+type peerBeforeReadyAttempt struct {
+	ep         endpoint.Endpoint
+	dir        string
+	logDir     string
+	startedAt  time.Time
+	release    chan struct{}
+	releasedAt time.Time
+	cancel     context.CancelFunc
+	done       chan peerBeforeReadyExit
+	exit       *peerBeforeReadyExit
+}
+
+type peerBeforeReadyExit struct {
+	err error
+	at  time.Time
+}
+
+func startPeerBeforeReadyAttempt(t *testing.T) *peerBeforeReadyAttempt {
+	t.Helper()
 	root := shortTempDir(t)
-	endpointDir := filepath.Join(root, "ep")
-	logDir := filepath.Join(root, "logs")
-	require.NoError(t, os.Mkdir(logDir, 0o700))
-	release := make(chan struct{})
-	build := func(context.Context, *slog.Logger) (*mcp.Server, func(), error) {
-		<-release
-		return mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil), nil, nil
+	a := &peerBeforeReadyAttempt{
+		dir:     filepath.Join(root, "ep"),
+		logDir:  filepath.Join(root, "logs"),
+		release: make(chan struct{}),
+		done:    make(chan peerBeforeReadyExit, 1),
 	}
-	done := make(chan error, 1)
+	require.NoError(t, os.Mkdir(a.logDir, 0o700))
+	ep, err := endpoint.OpenEndpoint(a.dir)
+	require.NoError(t, err)
+	a.ep = ep
+	build := func(ctx context.Context, _ *slog.Logger) (*mcp.Server, func(), error) {
+		select {
+		case <-a.release:
+			return mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil), nil, nil
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.cancel = cancel
+	a.startedAt = time.Now()
 	go func() {
-		done <- Run(context.Background(), Config{
+		err := Run(ctx, Config{
 			Identity:    testIdentity,
-			EndpointDir: endpointDir,
-			LogDir:      logDir,
+			EndpointDir: a.dir,
+			LogDir:      a.logDir,
 			Build:       build,
 			Linger:      config.MinSharedServerLinger,
 		})
+		a.done <- peerBeforeReadyExit{err: err, at: time.Now()}
 	}()
+	t.Cleanup(func() {
+		cancel()
+		a.releaseBuild()
+		if _, settled := a.awaitExitBy(time.Now().Add(serveTestDeadline)); !settled {
+			t.Error("Run did not return after cancellation")
+		}
+	})
+	return a
+}
 
-	conn := dialAttachRevalidateSocket(t, filepath.Join(endpointDir, testIdentity+".sock"), done)
-	require.NoError(t, conn.Close())
-	close(release)
+func (a *peerBeforeReadyAttempt) releaseBuild() {
+	select {
+	case <-a.release:
+	default:
+		a.releasedAt = time.Now()
+		close(a.release)
+	}
+}
 
-	require.NoError(t, awaitRunResult(t, done))
-	logs, err := os.ReadFile(filepath.Join(logDir, testIdentity+".log"))
+func (a *peerBeforeReadyAttempt) awaitExitBy(deadline time.Time) (peerBeforeReadyExit, bool) {
+	if a.exit != nil {
+		return *a.exit, true
+	}
+	select {
+	case exit := <-a.done:
+		a.exit = &exit
+		return exit, true
+	case <-time.After(time.Until(deadline)):
+		return peerBeforeReadyExit{}, false
+	}
+}
+
+func (a *peerBeforeReadyAttempt) requireExitBy(t *testing.T, deadline time.Time) peerBeforeReadyExit {
+	t.Helper()
+	exit, settled := a.awaitExitBy(deadline)
+	require.True(t, settled, "Run did not return")
+	return exit
+}
+
+// requireCleanLingerExit accepts a lost attempt only when it ended the way an
+// expired initial linger ends a shared server.
+func (a *peerBeforeReadyAttempt) requireCleanLingerExit(t *testing.T, deadline time.Time) {
+	t.Helper()
+	exit := a.requireExitBy(t, deadline)
+	require.NoError(t, exit.err, "a lost attempt must be a normal linger exit")
+	require.GreaterOrEqual(t, exit.at.Sub(a.startedAt), config.MinSharedServerLinger, "a lost attempt exited before the linger elapsed")
+	socketPath, err := a.ep.SocketPath(testIdentity)
 	require.NoError(t, err)
-	assert.Empty(t, errorOrWarnRecords(string(logs)))
+	_, err = os.Lstat(socketPath)
+	require.ErrorIs(t, err, fs.ErrNotExist, "a lost attempt must remove its socket")
+	assertLockReleased(t, a.dir)
+}
+
+// dialSession dials identity's socket in ep until it accepts, and reports
+// false once Run has ended without accepting.
+func dialSession(t *testing.T, ep endpoint.Endpoint, identity string, done chan peerBeforeReadyExit, deadline time.Time) (net.Conn, bool) {
+	t.Helper()
+	socketPath, err := ep.SocketPath(identity)
+	require.NoError(t, err)
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		conn, err := (&net.Dialer{Deadline: deadline}).Dial("unix", socketPath)
+		if err == nil {
+			return conn, true
+		}
+		require.True(t, errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED),
+			"dial failed other than by a missing or closed socket: %v", err)
+		select {
+		case exit := <-done:
+			done <- exit
+			return nil, false
+		case <-poll.C:
+		case <-time.After(time.Until(deadline)):
+			t.Fatalf("socket never accepted: %v", err)
+		}
+	}
+}
+
+// closeBeforeTheReadyLine reports whether the session attached within the
+// initial linger: only then does its own linger, started when it ends after
+// the release, hold Run for a full linger past the release.
+func (a *peerBeforeReadyAttempt) closeBeforeTheReadyLine(t *testing.T, deadline time.Time) bool {
+	t.Helper()
+	conn, dialed := dialSession(t, a.ep, testIdentity, a.done, deadline)
+	if !dialed {
+		a.requireCleanLingerExit(t, deadline)
+		return false
+	}
+	require.NoError(t, conn.Close())
+	a.releaseBuild()
+	exit := a.requireExitBy(t, deadline)
+	if exit.at.Sub(a.releasedAt) < config.MinSharedServerLinger {
+		a.requireCleanLingerExit(t, deadline)
+		return false
+	}
+	require.NoError(t, exit.err)
+	return true
+}
+
+func TestRun_PeerClosingBeforeTheReadyLineIsNotLogged(t *testing.T) {
+	deadline := time.Now().Add(3 * serveTestDeadline)
+	for attempt := 1; ; attempt++ {
+		require.True(t, time.Now().Before(deadline), "no attempt attached within its initial linger (%d attempts)", attempt-1)
+		a := startPeerBeforeReadyAttempt(t)
+		if !a.closeBeforeTheReadyLine(t, deadline) {
+			continue
+		}
+		logs, err := os.ReadFile(filepath.Join(a.logDir, testIdentity+".log"))
+		require.NoError(t, err)
+		assert.Empty(t, errorOrWarnRecords(string(logs)))
+		return
+	}
 }
