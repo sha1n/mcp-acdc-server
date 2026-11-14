@@ -16,7 +16,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const launchTimeout = 30 * time.Second
+const (
+	launchTimeout             = 30 * time.Second
+	initializeProtocolVersion = "2025-11-25"
+)
 
 type lockedBuffer struct {
 	mu  sync.Mutex
@@ -71,6 +74,15 @@ func launchEnv(dirs map[string]string) []string {
 	return env
 }
 
+// killAndReap is a no-op once the session's own close has reaped the process.
+func killAndReap(cmd *exec.Cmd) {
+	if cmd.Process == nil || cmd.ProcessState != nil {
+		return
+	}
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+}
+
 func TestWindowsLaunch_SharedModeServesAsAPerSessionServerWithoutArtifacts(t *testing.T) {
 	binary := buildBinary(t)
 	contentDir := testkit.CreateTestContentDir(t, &testkit.ContentDirOptions{
@@ -80,18 +92,35 @@ func TestWindowsLaunch_SharedModeServesAsAPerSessionServerWithoutArtifacts(t *te
 	})
 	dirs := isolatedUserDirs(t)
 
-	cmd := exec.Command(binary, "--content-dir", contentDir, "--server-mode", "shared")
-	cmd.Env = launchEnv(dirs)
-	var stderr lockedBuffer
-	cmd.Stderr = &stderr
-
 	ctx, cancel := context.WithTimeout(context.Background(), launchTimeout)
 	defer cancel()
 
+	cmd := exec.CommandContext(ctx, binary, "--content-dir", contentDir, "--server-mode", "shared")
+	cmd.Env = launchEnv(dirs)
+	var stderr lockedBuffer
+	cmd.Stderr = &stderr
+	// Registered before Connect starts the process so every exit path, including
+	// a failed handshake, kills and reaps it: Windows cannot delete the
+	// directory of a running executable.
+	t.Cleanup(func() { killAndReap(cmd) })
+
+	var wire lockedBuffer
+	transport := &mcp.LoggingTransport{Transport: &mcp.CommandTransport{Command: cmd}, Writer: &wire}
 	client := mcp.NewClient(&mcp.Implementation{Name: "windows-test-client", Version: "1.0.0"}, nil)
-	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: cmd}, nil)
+	// The SDK's default protocol negotiates through server/discover and never
+	// sends initialize; the acceptance criterion requires the initialize handshake.
+	session, err := client.Connect(ctx, transport, &mcp.ClientSessionOptions{ProtocolVersion: initializeProtocolVersion})
 	require.NoError(t, err, "initialize failed; stderr:\n%s", stderr.String())
+	closed := false
+	defer func() {
+		if !closed {
+			_ = session.Close()
+		}
+	}()
+	assert.Contains(t, wire.String(), `"method":"initialize"`, "wire log:\n%s", wire.String())
+	assert.NotContains(t, wire.String(), `"method":"server/discover"`)
 	require.NotNil(t, session.InitializeResult())
+	assert.Equal(t, initializeProtocolVersion, session.InitializeResult().ProtocolVersion)
 
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "search",
@@ -104,6 +133,7 @@ func TestWindowsLaunch_SharedModeServesAsAPerSessionServerWithoutArtifacts(t *te
 	require.True(t, ok)
 	assert.Contains(t, text.Text, "guide")
 
+	closed = true
 	require.NoError(t, session.Close())
 	require.NotNil(t, cmd.ProcessState)
 	assert.Equal(t, 0, cmd.ProcessState.ExitCode())
