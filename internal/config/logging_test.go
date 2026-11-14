@@ -1,9 +1,11 @@
 package config
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -322,4 +324,111 @@ func TestSettingsLogValue_IncludesUIGroup(t *testing.T) {
 	uiAttrs := groupAttrs(ui)
 	assert.Equal(t, true, uiAttrs["enabled"].Bool())
 	assert.Equal(t, int64(42), uiAttrs["max_results"].Int64())
+}
+
+func dumpTestSettings(transport string, auth AuthSettings, ui UISettings) *Settings {
+	return &Settings{
+		ContentDir: "/content dir",
+		Transport:  transport,
+		Host:       "0.0.0.0",
+		Port:       8080,
+		Search: SearchSettings{
+			MaxResults: 10, InMemory: true, KeywordsBoost: 3, HeadingBoost: 2.5,
+			PathBoost: 2, TitleBoost: 1.5, ContentBoost: 1, ResultMode: SearchResultModeReferences,
+		},
+		Auth:         auth,
+		UI:           ui,
+		ServerMode:   ServerModeShared,
+		SharedServer: SharedServerSettings{ConnectWait: 5 * time.Second, Linger: time.Minute},
+	}
+}
+
+func dumpTestOutput(write func(*slog.Logger)) string {
+	var buf bytes.Buffer
+	write(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if len(groups) == 0 && a.Key == slog.TimeKey {
+				return slog.Attr{}
+			}
+			return a
+		},
+	})))
+	return buf.String()
+}
+
+const dumpTestIdentityLines = `level=INFO msg="Config: search.max_results" value=10
+level=INFO msg="Config: search.in_memory" value=true
+level=INFO msg="Config: search.keywords_boost" value=3
+level=INFO msg="Config: search.heading_boost" value=2.5
+level=INFO msg="Config: search.path_boost" value=2
+level=INFO msg="Config: search.title_boost" value=1.5
+level=INFO msg="Config: search.content_boost" value=1
+level=INFO msg="Config: search.result_mode" value=references
+`
+
+func TestLogWithLogger_DumpIsByteIdentical(t *testing.T) {
+	tests := []struct {
+		name     string
+		settings *Settings
+		expected string
+	}{
+		{
+			name: "sse with basic auth and web UI",
+			settings: dumpTestSettings("sse",
+				AuthSettings{Type: AuthTypeBasic, Basic: BasicAuthSettings{Username: "alice", Password: "secret"}},
+				UISettings{Enabled: true, MaxResults: 20}),
+			expected: `level=INFO msg="Config: content_dir" value="/content dir"
+level=INFO msg="Config: transport" value=sse
+level=INFO msg="Config: host" value=0.0.0.0
+level=INFO msg="Config: port" value=8080
+level=INFO msg="Config: server_mode" value=shared
+level=INFO msg="Config: shared_server.connect_wait" value=5s
+level=INFO msg="Config: shared_server.linger" value=1m0s
+` + dumpTestIdentityLines + `level=INFO msg="Config: auth.type" value=basic
+level=INFO msg="Config: auth.basic.username" value=alice
+level=INFO msg="Config: auth.basic.password" value=****
+level=INFO msg="Config: ui.enabled" value=true
+level=INFO msg="Config: ui.max_results" value=20
+`,
+		},
+		{
+			name: "stdio with api keys and ignored web UI",
+			settings: dumpTestSettings("stdio",
+				AuthSettings{Type: AuthTypeAPIKey, APIKeys: []string{"k1", "k2"}},
+				UISettings{Enabled: true, MaxResults: 20}),
+			expected: `level=INFO msg="Config: content_dir" value="/content dir"
+level=INFO msg="Config: transport" value=stdio
+level=INFO msg="Config: server_mode" value=shared
+level=INFO msg="Config: shared_server.connect_wait" value=5s
+level=INFO msg="Config: shared_server.linger" value=1m0s
+` + dumpTestIdentityLines + `level=INFO msg="Config: auth.type" value=apikey
+level=INFO msg="Config: auth.api_keys" count=2
+level=INFO msg="Config: ui.enabled" value=true
+level=INFO msg="Config: ui.max_results" value=20
+level=WARN msg="Web UI requires the sse transport; ui.enabled is ignored"
+`,
+		},
+		{
+			name: "stdio without auth or web UI",
+			settings: dumpTestSettings("stdio",
+				AuthSettings{Type: AuthTypeNone},
+				UISettings{Enabled: false, MaxResults: 20}),
+			expected: `level=INFO msg="Config: content_dir" value="/content dir"
+level=INFO msg="Config: transport" value=stdio
+level=INFO msg="Config: server_mode" value=shared
+level=INFO msg="Config: shared_server.connect_wait" value=5s
+level=INFO msg="Config: shared_server.linger" value=1m0s
+` + dumpTestIdentityLines + `level=INFO msg="Config: auth.type" value=none
+level=INFO msg="Config: ui.enabled" value=false
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := dumpTestOutput(func(logger *slog.Logger) { LogWithLogger(tt.settings, logger) })
+
+			assert.Equal(t, tt.expected, got)
+		})
+	}
 }

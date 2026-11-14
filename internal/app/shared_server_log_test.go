@@ -92,3 +92,23 @@ func sharedServerLogTestMentionsAny(line string, words []string) bool {
 	}
 	return false
 }
+
+func TestLogSharedServerStartup_OutputIsByteIdentical(t *testing.T) {
+	settings := sharedServerLogTestSettings(config.AuthSettings{Type: config.AuthTypeAPIKey, APIKeys: []string{"k1"}})
+	var buf bytes.Buffer
+
+	logSharedServerStartup(slog.New(slog.NewTextHandler(&buf, nil)), settings, "1.2.3")
+
+	assert.Equal(t, []string{
+		`level=INFO msg="Starting MCP Acdc shared server" version=1.2.3 pid=` + strconv.Itoa(os.Getpid()),
+		`level=INFO msg="Config: content_dir" value=/content`,
+		`level=INFO msg="Config: search.max_results" value=10`,
+		`level=INFO msg="Config: search.in_memory" value=true`,
+		`level=INFO msg="Config: search.keywords_boost" value=3`,
+		`level=INFO msg="Config: search.heading_boost" value=2.5`,
+		`level=INFO msg="Config: search.path_boost" value=2`,
+		`level=INFO msg="Config: search.title_boost" value=2`,
+		`level=INFO msg="Config: search.content_boost" value=1`,
+		`level=INFO msg="Config: search.result_mode" value=references`,
+	}, sharedServerLogTestLines(t, &buf))
+}
