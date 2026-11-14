@@ -2,6 +2,7 @@ package testkit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -203,4 +204,28 @@ func TestNewSSETestClient_StartError(t *testing.T) {
 
 	// If we reach here, the error path wasn't triggered
 	t.Error("Expected NewSSETestClient to fail due to invalid metadata")
+}
+
+func TestConnectFailure_ServerErrorObservedAfterConnectError(t *testing.T) {
+	startupErr := errors.New("content directory /x/missing not found or not a directory")
+	connectErr := errors.New(`connection closed: calling "initialize": client is closing: EOF`)
+
+	got := connectFailure(connectErr, startupErr)
+
+	if !strings.Contains(got.Error(), startupErr.Error()) {
+		t.Errorf("Expected the failure to name the server's startup error, got %q", got)
+	}
+	if !strings.Contains(got.Error(), connectErr.Error()) {
+		t.Errorf("Expected the failure to keep the connect error for diagnosis, got %q", got)
+	}
+}
+
+func TestConnectFailure_ServerStoppedCleanly(t *testing.T) {
+	connectErr := errors.New("dial tcp: connection refused")
+
+	got := connectFailure(connectErr, nil)
+
+	if !errors.Is(got, connectErr) {
+		t.Errorf("Expected the connect error to be reported, got %q", got)
+	}
 }
