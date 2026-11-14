@@ -89,3 +89,16 @@ func TestVerifyEndpointDir_OwnerAndMode(t *testing.T) {
 		})
 	}
 }
+
+type foreignDirInfo struct{ fakeDirInfo }
+
+func (foreignDirInfo) Sys() any { return nil }
+
+func TestVerifyEndpointDir_RejectsADirectoryWithoutOwnerInformation(t *testing.T) {
+	info := foreignDirInfo{fakeDirInfo{mode: fs.ModeDir | 0o700}}
+
+	err := verifyEndpointDir(info, 0)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "owner cannot be determined")
+}
