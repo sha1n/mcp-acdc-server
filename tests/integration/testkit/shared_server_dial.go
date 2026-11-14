@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -76,10 +77,12 @@ func (h *SharedServerHarness) ListenWithoutReady(id string) (accepted func() int
 
 // ServeReadyWithoutAnswering binds the socket of id as a shared server that
 // sends its ready line on every connection and then only reads: received
-// counts the complete lines read so far across all connections.
-func (h *SharedServerHarness) ServeReadyWithoutAnswering(id string) (received func() int) {
+// returns the complete lines read so far across all connections, in arrival
+// order.
+func (h *SharedServerHarness) ServeReadyWithoutAnswering(id string) (received func() []string) {
 	h.t.Helper()
-	var count atomic.Int32
+	var mu sync.Mutex
+	var lines []string
 	h.serveSocket(id, func(conn net.Conn) {
 		readyLine, err := sharedserver.EncodeReadyLine(sharedserver.NewSessionID(), "/var/log/acdc-test.log")
 		if err != nil {
@@ -92,14 +95,21 @@ func (h *SharedServerHarness) ServeReadyWithoutAnswering(id string) (received fu
 		}
 		reader := bufio.NewReader(conn)
 		for {
-			if _, err := reader.ReadBytes('\n'); err != nil {
+			line, err := reader.ReadString('\n')
+			if err != nil {
 				reportUnlessConnectionEnded(h, "failed to read from a session", err)
 				return
 			}
-			count.Add(1)
+			mu.Lock()
+			lines = append(lines, line)
+			mu.Unlock()
 		}
 	})
-	return func() int { return int(count.Load()) }
+	return func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(lines)
+	}
 }
 
 // serveSocket runs handle for every connection accepted at the socket of id.

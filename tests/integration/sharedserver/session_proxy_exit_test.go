@@ -67,7 +67,7 @@ func TestSessionProxy_SignalEndsTheSessionPromptlyInEveryPhase(t *testing.T) {
 				received := h.ServeReadyWithoutAnswering(h.Identity(args))
 				l := h.Launch(args...)
 				l.WriteLine(rawToolsListRequestID2)
-				h.Eventually(func() bool { return received() >= 1 }, "the proxy relays host input")
+				h.Eventually(func() bool { return len(received()) >= 1 }, "the proxy relays host input")
 				require.Equal(t, 0, h.Spawns())
 				return l
 			},

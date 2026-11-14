@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSessionProxy_RelaysInputHeldBeforeTheReadyLineInOrderAndNeverForwardsTheReadyLine(t *testing.T) {
+func TestSessionProxy_AnswersInputHeldBeforeTheReadyLineThroughTheSharedServer(t *testing.T) {
 	h := testkit.NewSharedServerHarness(t)
 	args := testkit.SharedLaunchArgs(newSessionProxyContentDir(t), "--shared-server-connect-wait", "1m")
 	release := h.HoldLock(h.Identity(args))
@@ -39,4 +39,31 @@ func TestSessionProxy_RelaysInputHeldBeforeTheReadyLineInOrderAndNeverForwardsTh
 	}
 	assert.Equal(t, "1", ids[0], "the held initialize is answered first")
 	assert.ElementsMatch(t, []string{"2", "3"}, ids[1:])
+}
+
+// The shared server answers calls concurrently, so arrival order is observed
+// on a socket that records it while the test holds the lock.
+func TestSessionProxy_RelaysInputHeldBeforeTheReadyLineInOrderAndNeverForwardsTheReadyLine(t *testing.T) {
+	h := testkit.NewSharedServerHarness(t)
+	args := testkit.SharedLaunchArgs(newSessionProxyContentDir(t), "--shared-server-connect-wait", "1m")
+	id := h.Identity(args)
+	h.HoldLock(id)
+	l := h.Launch(args...)
+	h.Eventually(func() bool { return h.Spawns() >= 1 }, "the proxy is discovering")
+	held := []string{rawInitializeRequest, rawInitializedNotice, rawToolsListRequestID2}
+	for _, line := range held {
+		l.WriteLine(line)
+	}
+
+	received := h.ServeReadyWithoutAnswering(id)
+	l.WriteLine(rawToolsListRequestID3)
+
+	want := make([]string, 0, len(held)+1)
+	for _, line := range append(held, rawToolsListRequestID3) {
+		want = append(want, line+"\n")
+	}
+	h.Eventually(func() bool { return len(received()) >= len(want) }, "every line reaches the shared server")
+	assert.Equal(t, want, received(), "held lines arrive in order, before the live one")
+	l.CloseStdin()
+	assert.Empty(t, string(l.ReadToEOF()), "the ready line never reaches the host")
 }

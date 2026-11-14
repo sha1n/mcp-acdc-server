@@ -4,6 +4,7 @@ package sharedserver
 
 import (
 	"context"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -18,12 +19,22 @@ func TestSessionProxy_IncompleteLineAtStdinEOFEndsTheSessionWithoutOutputAsAPerS
 	h := testkit.NewSharedServerHarness(t)
 	contentDir := newSessionProxyContentDir(t)
 	sessionArgs := testkit.SharedLaunchArgs(contentDir, "--server-mode", "session")
-	launches := map[string]*testkit.LaunchUnderTest{
-		"proxy":       h.Launch(testkit.SharedLaunchArgs(contentDir)...),
-		"per-session": testkit.StartLaunch(t, h.SessionProxyParams(sessionArgs), h.Binary, sessionArgs...),
+	launches := map[string]struct {
+		launch     *testkit.LaunchUnderTest
+		assertExit func(t *testing.T, err error)
+	}{
+		"proxy": {
+			launch:     h.Launch(testkit.SharedLaunchArgs(contentDir)...),
+			assertExit: func(t *testing.T, err error) { assert.NoError(t, err, "the session proxy ends normally at stdin EOF") },
+		},
+		"per-session": {
+			launch:     testkit.StartLaunch(t, h.SessionProxyParams(sessionArgs), h.Binary, sessionArgs...),
+			assertExit: func(t *testing.T, err error) { assert.ErrorIs(t, err, io.ErrUnexpectedEOF) },
+		},
 	}
 
-	for name, l := range launches {
+	for name, launch := range launches {
+		l := launch.launch
 		// An answered initialize proves the session is attached before the
 		// incomplete line arrives.
 		l.WriteLine(rawInitializeRequest)
@@ -32,7 +43,7 @@ func TestSessionProxy_IncompleteLineAtStdinEOFEndsTheSessionWithoutOutputAsAPerS
 		l.CloseStdin()
 
 		assert.Empty(t, string(l.ReadToEOF()), name)
-		t.Logf("%s ended with: %v", name, l.Wait(testkit.SharedServerDeadline))
+		launch.assertExit(t, l.Wait(testkit.SharedServerDeadline))
 	}
 }
 
