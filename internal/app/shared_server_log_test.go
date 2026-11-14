@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"log/slog"
 	"os"
+	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -91,4 +94,185 @@ func sharedServerLogTestMentionsAny(line string, words []string) bool {
 		}
 	}
 	return false
+}
+
+func TestLogSharedServerStartup_OutputIsByteIdentical(t *testing.T) {
+	settings := sharedServerLogTestSettings(config.AuthSettings{Type: config.AuthTypeAPIKey, APIKeys: []string{"k1"}})
+	var buf bytes.Buffer
+
+	logSharedServerStartup(slog.New(slog.NewTextHandler(&buf, nil)), settings, "1.2.3")
+
+	assert.Equal(t, []string{
+		`level=INFO msg="Starting MCP Acdc shared server" version=1.2.3 pid=` + strconv.Itoa(os.Getpid()),
+		`level=INFO msg="Config: content_dir" value=/content`,
+		`level=INFO msg="Config: search.max_results" value=10`,
+		`level=INFO msg="Config: search.in_memory" value=true`,
+		`level=INFO msg="Config: search.keywords_boost" value=3`,
+		`level=INFO msg="Config: search.heading_boost" value=2.5`,
+		`level=INFO msg="Config: search.path_boost" value=2`,
+		`level=INFO msg="Config: search.title_boost" value=2`,
+		`level=INFO msg="Config: search.content_boost" value=1`,
+		`level=INFO msg="Config: search.result_mode" value=references`,
+	}, sharedServerLogTestLines(t, &buf))
+}
+
+var sharedServerLogTestConfigKey = regexp.MustCompile(`msg="Config: ([^"]+)"`)
+
+// The agreement with the identity is checked here because identity imports
+// config, so the config package's own tests cannot call identity.Compute.
+func TestLogIdentitySettings_AgreesWithServerIdentity(t *testing.T) {
+	variants := map[string]func(*config.Settings){
+		"sse with basic auth": func(s *config.Settings) {
+			s.Transport = "sse"
+			s.Auth = config.AuthSettings{Type: config.AuthTypeBasic, Basic: config.BasicAuthSettings{Username: "u", Password: "p"}}
+		},
+		"stdio with api keys and ignored web UI": func(s *config.Settings) {
+			s.Auth = config.AuthSettings{Type: config.AuthTypeAPIKey, APIKeys: []string{"k1"}}
+		},
+		"stdio without auth or web UI": func(s *config.Settings) {
+			s.Auth = config.AuthSettings{Type: config.AuthTypeNone}
+			s.UI.Enabled = false
+		},
+	}
+	bin := identity.Binary{Version: "1.2.3", Build: "abc"}
+
+	for name, variant := range variants {
+		t.Run(name, func(t *testing.T) {
+			contentDir := t.TempDir()
+			settings := func() *config.Settings {
+				s := sharedServerLogTestSettings(config.AuthSettings{})
+				s.ContentDir = contentDir
+				variant(s)
+				return s
+			}
+			var full, shared bytes.Buffer
+			config.LogWithLogger(settings(), slog.New(slog.NewTextHandler(&full, nil)))
+			config.LogIdentitySettings(settings(), slog.New(slog.NewTextHandler(&shared, nil)))
+			fullLines := sharedServerLogTestLines(t, &full)
+			sharedLines := sharedServerLogTestLines(t, &shared)
+			baseID, err := identity.Compute(settings(), bin)
+			require.NoError(t, err)
+
+			var derived []string
+			for _, line := range fullLines {
+				inShared := slices.Contains(sharedLines, line)
+				if inShared {
+					derived = append(derived, line)
+				}
+				match := sharedServerLogTestConfigKey.FindStringSubmatch(line)
+				if match == nil {
+					assert.False(t, inShared, "a line naming no setting reached the shared dump: %s", line)
+					continue
+				}
+				perturbed := settings()
+				sharedServerLogTestPerturb(t, perturbed, match[1])
+				id, err := identity.Compute(perturbed, bin)
+				require.NoError(t, err)
+				assert.Equal(t, id != baseID, inShared, "classification of %q disagrees with the identity", match[1])
+			}
+			assert.Equal(t, derived, sharedLines, "the shared dump is the per-session dump restricted to identity-relevant lines")
+		})
+	}
+}
+
+func sharedServerLogTestPerturb(t *testing.T, s *config.Settings, key string) {
+	t.Helper()
+	v := reflect.ValueOf(s).Elem()
+	for part := range strings.SplitSeq(key, ".") {
+		v = sharedServerLogTestField(t, v, part, key)
+	}
+	switch v.Kind() {
+	case reflect.String:
+		if key == "content_dir" {
+			v.SetString(t.TempDir())
+			return
+		}
+		v.SetString(v.String() + "x")
+	case reflect.Bool:
+		v.SetBool(!v.Bool())
+	case reflect.Int, reflect.Int64:
+		v.SetInt(v.Int() + 1)
+	case reflect.Float64:
+		v.SetFloat(v.Float() + 1)
+	case reflect.Slice:
+		v.Set(reflect.Append(v, reflect.Zero(v.Type().Elem())))
+	default:
+		t.Fatalf("setting %s has kind %s, which this test cannot change", key, v.Kind())
+	}
+}
+
+func sharedServerLogTestField(t *testing.T, v reflect.Value, name, key string) reflect.Value {
+	t.Helper()
+	require.Equal(t, reflect.Struct, v.Kind(), "setting %s is not a settings field", key)
+	for i := range v.NumField() {
+		if v.Type().Field(i).Tag.Get("mapstructure") == name {
+			return v.Field(i)
+		}
+	}
+	t.Fatalf("dump line %q names no settings field", key)
+	return reflect.Value{}
+}
+
+func TestLogSharedServerStartup_EdgeValueOutputIsByteIdentical(t *testing.T) {
+	startup := `level=INFO msg="Starting MCP Acdc shared server" version=1.2.3 pid=` + strconv.Itoa(os.Getpid())
+	zeroDump := []string{
+		startup,
+		`level=INFO msg="Config: content_dir" value=""`,
+		`level=INFO msg="Config: search.max_results" value=0`,
+		`level=INFO msg="Config: search.in_memory" value=false`,
+		`level=INFO msg="Config: search.keywords_boost" value=0`,
+		`level=INFO msg="Config: search.heading_boost" value=0`,
+		`level=INFO msg="Config: search.path_boost" value=0`,
+		`level=INFO msg="Config: search.title_boost" value=0`,
+		`level=INFO msg="Config: search.content_boost" value=0`,
+		`level=INFO msg="Config: search.result_mode" value=""`,
+	}
+	populatedDump := []string{
+		startup,
+		`level=INFO msg="Config: content_dir" value=/content`,
+		`level=INFO msg="Config: search.max_results" value=10`,
+		`level=INFO msg="Config: search.in_memory" value=true`,
+		`level=INFO msg="Config: search.keywords_boost" value=3`,
+		`level=INFO msg="Config: search.heading_boost" value=2.5`,
+		`level=INFO msg="Config: search.path_boost" value=2`,
+		`level=INFO msg="Config: search.title_boost" value=2`,
+		`level=INFO msg="Config: search.content_boost" value=1`,
+		`level=INFO msg="Config: search.result_mode" value=references`,
+	}
+	populated := func(transport string, uiEnabled bool) *config.Settings {
+		s := sharedServerLogTestSettings(config.AuthSettings{Type: config.AuthTypeBasic})
+		s.Transport = transport
+		s.UI.Enabled = uiEnabled
+		return s
+	}
+	tests := []struct {
+		name     string
+		settings *config.Settings
+		expected []string
+	}{
+		{
+			name:     "sse with web UI disabled, zero values and no api keys",
+			settings: &config.Settings{Transport: "sse", Auth: config.AuthSettings{Type: config.AuthTypeAPIKey}},
+			expected: zeroDump,
+		},
+		{
+			name:     "stdio with ignored web UI, zero values and empty basic credentials",
+			settings: &config.Settings{Transport: "stdio", Auth: config.AuthSettings{Type: config.AuthTypeBasic}, UI: config.UISettings{Enabled: true}},
+			expected: zeroDump,
+		},
+		{name: "stdio with web UI enabled", settings: populated("stdio", true), expected: populatedDump},
+		{name: "stdio with web UI disabled", settings: populated("stdio", false), expected: populatedDump},
+		{name: "sse with web UI enabled", settings: populated("sse", true), expected: populatedDump},
+		{name: "sse with web UI disabled", settings: populated("sse", false), expected: populatedDump},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+
+			logSharedServerStartup(slog.New(slog.NewTextHandler(&buf, nil)), tt.settings, "1.2.3")
+
+			assert.Equal(t, tt.expected, sharedServerLogTestLines(t, &buf))
+		})
+	}
 }

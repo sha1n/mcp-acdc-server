@@ -1,9 +1,14 @@
 package config
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
+	"reflect"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -322,4 +327,265 @@ func TestSettingsLogValue_IncludesUIGroup(t *testing.T) {
 	uiAttrs := groupAttrs(ui)
 	assert.Equal(t, true, uiAttrs["enabled"].Bool())
 	assert.Equal(t, int64(42), uiAttrs["max_results"].Int64())
+}
+
+func dumpTestSettings(transport string, auth AuthSettings, ui UISettings) *Settings {
+	return &Settings{
+		ContentDir: "/content dir",
+		Transport:  transport,
+		Host:       "0.0.0.0",
+		Port:       8080,
+		Search: SearchSettings{
+			MaxResults: 10, InMemory: true, KeywordsBoost: 3, HeadingBoost: 2.5,
+			PathBoost: 2, TitleBoost: 1.5, ContentBoost: 1, ResultMode: SearchResultModeReferences,
+		},
+		Auth:         auth,
+		UI:           ui,
+		ServerMode:   ServerModeShared,
+		SharedServer: SharedServerSettings{ConnectWait: 5 * time.Second, Linger: time.Minute},
+	}
+}
+
+func dumpTestOutput(write func(*slog.Logger)) string {
+	var buf bytes.Buffer
+	write(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if len(groups) == 0 && a.Key == slog.TimeKey {
+				return slog.Attr{}
+			}
+			return a
+		},
+	})))
+	return buf.String()
+}
+
+const dumpTestIdentityLines = `level=INFO msg="Config: search.max_results" value=10
+level=INFO msg="Config: search.in_memory" value=true
+level=INFO msg="Config: search.keywords_boost" value=3
+level=INFO msg="Config: search.heading_boost" value=2.5
+level=INFO msg="Config: search.path_boost" value=2
+level=INFO msg="Config: search.title_boost" value=1.5
+level=INFO msg="Config: search.content_boost" value=1
+level=INFO msg="Config: search.result_mode" value=references
+`
+
+func TestLogWithLogger_DumpIsByteIdentical(t *testing.T) {
+	tests := []struct {
+		name     string
+		settings *Settings
+		expected string
+	}{
+		{
+			name: "sse with basic auth and web UI",
+			settings: dumpTestSettings("sse",
+				AuthSettings{Type: AuthTypeBasic, Basic: BasicAuthSettings{Username: "alice", Password: "secret"}},
+				UISettings{Enabled: true, MaxResults: 20}),
+			expected: `level=INFO msg="Config: content_dir" value="/content dir"
+level=INFO msg="Config: transport" value=sse
+level=INFO msg="Config: host" value=0.0.0.0
+level=INFO msg="Config: port" value=8080
+level=INFO msg="Config: server_mode" value=shared
+level=INFO msg="Config: shared_server.connect_wait" value=5s
+level=INFO msg="Config: shared_server.linger" value=1m0s
+` + dumpTestIdentityLines + `level=INFO msg="Config: auth.type" value=basic
+level=INFO msg="Config: auth.basic.username" value=alice
+level=INFO msg="Config: auth.basic.password" value=****
+level=INFO msg="Config: ui.enabled" value=true
+level=INFO msg="Config: ui.max_results" value=20
+`,
+		},
+		{
+			name: "stdio with api keys and ignored web UI",
+			settings: dumpTestSettings("stdio",
+				AuthSettings{Type: AuthTypeAPIKey, APIKeys: []string{"k1", "k2"}},
+				UISettings{Enabled: true, MaxResults: 20}),
+			expected: `level=INFO msg="Config: content_dir" value="/content dir"
+level=INFO msg="Config: transport" value=stdio
+level=INFO msg="Config: server_mode" value=shared
+level=INFO msg="Config: shared_server.connect_wait" value=5s
+level=INFO msg="Config: shared_server.linger" value=1m0s
+` + dumpTestIdentityLines + `level=INFO msg="Config: auth.type" value=apikey
+level=INFO msg="Config: auth.api_keys" count=2
+level=INFO msg="Config: ui.enabled" value=true
+level=INFO msg="Config: ui.max_results" value=20
+level=WARN msg="Web UI requires the sse transport; ui.enabled is ignored"
+`,
+		},
+		{
+			name: "stdio without auth or web UI",
+			settings: dumpTestSettings("stdio",
+				AuthSettings{Type: AuthTypeNone},
+				UISettings{Enabled: false, MaxResults: 20}),
+			expected: `level=INFO msg="Config: content_dir" value="/content dir"
+level=INFO msg="Config: transport" value=stdio
+level=INFO msg="Config: server_mode" value=shared
+level=INFO msg="Config: shared_server.connect_wait" value=5s
+level=INFO msg="Config: shared_server.linger" value=1m0s
+` + dumpTestIdentityLines + `level=INFO msg="Config: auth.type" value=none
+level=INFO msg="Config: ui.enabled" value=false
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := dumpTestOutput(func(logger *slog.Logger) { LogWithLogger(tt.settings, logger) })
+
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+func TestLogIdentitySettings_DumpsOnlyIdentityRelevantLines(t *testing.T) {
+	variants := map[string]*Settings{
+		"sse with basic auth and web UI": dumpTestSettings("sse",
+			AuthSettings{Type: AuthTypeBasic, Basic: BasicAuthSettings{Username: "alice", Password: "secret"}},
+			UISettings{Enabled: true, MaxResults: 20}),
+		"stdio with api keys and ignored web UI": dumpTestSettings("stdio",
+			AuthSettings{Type: AuthTypeAPIKey, APIKeys: []string{"k1", "k2"}},
+			UISettings{Enabled: true, MaxResults: 20}),
+		"stdio without auth or web UI": dumpTestSettings("stdio",
+			AuthSettings{Type: AuthTypeNone},
+			UISettings{Enabled: false, MaxResults: 20}),
+	}
+
+	for name, settings := range variants {
+		t.Run(name, func(t *testing.T) {
+			got := dumpTestOutput(func(logger *slog.Logger) { LogIdentitySettings(settings, logger) })
+
+			assert.Equal(t, `level=INFO msg="Config: content_dir" value="/content dir"
+`+dumpTestIdentityLines, got)
+		})
+	}
+}
+
+func TestDumpLines_EveryLineIsClassified(t *testing.T) {
+	require.NotEmpty(t, dumpLines)
+	for i, line := range dumpLines {
+		assert.Contains(t, []dumpScope{identityScope, sessionScope}, line.scope, "dump line %d has no scope", i)
+	}
+}
+
+const dumpTestZeroSessionLines = `level=INFO msg="Config: server_mode" value=""
+level=INFO msg="Config: shared_server.connect_wait" value=0s
+level=INFO msg="Config: shared_server.linger" value=0s
+level=INFO msg="Config: search.max_results" value=0
+level=INFO msg="Config: search.in_memory" value=false
+level=INFO msg="Config: search.keywords_boost" value=0
+level=INFO msg="Config: search.heading_boost" value=0
+level=INFO msg="Config: search.path_boost" value=0
+level=INFO msg="Config: search.title_boost" value=0
+level=INFO msg="Config: search.content_boost" value=0
+level=INFO msg="Config: search.result_mode" value=""
+`
+
+func TestLogWithLogger_EdgeValueDumpIsByteIdentical(t *testing.T) {
+	tests := []struct {
+		name     string
+		settings *Settings
+		expected string
+	}{
+		{
+			name:     "sse with web UI disabled, zero values and no api keys",
+			settings: &Settings{Transport: "sse", Auth: AuthSettings{Type: AuthTypeAPIKey}},
+			expected: `level=INFO msg="Config: content_dir" value=""
+level=INFO msg="Config: transport" value=sse
+level=INFO msg="Config: host" value=""
+level=INFO msg="Config: port" value=0
+` + dumpTestZeroSessionLines + `level=INFO msg="Config: auth.type" value=apikey
+level=INFO msg="Config: auth.api_keys" count=0
+level=INFO msg="Config: ui.enabled" value=false
+`,
+		},
+		{
+			name:     "stdio with ignored web UI, zero values and empty basic credentials",
+			settings: &Settings{Transport: "stdio", Auth: AuthSettings{Type: AuthTypeBasic}, UI: UISettings{Enabled: true}},
+			expected: `level=INFO msg="Config: content_dir" value=""
+level=INFO msg="Config: transport" value=stdio
+` + dumpTestZeroSessionLines + `level=INFO msg="Config: auth.type" value=basic
+level=INFO msg="Config: auth.basic.username" value=""
+level=INFO msg="Config: auth.basic.password" value=****
+level=INFO msg="Config: ui.enabled" value=true
+level=INFO msg="Config: ui.max_results" value=0
+level=WARN msg="Web UI requires the sse transport; ui.enabled is ignored"
+`,
+		},
+		{
+			name: "sse with web UI disabled",
+			settings: dumpTestSettings("sse",
+				AuthSettings{Type: AuthTypeNone},
+				UISettings{Enabled: false, MaxResults: 20}),
+			expected: `level=INFO msg="Config: content_dir" value="/content dir"
+level=INFO msg="Config: transport" value=sse
+level=INFO msg="Config: host" value=0.0.0.0
+level=INFO msg="Config: port" value=8080
+level=INFO msg="Config: server_mode" value=shared
+level=INFO msg="Config: shared_server.connect_wait" value=5s
+level=INFO msg="Config: shared_server.linger" value=1m0s
+` + dumpTestIdentityLines + `level=INFO msg="Config: auth.type" value=none
+level=INFO msg="Config: ui.enabled" value=false
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := dumpTestOutput(func(logger *slog.Logger) { LogWithLogger(tt.settings, logger) })
+
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+// knownUndumpedSettings lists the settings leaves the dump does not report
+// yet. Adding their lines changes the dump output and is tracked by #201;
+// no other leaf may be missing from the dump.
+var knownUndumpedSettings = []string{"uri_scheme", "cross_ref"}
+
+func TestLogWithLogger_DumpsEverySettingsLeaf(t *testing.T) {
+	everyConditionalLine := []*Settings{
+		dumpTestSettings("sse",
+			AuthSettings{Type: AuthTypeBasic, Basic: BasicAuthSettings{Username: "alice", Password: "secret"}},
+			UISettings{Enabled: true, MaxResults: 20}),
+		dumpTestSettings("stdio",
+			AuthSettings{Type: AuthTypeAPIKey, APIKeys: []string{"k1"}},
+			UISettings{Enabled: true, MaxResults: 20}),
+	}
+	dumped := map[string]bool{}
+	for _, s := range everyConditionalLine {
+		handler := &recordingHandler{}
+		LogWithLogger(s, slog.New(handler))
+		for _, r := range handler.records {
+			if key, ok := strings.CutPrefix(r.Message, "Config: "); ok {
+				dumped[key] = true
+			}
+		}
+	}
+
+	leaves := dumpTestSettingsLeaves(reflect.TypeFor[Settings](), "")
+
+	for _, leaf := range leaves {
+		if slices.Contains(knownUndumpedSettings, leaf) {
+			assert.False(t, dumped[leaf], "%s is dumped; remove it from knownUndumpedSettings", leaf)
+			continue
+		}
+		assert.True(t, dumped[leaf], "settings leaf %s has no dump line", leaf)
+	}
+	for _, leaf := range knownUndumpedSettings {
+		assert.Contains(t, leaves, leaf, "knownUndumpedSettings names %s, which is no settings leaf", leaf)
+	}
+}
+
+func dumpTestSettingsLeaves(t reflect.Type, prefix string) []string {
+	var leaves []string
+	for i := range t.NumField() {
+		field := t.Field(i)
+		key := prefix + field.Tag.Get("mapstructure")
+		if field.Type.Kind() == reflect.Struct {
+			leaves = append(leaves, dumpTestSettingsLeaves(field.Type, key+".")...)
+			continue
+		}
+		leaves = append(leaves, key)
+	}
+	return leaves
 }
