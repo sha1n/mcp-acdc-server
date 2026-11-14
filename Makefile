@@ -78,6 +78,18 @@ build:
 .PHONY: test
 test: install go-test
 
+## test-sharedserver: Runs the shared server integration tests only
+.PHONY: test-sharedserver
+test-sharedserver: install
+	@echo "  >  Running shared server integration tests..."
+	go test $(MODFLAGS) ./tests/integration/sharedserver/...
+
+## test-race-sharedserver: Runs the shared server integration tests and production packages under the race detector
+.PHONY: test-race-sharedserver
+test-race-sharedserver: install
+	@echo "  >  Running shared server tests under the race detector..."
+	go test $(MODFLAGS) -race ./tests/integration/sharedserver/... ./internal/sharedserver/...
+
 ## coverage: Runs all Go tests and generates a coverage report
 .PHONY: coverage
 coverage: install
