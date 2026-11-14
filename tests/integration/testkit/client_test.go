@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -228,4 +231,68 @@ func TestConnectFailure_ServerStoppedCleanly(t *testing.T) {
 	if !errors.Is(got, connectErr) {
 		t.Errorf("Expected the connect error to be reported, got %q", got)
 	}
+}
+
+// errStartupCause is only ever returned by the fake service's Stop, the way acdcService
+// publishes its runner error only to Stop once the client has already failed to connect.
+var errStartupCause = errors.New("content directory /x/missing not found or not a directory")
+
+func TestConnectStdioClient_ConnectFailsBeforeTheStartupErrorIsAvailable(t *testing.T) {
+	transportClosed := errors.New("transport closed by the exited server")
+	env := NewTestEnv(&mockService{
+		name: "stdio-startup-failure",
+		startFunc: func() (map[string]any, error) {
+			stdinReader, stdinWriter := io.Pipe()
+			_ = stdinReader.CloseWithError(transportClosed)
+			stdoutReader, stdoutWriter := io.Pipe()
+			_ = stdoutWriter.CloseWithError(transportClosed)
+			return map[string]any{"acdc.stdin": stdinWriter, "acdc.stdout": stdoutReader}, nil
+		},
+		stopFunc: func() error { return errStartupCause },
+	})
+
+	msg := fatalMessageOf(t, func(tb testing.TB) { connectStdioClient(tb, env) })
+
+	if !strings.Contains(msg, errStartupCause.Error()) {
+		t.Errorf("Expected the reported failure to name the startup error, got %q", msg)
+	}
+}
+
+func TestConnectSSEClient_ConnectFailsBeforeTheStartupErrorIsAvailable(t *testing.T) {
+	exitedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "server exited", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(exitedServer.Close)
+	env := NewTestEnv(&mockService{
+		name: "sse-startup-failure",
+		startFunc: func() (map[string]any, error) {
+			return map[string]any{"acdc.baseURL": exitedServer.URL}, nil
+		},
+		stopFunc: func() error { return errStartupCause },
+	})
+
+	msg := fatalMessageOf(t, func(tb testing.TB) { connectSSEClient(tb, env) })
+
+	if !strings.Contains(msg, errStartupCause.Error()) {
+		t.Errorf("Expected the reported failure to name the startup error, got %q", msg)
+	}
+}
+
+func fatalMessageOf(t *testing.T, construct func(testing.TB)) string {
+	t.Helper()
+	mockT := &clientMockTB{TB: t, tempDir: t.TempDir()}
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				if _, ok := r.(fatalPanic); !ok {
+					panic(r)
+				}
+			}
+		}()
+		construct(mockT)
+	}()
+	if !mockT.failed {
+		t.Fatal("Expected the client constructor to fail")
+	}
+	return mockT.fatalMsg
 }
