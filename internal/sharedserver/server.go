@@ -33,5 +33,7 @@ type Config struct {
 	// line, so a session's first listing reflects current content. It is
 	// called only after Build has returned.
 	Revalidate func(context.Context)
-	Linger     time.Duration
+	// Linger below config.MinSharedServerLinger is rejected before anything
+	// is created, as settings validation rejects it.
+	Linger time.Duration
 }
