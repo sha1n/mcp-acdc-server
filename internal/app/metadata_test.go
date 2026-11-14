@@ -1,6 +1,7 @@
 package app
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,7 +16,7 @@ func TestResolveMetadata_MissingManifestFallsBackToDefaults(t *testing.T) {
 	require.NoError(t, os.MkdirAll(contentDir, 0o755))
 	cp := content.NewContentProvider(contentDir)
 
-	resolved, err := resolveMetadata(cp, "1.2.3")
+	resolved, err := resolveMetadata(slog.New(slog.DiscardHandler), cp, "1.2.3")
 
 	require.NoError(t, err)
 	require.True(t, resolved.defaulted)
@@ -37,7 +38,7 @@ tools:
 	require.NoError(t, os.MkdirAll(cp.ConfigDir, 0o755))
 	require.NoError(t, os.WriteFile(cp.ConfigFile, []byte(manifest), 0o644))
 
-	resolved, err := resolveMetadata(cp, "9.9.9")
+	resolved, err := resolveMetadata(slog.New(slog.DiscardHandler), cp, "9.9.9")
 
 	require.NoError(t, err)
 	require.False(t, resolved.defaulted)
@@ -53,7 +54,7 @@ func TestResolveMetadata_MalformedYAMLReturnsError(t *testing.T) {
 	require.NoError(t, os.MkdirAll(cp.ConfigDir, 0o755))
 	require.NoError(t, os.WriteFile(cp.ConfigFile, []byte("not: valid: yaml: {{"), 0o644))
 
-	_, err := resolveMetadata(cp, "1.0.0")
+	_, err := resolveMetadata(slog.New(slog.DiscardHandler), cp, "1.0.0")
 
 	require.ErrorContains(t, err, "failed to parse metadata")
 }
@@ -70,7 +71,7 @@ server:
 	require.NoError(t, os.MkdirAll(cp.ConfigDir, 0o755))
 	require.NoError(t, os.WriteFile(cp.ConfigFile, []byte(manifest), 0o644))
 
-	_, err := resolveMetadata(cp, "1.0.0")
+	_, err := resolveMetadata(slog.New(slog.DiscardHandler), cp, "1.0.0")
 
 	require.ErrorContains(t, err, "metadata validation failed")
 }
@@ -87,7 +88,7 @@ func TestResolveMetadata_UnreadableManifestReturnsError(t *testing.T) {
 	require.NoError(t, os.Chmod(manifestPath, 0o000))
 	t.Cleanup(func() { _ = os.Chmod(manifestPath, 0o644) })
 
-	_, err := resolveMetadata(cp, "1.0.0")
+	_, err := resolveMetadata(slog.New(slog.DiscardHandler), cp, "1.0.0")
 
 	require.ErrorContains(t, err, "failed to read metadata file")
 }
@@ -101,7 +102,7 @@ func TestResolveMetadata_ManifestIsDirectoryReturnsError(t *testing.T) {
 	require.NoError(t, os.MkdirAll(content.NewContentProvider(contentDir).ConfigFile, 0o755))
 	cp := content.NewContentProvider(contentDir)
 
-	_, err := resolveMetadata(cp, "1.0.0")
+	_, err := resolveMetadata(slog.New(slog.DiscardHandler), cp, "1.0.0")
 
 	require.ErrorContains(t, err, "failed to read metadata file")
 }
@@ -116,7 +117,7 @@ func TestResolveMetadata_NonexistentContentDirReturnsError(t *testing.T) {
 	contentDir := filepath.Join(t.TempDir(), "does-not-exist")
 	cp := content.NewContentProvider(contentDir)
 
-	_, err := resolveMetadata(cp, "1.0.0")
+	_, err := resolveMetadata(slog.New(slog.DiscardHandler), cp, "1.0.0")
 
 	require.ErrorContains(t, err, "content directory")
 	require.ErrorContains(t, err, contentDir)
@@ -128,7 +129,7 @@ func TestResolveMetadata_ContentDirIsFileReturnsError(t *testing.T) {
 	require.NoError(t, os.WriteFile(contentDir, []byte("not a directory"), 0o644))
 	cp := content.NewContentProvider(contentDir)
 
-	_, err := resolveMetadata(cp, "1.0.0")
+	_, err := resolveMetadata(slog.New(slog.DiscardHandler), cp, "1.0.0")
 
 	require.ErrorContains(t, err, "content directory")
 	require.ErrorContains(t, err, contentDir)

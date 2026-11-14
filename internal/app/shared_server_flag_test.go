@@ -3,6 +3,8 @@ package app
 import (
 	"bytes"
 	"context"
+	"io"
+	"log/slog"
 	"os"
 	"testing"
 
@@ -41,9 +43,10 @@ func TestRunWithDeps_SharedServerIdentityEnvironmentVariableHasNoEffect(t *testi
 
 	stdioUsed := false
 	params := RunParams{
+		Stderr:        io.Discard,
 		LoadSettings:  config.LoadSettingsWithFlags,
 		ValidSettings: config.ValidateSettings,
-		CreateServer: func(context.Context, *config.Settings, string) (Components, error) {
+		CreateServer: func(context.Context, *slog.Logger, *config.Settings, string) (Components, error) {
 			return Components{MCP: mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil)}, nil
 		},
 		CustomIOTransport: &mockTransport{connectCalled: &stdioUsed},
@@ -85,9 +88,10 @@ func TestRunWithDeps_SuppliedSharedServerIdentityMustBeValid(t *testing.T) {
 			created := false
 			stdioUsed := false
 			params := RunParams{
+				Stderr:        io.Discard,
 				LoadSettings:  config.LoadSettingsWithFlags,
 				ValidSettings: config.ValidateSettings,
-				CreateServer: func(context.Context, *config.Settings, string) (Components, error) {
+				CreateServer: func(context.Context, *slog.Logger, *config.Settings, string) (Components, error) {
 					created = true
 					return Components{MCP: mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil)}, nil
 				},

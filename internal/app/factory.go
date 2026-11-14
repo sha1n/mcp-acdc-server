@@ -24,7 +24,7 @@ type uiSearcher interface {
 }
 
 type factoryDeps struct {
-	discover  func(context.Context, *content.ContentProvider, *domain.IndexMetadata, string, ...resources.DiscoverOption) (resources.DiscoveryResult, error)
+	discover  func(context.Context, *slog.Logger, *content.ContentProvider, *domain.IndexMetadata, string, ...resources.DiscoverOption) (resources.DiscoveryResult, error)
 	newSearch func(config.SearchSettings) uiSearcher
 }
 
@@ -48,11 +48,11 @@ type Components struct {
 }
 
 // CreateServer initializes the core server components.
-func CreateServer(ctx context.Context, settings *config.Settings, version string) (Components, error) {
-	return createServer(ctx, settings, version, defaultFactoryDeps())
+func CreateServer(ctx context.Context, logger *slog.Logger, settings *config.Settings, version string) (Components, error) {
+	return createServer(ctx, logger, settings, version, defaultFactoryDeps())
 }
 
-func createServer(ctx context.Context, settings *config.Settings, version string, deps factoryDeps) (Components, error) {
+func createServer(ctx context.Context, logger *slog.Logger, settings *config.Settings, version string, deps factoryDeps) (Components, error) {
 	// Initialize content provider
 	cp := content.NewContentProvider(settings.ContentDir)
 
@@ -60,7 +60,7 @@ func createServer(ctx context.Context, settings *config.Settings, version string
 		return Components{}, err
 	}
 
-	resolved, err := resolveMetadata(cp, version)
+	resolved, err := resolveMetadata(logger, cp, version)
 	if err != nil {
 		return Components{}, err
 	}
@@ -79,18 +79,18 @@ func createServer(ctx context.Context, settings *config.Settings, version string
 	// and the first Revalidate call treats the content root as changed.
 	seedWalkDigest, err := resources.Fingerprint(ctx, cp, metadata.Index, discoverOpts...)
 	if err != nil {
-		slog.Warn("failed to fingerprint content root at startup; catalog refresh will re-discover on first check",
+		logger.Warn("failed to fingerprint content root at startup; catalog refresh will re-discover on first check",
 			"error", err)
 		seedWalkDigest = ""
 	}
 
 	// Discover resources
-	discovery, err := deps.discover(ctx, cp, metadata.Index, settings.Scheme, discoverOpts...)
+	discovery, err := deps.discover(ctx, logger, cp, metadata.Index, settings.Scheme, discoverOpts...)
 	if err != nil {
 		return Components{}, fmt.Errorf("failed to discover resources: %w", err)
 	}
 
-	warnIfLegacyLayoutIgnored(cp, resolved.defaulted, discovery)
+	warnIfLegacyLayoutIgnored(logger, cp, resolved.defaulted, discovery)
 
 	resourceProvider, err := assembleResourceProvider(discovery, settings.CrossRef, settings.Scheme)
 	if err != nil {
@@ -98,7 +98,7 @@ func createServer(ctx context.Context, settings *config.Settings, version string
 	}
 
 	// Discover prompts
-	promptDefinitions, err := prompts.DiscoverPrompts(cp)
+	promptDefinitions, err := prompts.DiscoverPrompts(logger, cp)
 	if err != nil {
 		return Components{}, fmt.Errorf("failed to discover prompts: %w", err)
 	}
@@ -120,13 +120,14 @@ func createServer(ctx context.Context, settings *config.Settings, version string
 	// once above, so a mid-session refresh applies the same zero-config
 	// leniency decision as startup rather than re-deciding it.
 	refresher := &catalogRefresher{
+		logger:   logger,
 		holder:   holder,
 		searcher: searchService,
 		fingerprint: func(ctx context.Context) (string, error) {
 			return resources.Fingerprint(ctx, cp, metadata.Index, discoverOpts...)
 		},
 		discover: func(ctx context.Context) (resources.DiscoveryResult, error) {
-			return deps.discover(ctx, cp, metadata.Index, settings.Scheme, discoverOpts...)
+			return deps.discover(ctx, logger, cp, metadata.Index, settings.Scheme, discoverOpts...)
 		},
 		assemble: func(discovery resources.DiscoveryResult) (*resources.ResourceProvider, error) {
 			return assembleResourceProvider(discovery, settings.CrossRef, settings.Scheme)
@@ -144,7 +145,7 @@ func createServer(ctx context.Context, settings *config.Settings, version string
 	// registrar it returns, so the registrar is bound onto the refresher only
 	// after this call — the narrow window Revalidate's nil-registrar guard
 	// covers.
-	mcpServer, registrar := mcp.CreateServer(metadata, holder, promptProvider, searchService, settings.Search, refresher)
+	mcpServer, registrar := mcp.CreateServer(logger, metadata, holder, promptProvider, searchService, settings.Search, refresher)
 	refresher.bindRegistrar(registrar)
 
 	return Components{
@@ -180,11 +181,11 @@ func assembleResourceProvider(discovery resources.DiscoveryResult, crossRef bool
 // directory goes unindexed without any error. This is diagnostic only; it
 // does not change which discovery mode is selected or whether startup
 // succeeds.
-func warnIfLegacyLayoutIgnored(cp *content.ContentProvider, defaulted bool, discovery resources.DiscoveryResult) {
+func warnIfLegacyLayoutIgnored(logger *slog.Logger, cp *content.ContentProvider, defaulted bool, discovery resources.DiscoveryResult) {
 	if !shouldWarnLegacyLayoutIgnored(cp, defaulted, discovery) {
 		return
 	}
-	slog.Warn("Found .acdc/resources/ directory but no .acdc/config.yaml manifest; "+
+	logger.Warn("Found .acdc/resources/ directory but no .acdc/config.yaml manifest; "+
 		"zero-config mode indexes only README.md and docs/**, so .acdc/resources/ is not indexed",
 		"resources_dir", cp.ResourcesDir,
 		"manifest_path", cp.ConfigFile)

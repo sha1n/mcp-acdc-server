@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -111,8 +112,13 @@ func newFakeReader() *fakeReader {
 
 func newHandler(t *testing.T, backend *fakeBackend, reader *fakeReader) http.Handler {
 	t.Helper()
+	return newLoggingHandler(t, slog.New(slog.DiscardHandler), backend, reader)
+}
+
+func newLoggingHandler(t *testing.T, logger *slog.Logger, backend *fakeBackend, reader *fakeReader) http.Handler {
+	t.Helper()
 	mux := http.NewServeMux()
-	webui.Mount(mux, backend, reader, config.UISettings{Enabled: true, MaxResults: testMaxResults})
+	webui.Mount(logger, mux, backend, reader, config.UISettings{Enabled: true, MaxResults: testMaxResults})
 	return mux
 }
 
@@ -169,8 +175,8 @@ func mustJSON(t *testing.T, v any) string {
 
 func TestMount_PanicsOnNilDependencies(t *testing.T) {
 	settings := config.UISettings{Enabled: true, MaxResults: testMaxResults}
-	assert.Panics(t, func() { webui.Mount(http.NewServeMux(), nil, newFakeReader(), settings) })
-	assert.Panics(t, func() { webui.Mount(http.NewServeMux(), &fakeBackend{}, nil, settings) })
+	assert.Panics(t, func() { webui.Mount(slog.New(slog.DiscardHandler), http.NewServeMux(), nil, newFakeReader(), settings) })
+	assert.Panics(t, func() { webui.Mount(slog.New(slog.DiscardHandler), http.NewServeMux(), &fakeBackend{}, nil, settings) })
 }
 
 func TestPages_UIRedirectsToTrailingSlashKeepingQuery(t *testing.T) {

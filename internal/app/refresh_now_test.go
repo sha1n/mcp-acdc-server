@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync/atomic"
 	"testing"
 
@@ -81,6 +82,7 @@ func TestCatalogRefresher_RevalidateNow_FailureKeepsTheSnapshotAndDigests(t *tes
 
 func TestCatalogRefresher_RevalidateNow_RegistrarNil_ReturnsImmediately(t *testing.T) {
 	r := &catalogRefresher{
+		logger: slog.New(slog.DiscardHandler),
 		fingerprint: func(context.Context) (string, error) {
 			t.Fatal("fingerprint should not have been called while registrar is nil")
 			return "", nil

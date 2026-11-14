@@ -88,36 +88,36 @@ func (p *PromptProvider) GetPrompt(name string, arguments map[string]string) ([]
 }
 
 // DiscoverPrompts discovers prompts from markdown files
-func DiscoverPrompts(cp *content.ContentProvider) ([]PromptDefinition, error) {
+func DiscoverPrompts(logger *slog.Logger, cp *content.ContentProvider) ([]PromptDefinition, error) {
 	promptsDir := cp.PromptsDir
 
 	// Ensure directory exists, if not just return empty
 	if _, err := os.Stat(promptsDir); err != nil {
 		if os.IsNotExist(err) {
-			slog.Debug("Prompts directory does not exist", "path", promptsDir)
+			logger.Debug("Prompts directory does not exist", "path", promptsDir)
 			return nil, nil
 		}
-		slog.Error("Failed to access prompts directory", "path", promptsDir, "error", err)
+		logger.Error("Failed to access prompts directory", "path", promptsDir, "error", err)
 		return nil, err
 	}
 
 	var definitions []PromptDefinition
 	err := filepath.WalkDir(promptsDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			slog.Error("Error walking prompts directory", "path", path, "error", err)
+			logger.Error("Error walking prompts directory", "path", path, "error", err)
 			return nil // continue walking
 		}
 		if d.IsDir() || filepath.Ext(path) != ".md" {
 			return nil
 		}
 
-		definition, ok := loadPromptDefinition(cp, path, d.Name())
+		definition, ok := loadPromptDefinition(logger, cp, path, d.Name())
 		if !ok {
 			return nil
 		}
 
 		definitions = append(definitions, definition)
-		slog.Info("Loaded prompt", "name", definition.Name)
+		logger.Info("Loaded prompt", "name", definition.Name)
 
 		return nil
 	})
@@ -128,23 +128,23 @@ func DiscoverPrompts(cp *content.ContentProvider) ([]PromptDefinition, error) {
 // loadPromptDefinition parses a single prompt file. It reports false for files
 // that are unreadable, missing required metadata or carry an invalid template,
 // which discovery skips rather than treating as a failure.
-func loadPromptDefinition(cp *content.ContentProvider, path, fileName string) (PromptDefinition, bool) {
+func loadPromptDefinition(logger *slog.Logger, cp *content.ContentProvider, path, fileName string) (PromptDefinition, bool) {
 	md, err := cp.LoadMarkdownWithFrontmatter(path)
 	if err != nil {
-		slog.Warn("Skipping invalid prompt file", "file", fileName, "error", err)
+		logger.Warn("Skipping invalid prompt file", "file", fileName, "error", err)
 		return PromptDefinition{}, false
 	}
 
 	name, _ := md.Metadata["name"].(string)
 	description, _ := md.Metadata["description"].(string)
 	if name == "" || description == "" {
-		slog.Warn("Skipping prompt with missing metadata", "file", fileName)
+		logger.Warn("Skipping prompt with missing metadata", "file", fileName)
 		return PromptDefinition{}, false
 	}
 
 	tmpl, err := template.New(name).Option("missingkey=zero").Parse(md.Content)
 	if err != nil {
-		slog.Warn("Skipping prompt with invalid template", "file", fileName, "error", err)
+		logger.Warn("Skipping prompt with invalid template", "file", fileName, "error", err)
 		return PromptDefinition{}, false
 	}
 

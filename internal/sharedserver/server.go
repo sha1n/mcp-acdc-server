@@ -14,9 +14,10 @@ import (
 // writing anything.
 var ErrLockNotAcquired = errors.New("shared server lock not acquired")
 
-// BuildFunc builds the catalog, index and MCP server. The returned cleanup,
-// if any, runs after the last session ends.
-type BuildFunc func(context.Context) (*mcp.Server, func(), error)
+// BuildFunc builds the catalog, index and MCP server, logging through the
+// shared server's logger. The returned cleanup, if any, runs after the last
+// session ends.
+type BuildFunc func(context.Context, *slog.Logger) (*mcp.Server, func(), error)
 
 // Config describes one shared server.
 type Config struct {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -44,7 +45,7 @@ func TestSessionAcceptor_AWakeLosingToAnAttachKeepsAccepting(t *testing.T) {
 	ep, epErr := endpoint.OpenEndpoint(filepath.Dir(socketPath))
 	require.NoError(t, epErr)
 	ctx, cancel := context.WithCancel(context.Background())
-	acceptor := startAccepting(ctx, listener, ep, testIdentity, time.Hour)
+	acceptor := startAccepting(ctx, slog.New(slog.DiscardHandler), listener, ep, testIdentity, time.Hour)
 	done := make(chan error, 1)
 	go func() {
 		done <- acceptor.serve(mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil), nil, "")
@@ -72,7 +73,7 @@ func TestRun_BuildFailureDropsAConnectionWaitingForTheReadyLine(t *testing.T) {
 	socketPath := filepath.Join(dir, testIdentity+".sock")
 	errBuild := errors.New("build failed")
 	dialed := make(chan struct{})
-	build := func(context.Context) (*mcp.Server, func(), error) {
+	build := func(context.Context, *slog.Logger) (*mcp.Server, func(), error) {
 		<-dialed
 		return nil, nil, errBuild
 	}
@@ -105,7 +106,7 @@ func TestRun_AConnectionAcceptedDuringTheBuildRevalidatesAfterItBeforeTheReadyLi
 	socketPath := filepath.Join(dir, testIdentity+".sock")
 	release := make(chan struct{})
 	var buildReturned atomic.Bool
-	build := func(context.Context) (*mcp.Server, func(), error) {
+	build := func(context.Context, *slog.Logger) (*mcp.Server, func(), error) {
 		<-release
 		buildReturned.Store(true)
 		return mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil), nil, nil

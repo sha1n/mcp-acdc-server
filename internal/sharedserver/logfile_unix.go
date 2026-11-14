@@ -78,26 +78,17 @@ func separateLogDir(logDir, endpointDir string) string {
 	return logDir
 }
 
-// startLog makes the identity's log, or a discarding logger when it cannot be
-// opened, the process default for the shared server's lifetime: the packages
-// it runs log through slog.Default. stop restores the previous default and
-// closes the file.
-func startLog(dir, identity string) (logger *slog.Logger, path string, stop func()) {
-	previous := slog.Default()
+// startLog opens the identity's log, or returns a discarding logger when it
+// cannot be opened. closeLog closes the file.
+func startLog(dir, identity string) (logger *slog.Logger, path string, closeLog func()) {
 	file, issues := openLog(dir, identity)
 	if file == nil {
-		logger = slog.New(slog.DiscardHandler)
-		slog.SetDefault(logger)
-		return logger, "", func() { slog.SetDefault(previous) }
+		return slog.New(slog.DiscardHandler), "", func() {}
 	}
 
 	logger = slog.New(slog.NewTextHandler(file, nil))
-	slog.SetDefault(logger)
 	for _, issue := range issues {
 		logger.Warn("Shared server log maintenance failed", "error", issue)
 	}
-	return logger, file.Name(), func() {
-		slog.SetDefault(previous)
-		_ = file.Close()
-	}
+	return logger, file.Name(), func() { _ = file.Close() }
 }

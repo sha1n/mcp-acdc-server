@@ -22,39 +22,39 @@ type ReadToolArgument struct {
 }
 
 // RegisterSearchTool registers the search tool with the server
-func RegisterSearchTool(s *mcp.Server, searchService search.Searcher, revalidator Revalidator, settings config.SearchSettings, metadata domain.ToolMetadata) {
+func RegisterSearchTool(logger *slog.Logger, s *mcp.Server, searchService search.Searcher, revalidator Revalidator, settings config.SearchSettings, metadata domain.ToolMetadata) {
 	mcp.AddTool(s,
 		&mcp.Tool{
 			Name:        metadata.Name,
 			Description: metadata.Description,
 			// InputSchema auto-generated from SearchToolArgument
 		},
-		NewSearchToolHandler(searchService, revalidator, settings),
+		NewSearchToolHandler(logger, searchService, revalidator, settings),
 	)
 }
 
 // RegisterReadTool registers the read tool with the server
-func RegisterReadTool(s *mcp.Server, catalog resources.Catalog, revalidator Revalidator, metadata domain.ToolMetadata) {
+func RegisterReadTool(logger *slog.Logger, s *mcp.Server, catalog resources.Catalog, revalidator Revalidator, metadata domain.ToolMetadata) {
 	mcp.AddTool(s,
 		&mcp.Tool{
 			Name:        metadata.Name,
 			Description: metadata.Description,
 			// InputSchema auto-generated from ReadToolArgument
 		},
-		NewReadToolHandler(catalog, revalidator),
+		NewReadToolHandler(logger, catalog, revalidator),
 	)
 }
 
 // NewSearchToolHandler creates the handler for the search tool
-func NewSearchToolHandler(searchService search.Searcher, revalidator Revalidator, settings config.SearchSettings) mcp.ToolHandlerFor[SearchToolArgument, any] {
+func NewSearchToolHandler(logger *slog.Logger, searchService search.Searcher, revalidator Revalidator, settings config.SearchSettings) mcp.ToolHandlerFor[SearchToolArgument, any] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, args SearchToolArgument) (*mcp.CallToolResult, any, error) {
 		revalidator.Revalidate(ctx)
 		// Args are already validated and unmarshaled by SDK via jsonschema tags
-		slog.Info("Search request", "query", args.Query)
+		logger.Info("Search request", "query", args.Query)
 
 		selected, err := fillSearchPage(searchService, args.Query, settings.ResultMode, settings.MaxResults)
 		if err != nil {
-			slog.Error("Search failed", "query", args.Query, "error", err)
+			logger.Error("Search failed", "query", args.Query, "error", err)
 			return nil, nil, err
 		}
 
@@ -67,15 +67,15 @@ func NewSearchToolHandler(searchService search.Searcher, revalidator Revalidator
 }
 
 // NewReadToolHandler creates the handler for the read tool
-func NewReadToolHandler(catalog resources.Catalog, revalidator Revalidator) mcp.ToolHandlerFor[ReadToolArgument, any] {
+func NewReadToolHandler(logger *slog.Logger, catalog resources.Catalog, revalidator Revalidator) mcp.ToolHandlerFor[ReadToolArgument, any] {
 	return func(ctx context.Context, req *mcp.CallToolRequest, args ReadToolArgument) (*mcp.CallToolResult, any, error) {
 		revalidator.Revalidate(ctx)
 		// Args are already validated and unmarshaled by SDK via jsonschema tags
-		slog.Info("Get resource request", "uri", args.URI)
+		logger.Info("Get resource request", "uri", args.URI)
 
 		content, err := catalog.ReadResource(args.URI)
 		if err != nil {
-			slog.Error("Get resource failed", "uri", args.URI, "error", err)
+			logger.Error("Get resource failed", "uri", args.URI, "error", err)
 			return nil, nil, err
 		}
 

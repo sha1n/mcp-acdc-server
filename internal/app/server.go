@@ -29,18 +29,18 @@ func WithWebUI(backend webui.SearchBackend, documents webui.DocumentReader) SSEO
 }
 
 // StartSSEServer starts the SSE server with authentication
-func StartSSEServer(s *mcp.Server, settings *config.Settings, opts ...SSEOption) error {
-	srv, err := NewSSEServer(s, settings, opts...)
+func StartSSEServer(logger *slog.Logger, s *mcp.Server, settings *config.Settings, opts ...SSEOption) error {
+	srv, err := NewSSEServer(logger, s, settings, opts...)
 	if err != nil {
 		return err
 	}
 
-	slog.Info("Server listening (HTTP)", "addr", srv.Addr, "auth_type", settings.Auth.Type)
+	logger.Info("Server listening (HTTP)", "addr", srv.Addr, "auth_type", settings.Auth.Type)
 	return srv.ListenAndServe()
 }
 
 // NewSSEServer creates a new SSE server with authentication middleware
-func NewSSEServer(s *mcp.Server, settings *config.Settings, opts ...SSEOption) (*http.Server, error) {
+func NewSSEServer(logger *slog.Logger, s *mcp.Server, settings *config.Settings, opts ...SSEOption) (*http.Server, error) {
 	var options sseOptions
 	for _, opt := range opts {
 		opt(&options)
@@ -62,7 +62,7 @@ func NewSSEServer(s *mcp.Server, settings *config.Settings, opts ...SSEOption) (
 		if options.uiBackend == nil || options.uiDocuments == nil {
 			return nil, errors.New("web UI enabled but no UI components supplied")
 		}
-		webui.Mount(mux, options.uiBackend, options.uiDocuments, settings.UI)
+		webui.Mount(logger, mux, options.uiBackend, options.uiDocuments, settings.UI)
 	}
 
 	authMiddleware, err := auth.NewMiddleware(settings.Auth)

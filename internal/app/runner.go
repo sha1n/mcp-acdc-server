@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 
@@ -16,11 +18,12 @@ import (
 type RunParams struct {
 	LoadSettings      func(*pflag.FlagSet) (*config.Settings, error)
 	ValidSettings     func(*config.Settings) error
-	StartSSEServer    func(*mcp.Server, *config.Settings, ...SSEOption) error
-	CreateServer      func(context.Context, *config.Settings, string) (Components, error)
+	StartSSEServer    func(*slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error
+	CreateServer      func(context.Context, *slog.Logger, *config.Settings, string) (Components, error)
 	CustomIOTransport mcp.Transport // Optional: for testing with custom IO
 	EndpointDir       func() (string, error)
 	LogDir            func() (string, error)
+	Stderr            io.Writer
 }
 
 // DefaultRunParams returns production dependencies
@@ -32,6 +35,7 @@ func DefaultRunParams() RunParams {
 		CreateServer:   CreateServer,
 		EndpointDir:    sharedserver.DefaultEndpointDir,
 		LogDir:         sharedserver.DefaultLogDir,
+		Stderr:         os.Stderr,
 	}
 }
 
@@ -52,14 +56,16 @@ func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, ve
 		return runSharedServer(ctx, params, settings, identity, version)
 	}
 
-	// Configure logging - always use stderr to avoid buffering issues
-	handler := slog.NewTextHandler(os.Stderr, nil)
-	slog.SetDefault(slog.New(handler))
+	if params.Stderr == nil {
+		return errors.New("runner requires a stderr writer")
+	}
+	// Always log to stderr: stdout carries the stdio protocol stream.
+	logger := slog.New(slog.NewTextHandler(params.Stderr, nil))
 
-	slog.Info("Starting MCP Acdc server", "version", version)
-	config.Log(settings)
+	logger.Info("Starting MCP Acdc server", "version", version)
+	config.LogWithLogger(settings, logger)
 
-	components, err := params.CreateServer(ctx, settings, version)
+	components, err := params.CreateServer(ctx, logger, settings, version)
 	if err != nil {
 		return err
 	}
@@ -76,7 +82,7 @@ func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, ve
 		}
 		return components.MCP.Run(ctx, transport)
 	} else {
-		slog.Info("Starting SSE server", "host", settings.Host, "port", settings.Port)
-		return params.StartSSEServer(components.MCP, settings, components.SSEOptions...)
+		logger.Info("Starting SSE server", "host", settings.Host, "port", settings.Port)
+		return params.StartSSEServer(logger, components.MCP, settings, components.SSEOptions...)
 	}
 }

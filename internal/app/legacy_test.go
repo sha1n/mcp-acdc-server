@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,7 +35,7 @@ func TestCreateServer_RefusesLegacyLayout(t *testing.T) {
 			root := t.TempDir()
 			tt.create(t, root)
 
-			_, err := CreateServer(context.Background(), &config.Settings{ContentDir: root}, "1.0.0")
+			_, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), &config.Settings{ContentDir: root}, "1.0.0")
 
 			require.Error(t, err)
 			require.Contains(t, err.Error(), tt.wantOld)
@@ -49,7 +50,7 @@ func TestCreateServer_ReportsEveryLegacyMarker(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "mcp-prompts"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "mcp-resources"), 0o755))
 
-	_, err := CreateServer(context.Background(), &config.Settings{ContentDir: root}, "1.0.0")
+	_, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), &config.Settings{ContentDir: root}, "1.0.0")
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "mcp-metadata.yaml")
@@ -66,7 +67,7 @@ func TestCreateServer_RefusesHalfMigratedRoot(t *testing.T) {
 		[]byte("server:\n  name: test\n  version: \"1.0\"\n  instructions: test\n"), 0o600))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "mcp-prompts"), 0o755))
 
-	_, err := CreateServer(context.Background(), &config.Settings{ContentDir: root}, "1.0.0")
+	_, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), &config.Settings{ContentDir: root}, "1.0.0")
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "mcp-prompts/")
@@ -82,7 +83,7 @@ func TestCreateServer_RefusesResourcesAlongsideCurrentConfig(t *testing.T) {
 		[]byte("server:\n  name: test\n  version: \"1.0\"\n  instructions: test\n"), 0o600))
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "mcp-resources"), 0o755))
 
-	_, err := CreateServer(context.Background(), &config.Settings{ContentDir: root}, "1.0.0")
+	_, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), &config.Settings{ContentDir: root}, "1.0.0")
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "mcp-resources/")
@@ -98,7 +99,7 @@ func TestCreateServer_StartsOnBareResourcesDir(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "mcp-resources"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "README.md"), []byte("# Test\n\nBody.\n"), 0o600))
 
-	components, err := CreateServer(context.Background(), appTestSettings(root), "1.0.0")
+	components, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), appTestSettings(root), "1.0.0")
 
 	cleanup := components.Cleanup
 
@@ -111,7 +112,7 @@ func TestCreateServer_StartsOnBareResourcesDir(t *testing.T) {
 func TestCreateServer_MissingContentDirStillReportsDirectoryError(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "nope")
 
-	_, err := CreateServer(context.Background(), &config.Settings{ContentDir: missing}, "1.0.0")
+	_, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), &config.Settings{ContentDir: missing}, "1.0.0")
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not found or not a directory")
@@ -125,7 +126,7 @@ func TestCreateServer_StartsOnMigratedRoot(t *testing.T) {
 		[]byte("server:\n  name: test\n  version: \"1.0\"\n  instructions: test\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "README.md"), []byte("# Test\n\nBody.\n"), 0o600))
 
-	components, err := CreateServer(context.Background(), appTestSettings(root), "1.0.0")
+	components, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), appTestSettings(root), "1.0.0")
 
 	cleanup := components.Cleanup
 

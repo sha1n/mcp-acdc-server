@@ -22,7 +22,7 @@ func TestDiscover_ConfiguredSources(t *testing.T) {
 	writeFile(t, root, "docs/api/auth.md", "# Auth\n\nToken details.\n")
 	writeFile(t, root, "docs/generated/skip.md", "# Skip\n")
 
-	result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+	result, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 		Include: []string{"docs/**/*.md"},
 		Exclude: []string{"docs/generated/**"},
 	}, "acdc")
@@ -44,7 +44,7 @@ func TestDiscover_ConfiguredValidation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Discover(context.Background(), content.NewContentProvider(t.TempDir()), &domain.IndexMetadata{Include: tt.include}, "acdc")
+			_, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(t.TempDir()), &domain.IndexMetadata{Include: tt.include}, "acdc")
 			require.ErrorContains(t, err, tt.wantErr)
 		})
 	}
@@ -53,13 +53,13 @@ func TestDiscover_ConfiguredValidation(t *testing.T) {
 func TestDiscover_ConfiguredRejectsInvalidExcludeAndMissingRoot(t *testing.T) {
 	root := t.TempDir()
 
-	_, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+	_, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 		Include: []string{"docs/**/*.md"},
 		Exclude: []string{"/private/*.md"},
 	}, "acdc")
 	require.ErrorContains(t, err, "index pattern must be relative")
 
-	_, err = Discover(context.Background(), content.NewContentProvider(filepath.Join(root, "missing")), &domain.IndexMetadata{
+	_, err = Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(filepath.Join(root, "missing")), &domain.IndexMetadata{
 		Include: []string{"docs/**/*.md"},
 	}, "acdc")
 	require.ErrorContains(t, err, "resolve content root")
@@ -71,7 +71,7 @@ func TestDiscover_ConfiguredMatching(t *testing.T) {
 	writeFile(t, root, "docs/nested/guide.markdown", "# Nested\n")
 	writeFile(t, root, "docs/ignored.md", "# Ignored\n")
 
-	result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+	result, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 		Include: []string{"docs/**/*.md", "docs/**/*.*"},
 		Exclude: []string{"docs/ignored.md"},
 	}, "acdc")
@@ -83,7 +83,7 @@ func TestDiscover_ConfiguredRejectsSelectedNonMarkdown(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "docs/readme.txt", "not markdown")
 
-	_, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{Include: []string{"docs/**"}}, "acdc")
+	_, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{Include: []string{"docs/**"}}, "acdc")
 	require.ErrorContains(t, err, "configured index selected non-Markdown file")
 }
 
@@ -91,7 +91,7 @@ func TestDiscover_ConfiguredCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := Discover(ctx, content.NewContentProvider(t.TempDir()), &domain.IndexMetadata{Include: []string{"**/*.md"}}, "acdc")
+	_, err := Discover(ctx, slog.New(slog.DiscardHandler), content.NewContentProvider(t.TempDir()), &domain.IndexMetadata{Include: []string{"**/*.md"}}, "acdc")
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -106,7 +106,7 @@ func TestDiscover_ConfiguredSkipsSymlinksAndPreservesContainment(t *testing.T) {
 	require.NoError(t, os.Symlink(outside, filepath.Join(root, "docs", "outside.md")))
 	require.NoError(t, os.Symlink(external, filepath.Join(root, "docs", "linked-dir")))
 
-	result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{Include: []string{"docs/**/*.md"}}, "acdc")
+	result, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{Include: []string{"docs/**/*.md"}}, "acdc")
 	require.NoError(t, err)
 	require.Equal(t, []string{"acdc://docs/inside"}, sourceURIs(result.Sources))
 }
@@ -139,7 +139,7 @@ func TestDiscover_RelativeContentDirUnderSymlinkedWorkingDirectory(t *testing.T)
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := Discover(context.Background(), content.NewContentProvider(tt.contentDir), &domain.IndexMetadata{
+			result, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(tt.contentDir), &domain.IndexMetadata{
 				Include: []string{"docs/**/*.md"},
 			}, "acdc")
 			require.NoError(t, err)
@@ -156,7 +156,7 @@ func TestDiscover_LegacySkipsInvalidFilesAndBuildsChunks(t *testing.T) {
 	writeFile(t, resourcesDir, "missing.md", "---\nname: Missing description\n---\n# Missing\n")
 	writeFile(t, resourcesDir, "ignore.txt", "not a resource")
 
-	result, err := Discover(context.Background(), content.NewContentProvider(root), nil, "acdc")
+	result, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), nil, "acdc")
 	require.NoError(t, err)
 	require.Equal(t, []string{"acdc://valid"}, sourceURIs(result.Sources))
 	require.NotEmpty(t, result.Chunks)
@@ -166,7 +166,7 @@ func TestDiscover_LegacySkipsInvalidFilesAndBuildsChunks(t *testing.T) {
 func TestDiscover_LegacyMissingDirectoryAndCancellation(t *testing.T) {
 	root := t.TempDir()
 
-	definitions, err := DiscoverResources(content.NewContentProvider(root), "acdc")
+	definitions, err := DiscoverResources(slog.New(slog.DiscardHandler), content.NewContentProvider(root), "acdc")
 	require.NoError(t, err)
 	require.Empty(t, definitions)
 
@@ -174,7 +174,7 @@ func TestDiscover_LegacyMissingDirectoryAndCancellation(t *testing.T) {
 	require.NoError(t, os.MkdirAll(resourcesDir, 0o755))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = Discover(ctx, content.NewContentProvider(root), nil, "acdc")
+	_, err = Discover(ctx, slog.New(slog.DiscardHandler), content.NewContentProvider(root), nil, "acdc")
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -184,11 +184,11 @@ func TestDiscover_LegacyIgnoresLenientOption(t *testing.T) {
 	writeFile(t, resourcesDir, "valid.md", "---\nname: Valid\ndescription: Valid description\n---\n# Valid\n\nBody.\n")
 	writeFile(t, resourcesDir, "no-frontmatter.md", "# No Frontmatter\n\nBody.\n")
 
-	strict, err := Discover(context.Background(), content.NewContentProvider(root), nil, "acdc")
+	strict, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), nil, "acdc")
 	require.NoError(t, err)
 	require.Equal(t, []string{"acdc://valid"}, sourceURIs(strict.Sources))
 
-	lenient, err := Discover(context.Background(), content.NewContentProvider(root), nil, "acdc", WithLenientIndex())
+	lenient, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), nil, "acdc", WithLenientIndex())
 	require.NoError(t, err)
 
 	require.Equal(t, strict, lenient)
@@ -203,14 +203,14 @@ func TestDiscoverResources_FailsForUnresolvableLegacyRoot(t *testing.T) {
 	require.NoError(t, os.MkdirAll(cp.ConfigDir, 0o755))
 	require.NoError(t, os.Symlink(cp.ResourcesDir, cp.ResourcesDir))
 
-	_, err := DiscoverResources(content.NewContentProvider(root), "acdc")
+	_, err := DiscoverResources(slog.New(slog.DiscardHandler), content.NewContentProvider(root), "acdc")
 	require.ErrorContains(t, err, "resolve resources root")
 }
 
 func TestDiscover_LenientZeroMatchesReturnsEmptyResult(t *testing.T) {
 	root := t.TempDir()
 
-	result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+	result, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 		Include: []string{"docs/**/*.md"},
 	}, "acdc", WithLenientIndex())
 	require.NoError(t, err)
@@ -223,7 +223,7 @@ func TestDiscover_LenientSkipsUnparsableFilesButIndexesSiblings(t *testing.T) {
 	writeFile(t, root, "docs/good.md", "# Good\n\nBody.\n")
 	writeFile(t, root, "docs/bad.md", "---\nname: [\n---\n# Bad\n")
 
-	result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+	result, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 		Include: []string{"docs/*.md"},
 	}, "acdc", WithLenientIndex())
 	require.NoError(t, err)
@@ -241,7 +241,7 @@ func TestDiscover_LenientSkipsUnaddressableURIButIndexesSiblings(t *testing.T) {
 	_, statErr := os.Stat(badPath)
 	require.NoError(t, statErr, "fixture file with a control character in its name must exist")
 
-	result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+	result, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 		Include: []string{"docs/*.md"},
 	}, "acdc", WithLenientIndex())
 	require.NoError(t, err)
@@ -259,7 +259,7 @@ func TestDiscover_LegacySkipsUnaddressableURI(t *testing.T) {
 	_, statErr := os.Stat(badPath)
 	require.NoError(t, statErr, "fixture file with a control character in its name must exist")
 
-	result, err := Discover(context.Background(), content.NewContentProvider(root), nil, "acdc")
+	result, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), nil, "acdc")
 	require.NoError(t, err)
 	require.Equal(t, []string{"acdc://valid"}, sourceURIs(result.Sources))
 }
@@ -267,7 +267,7 @@ func TestDiscover_LegacySkipsUnaddressableURI(t *testing.T) {
 func TestDiscover_LenientStillRejectsRootEscapingPatterns(t *testing.T) {
 	root := t.TempDir()
 
-	_, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+	_, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 		Include: []string{"../docs/*.md"},
 	}, "acdc", WithLenientIndex())
 	require.ErrorContains(t, err, "index pattern escapes content root")
@@ -279,7 +279,7 @@ func TestDiscover_PrunesGitDirectoryUnderBothPolicies(t *testing.T) {
 	writeFile(t, root, "docs/guide.md", "# Guide\n")
 
 	for _, opts := range [][]DiscoverOption{nil, {WithLenientIndex()}} {
-		result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		result, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 			Include: []string{"**/*.md"},
 		}, "acdc", opts...)
 		require.NoError(t, err)
@@ -292,13 +292,13 @@ func TestDiscover_PrunesBuildArtifactDirectoriesOnlyWhenLenient(t *testing.T) {
 	writeFile(t, root, "node_modules/x.md", "# Vendored\n")
 	writeFile(t, root, "docs/guide.md", "# Guide\n")
 
-	strict, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+	strict, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 		Include: []string{"**/*.md"},
 	}, "acdc")
 	require.NoError(t, err)
 	require.Equal(t, []string{"acdc://docs/guide", "acdc://node_modules/x"}, sourceURIs(strict.Sources))
 
-	lenient, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+	lenient, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 		Include: []string{"**/*.md"},
 	}, "acdc", WithLenientIndex())
 	require.NoError(t, err)
@@ -310,13 +310,13 @@ func TestDiscover_PrunesNestedBuildArtifactDirectoriesOnlyWhenLenient(t *testing
 	writeFile(t, root, "docs/build/generated.md", "# Generated\n")
 	writeFile(t, root, "docs/guide.md", "# Guide\n")
 
-	strict, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+	strict, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 		Include: []string{"**/*.md"},
 	}, "acdc")
 	require.NoError(t, err)
 	require.Equal(t, []string{"acdc://docs/build/generated", "acdc://docs/guide"}, sourceURIs(strict.Sources))
 
-	lenient, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+	lenient, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 		Include: []string{"**/*.md"},
 	}, "acdc", WithLenientIndex())
 	require.NoError(t, err)
@@ -329,7 +329,7 @@ func TestDiscover_DoesNotPruneContentRootItself(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(buildRoot, "docs"), 0o755))
 	writeFile(t, buildRoot, "docs/guide.md", "# Guide\n")
 
-	result, err := Discover(context.Background(), content.NewContentProvider(buildRoot), &domain.IndexMetadata{
+	result, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(buildRoot), &domain.IndexMetadata{
 		Include: []string{"docs/**/*.md"},
 	}, "acdc", WithLenientIndex())
 	require.NoError(t, err)
@@ -383,7 +383,7 @@ func TestDiscover_DescendsOnlyDirectoriesIncludePatternsCanReach(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var descended []string
-			result, err := discoverWithOps(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+			result, err := discoverWithOps(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 				Include: tt.include,
 			}, "acdc", recordingDiscoveryOps(&descended))
 			require.NoError(t, err)
@@ -399,7 +399,7 @@ func TestDiscover_DescendsTheAncestorsOfANestedPatternBase(t *testing.T) {
 	writeFile(t, root, "a/c/other.md", "# Other\n")
 
 	var descended []string
-	result, err := discoverWithOps(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+	result, err := discoverWithOps(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 		Include: []string{"a/b/*.md"},
 	}, "acdc", recordingDiscoveryOps(&descended))
 	require.NoError(t, err)
@@ -413,7 +413,7 @@ func TestDiscover_PrunesArtifactDirectoriesInsidePatternAdmittedSubtrees(t *test
 	writeFile(t, root, "docs/build/generated.md", "# Generated\n")
 
 	var descended []string
-	result, err := discoverWithOps(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+	result, err := discoverWithOps(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 		Include: []string{"docs/**/*.md"},
 	}, "acdc", recordingDiscoveryOps(&descended), WithLenientIndex())
 	require.NoError(t, err)
@@ -499,7 +499,7 @@ func TestDiscover_BoundedTraversalPreservesSelection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+			result, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 				Include: tt.include,
 				Exclude: tt.exclude,
 			}, "acdc", tt.opts...)
@@ -550,7 +550,7 @@ func TestDiscover_PatternsAnchorToContentRootNotConfigDir(t *testing.T) {
 	cp := content.NewContentProvider(root)
 	index := &domain.IndexMetadata{Include: []string{"docs/**/*.md"}}
 
-	result, err := Discover(context.Background(), cp, index, "acdc")
+	result, err := Discover(context.Background(), slog.New(slog.DiscardHandler), cp, index, "acdc")
 	require.NoError(t, err)
 
 	var paths []string
@@ -611,13 +611,9 @@ func TestSortSelectedFiles_OrdersByNativePathNotSlashForm(t *testing.T) {
 	}
 }
 
-func captureDiscoveryLogs(t *testing.T) *bytes.Buffer {
-	t.Helper()
+func captureDiscoveryLogs() (*slog.Logger, *bytes.Buffer) {
 	var buffer bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buffer, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(previous) })
-	return &buffer
+	return slog.New(slog.NewTextHandler(&buffer, &slog.HandlerOptions{Level: slog.LevelDebug})), &buffer
 }
 
 // TestDiscover_SkipsUnparsableFileUnderDeclaredIndex pins the contract change:
@@ -629,7 +625,7 @@ func TestDiscover_SkipsUnparsableFileUnderDeclaredIndex(t *testing.T) {
 	writeFile(t, root, "docs/good.md", "# Good\n\nBody.\n")
 	writeFile(t, root, "docs/nested/bad.md", "---\ndescription: A series: what shipped\n---\n# Bad\n")
 
-	result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+	result, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 		Include: []string{"docs/**/*.md"},
 	}, "acdc")
 	require.NoError(t, err)
@@ -645,8 +641,8 @@ func TestDiscover_SkipLogIdentifiesFileByRelativePath(t *testing.T) {
 	writeFile(t, root, "docs/nested/bad.md", "---\ndescription: A series: what shipped\n---\n# Bad\n")
 	writeFile(t, root, "docs/good.md", "# Good\n\nBody.\n")
 
-	logs := captureDiscoveryLogs(t)
-	_, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+	logger, logs := captureDiscoveryLogs()
+	_, err := Discover(context.Background(), logger, content.NewContentProvider(root), &domain.IndexMetadata{
 		Include: []string{"docs/**/*.md"},
 	}, "acdc")
 	require.NoError(t, err)
@@ -675,7 +671,7 @@ func TestDiscover_SkipsUnreadableFileUnderDeclaredIndex(t *testing.T) {
 		return os.ReadFile(path)
 	}
 
-	result, err := discoverWithOps(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+	result, err := discoverWithOps(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 		Include: []string{"docs/*.md"},
 	}, "acdc", ops)
 	require.NoError(t, err)
@@ -692,7 +688,7 @@ func TestDiscover_SkipsUnaddressableFileUnderDeclaredIndex(t *testing.T) {
 	_, statErr := os.Stat(badPath)
 	require.NoError(t, statErr, "fixture file with a control character in its name must exist")
 
-	result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+	result, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 		Include: []string{"docs/*.md"},
 	}, "acdc")
 	require.NoError(t, err)
@@ -707,7 +703,7 @@ func TestDiscover_ConfiguredStillFailsOnConfigurationErrors(t *testing.T) {
 		root := t.TempDir()
 		writeFile(t, root, "docs/readme.txt", "not markdown")
 
-		_, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		_, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 			Include: []string{"docs/**"},
 		}, "acdc")
 		require.ErrorContains(t, err, "configured index selected non-Markdown file")
@@ -717,7 +713,7 @@ func TestDiscover_ConfiguredStillFailsOnConfigurationErrors(t *testing.T) {
 		root := t.TempDir()
 		writeFile(t, root, "docs/guide.md", "# Guide\n")
 
-		_, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+		_, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 			Include: []string{"handbook/**/*.md"},
 		}, "acdc")
 		require.ErrorContains(t, err, "configured index matched no files")
@@ -733,7 +729,7 @@ func TestDiscover_AllSelectedFilesUnparsableYieldsEmptyCatalog(t *testing.T) {
 	writeFile(t, root, "docs/one.md", "---\ndescription: A series: what shipped\n---\n# One\n")
 	writeFile(t, root, "docs/two.md", "---\nname: [\n---\n# Two\n")
 
-	result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+	result, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{
 		Include: []string{"docs/*.md"},
 	}, "acdc")
 	require.NoError(t, err)
@@ -751,8 +747,8 @@ func TestDiscover_ConfiguredSkipsDocumentWhoseURIIsAlreadyClaimed(t *testing.T) 
 	writeFile(t, root, "docs/guide.md", "# Guide\n\n## Setup\n\nMarkdown extension.\n")
 	writeFile(t, root, "docs/guide.markdown", "# Guide\n\n## Setup\n\nMarkdown extension, longer form.\n")
 
-	logs := captureDiscoveryLogs(t)
-	result, err := Discover(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{
+	logger, logs := captureDiscoveryLogs()
+	result, err := Discover(context.Background(), logger, content.NewContentProvider(root), &domain.IndexMetadata{
 		Include: []string{"docs/*"},
 	}, "acdc")
 	require.NoError(t, err)
@@ -779,7 +775,7 @@ func TestDiscover_LegacySkipsDocumentWhoseURIIsAlreadyClaimed(t *testing.T) {
 	writeFile(t, resourcesDir, "guide.md", "---\nname: Guide\ndescription: Short form.\n---\n# Guide\n\nBody.\n")
 	writeFile(t, resourcesDir, "guide.markdown", "---\nname: Guide\ndescription: Long form.\n---\n# Guide\n\nBody.\n")
 
-	result, err := Discover(context.Background(), content.NewContentProvider(root), nil, "acdc")
+	result, err := Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), nil, "acdc")
 	require.NoError(t, err)
 	require.Equal(t, []string{"acdc://guide"}, sourceURIs(result.Sources))
 }

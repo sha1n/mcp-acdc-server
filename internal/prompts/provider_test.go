@@ -1,6 +1,7 @@
 package prompts
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,7 +29,7 @@ Hello {{.arg1}}`
 		assert.NoError(t, err)
 
 		cp := content.NewContentProvider(tempDir)
-		defs, err := DiscoverPrompts(cp)
+		defs, err := DiscoverPrompts(slog.New(slog.DiscardHandler), cp)
 		assert.NoError(t, err)
 		assert.Len(t, defs, 1)
 		assert.Equal(t, "test-prompt", defs[0].Name)
@@ -48,7 +49,7 @@ Hello {{.unclosed`
 		assert.NoError(t, err)
 
 		cp := content.NewContentProvider(tempDir)
-		defs, err := DiscoverPrompts(cp)
+		defs, err := DiscoverPrompts(slog.New(slog.DiscardHandler), cp)
 		assert.NoError(t, err)
 		assert.Empty(t, defs)
 	})
@@ -56,7 +57,7 @@ Hello {{.unclosed`
 	t.Run("ResilientWalking", func(t *testing.T) {
 		tempDir := t.TempDir()
 		cp := content.NewContentProvider(tempDir)
-		_, err := DiscoverPrompts(cp)
+		_, err := DiscoverPrompts(slog.New(slog.DiscardHandler), cp)
 		assert.NoError(t, err)
 	})
 
@@ -70,7 +71,7 @@ Hello {{.unclosed`
 		_ = os.WriteFile(filepath.Join(promptsDir, "ignore.txt"), []byte("ignore"), 0644)
 
 		cp := content.NewContentProvider(tempDir)
-		defs, err := DiscoverPrompts(cp)
+		defs, err := DiscoverPrompts(slog.New(slog.DiscardHandler), cp)
 		assert.NoError(t, err)
 		assert.Len(t, defs, 1)
 		assert.Equal(t, "sub", defs[0].Name)
@@ -86,7 +87,7 @@ Hello {{.unclosed`
 		_ = os.WriteFile(filepath.Join(promptsDir, "no_desc.md"), []byte("---\nname: n\n---\nHello"), 0644)
 
 		cp := content.NewContentProvider(tempDir)
-		defs, err := DiscoverPrompts(cp)
+		defs, err := DiscoverPrompts(slog.New(slog.DiscardHandler), cp)
 		assert.NoError(t, err)
 		assert.Empty(t, defs)
 	})
@@ -105,7 +106,7 @@ Hello {{.unclosed`
 		_ = os.WriteFile(filepath.Join(promptsDir, "bad_args4.md"), []byte("---\nname: n4\ndescription: d4\narguments:\n  - name: a4\n    required: false\n---\nHello"), 0644)
 
 		cp := content.NewContentProvider(tempDir)
-		defs, err := DiscoverPrompts(cp)
+		defs, err := DiscoverPrompts(slog.New(slog.DiscardHandler), cp)
 		assert.NoError(t, err)
 		assert.Len(t, defs, 4)
 
@@ -137,7 +138,7 @@ Hello`
 		_ = os.WriteFile(filepath.Join(promptsDir, "defaults.md"), []byte(mdContent), 0644)
 
 		cp := content.NewContentProvider(tempDir)
-		defs, err := DiscoverPrompts(cp)
+		defs, err := DiscoverPrompts(slog.New(slog.DiscardHandler), cp)
 		assert.NoError(t, err)
 		assert.Len(t, defs, 1)
 		assert.Equal(t, []PromptArgument{
@@ -156,7 +157,7 @@ Hello`
 		_ = os.WriteFile(filepath.Join(promptsDir, "invalid_fm.md"), []byte("---\n: broken\n---\nHello"), 0644)
 
 		cp := content.NewContentProvider(tempDir)
-		defs, err := DiscoverPrompts(cp)
+		defs, err := DiscoverPrompts(slog.New(slog.DiscardHandler), cp)
 		assert.NoError(t, err)
 		assert.Empty(t, defs)
 	})
@@ -172,7 +173,7 @@ Hello`
 		defer func() { _ = os.Chmod(subDir, 0755) }() // cleanup so TempDir can delete it
 
 		cp := content.NewContentProvider(tempDir)
-		_, err := DiscoverPrompts(cp)
+		_, err := DiscoverPrompts(slog.New(slog.DiscardHandler), cp)
 		assert.NoError(t, err) // Should continue walking and not return error
 	})
 
@@ -186,7 +187,7 @@ Hello`
 		defer func() { _ = os.Chmod(filepath.Join(tempDir, "unreadable_dir"), 0755) }()
 
 		cp.PromptsDir = badPath
-		_, err := DiscoverPrompts(cp)
+		_, err := DiscoverPrompts(slog.New(slog.DiscardHandler), cp)
 		assert.Error(t, err)
 	})
 }
@@ -200,7 +201,7 @@ func TestPromptProvider_GetPrompt(t *testing.T) {
 	t.Run("Success", func(t *testing.T) {
 		md := "---\nname: test\ndescription: d\n---\nHello {{.name}}"
 		_ = os.WriteFile(filepath.Join(promptsDir, "s.md"), []byte(md), 0644)
-		defs, _ := DiscoverPrompts(cp)
+		defs, _ := DiscoverPrompts(slog.New(slog.DiscardHandler), cp)
 		p := NewPromptProvider(defs, cp)
 
 		messages, err := p.GetPrompt("test", map[string]string{"name": "World"})
@@ -219,7 +220,7 @@ arguments:
 ---
 Hello`
 		_ = os.WriteFile(filepath.Join(promptsDir, "req.md"), []byte(md), 0644)
-		defs, _ := DiscoverPrompts(cp)
+		defs, _ := DiscoverPrompts(slog.New(slog.DiscardHandler), cp)
 		p := NewPromptProvider(defs, cp)
 
 		_, err := p.GetPrompt("req", map[string]string{})
@@ -237,7 +238,7 @@ arguments:
 ---
 Hello`
 		_ = os.WriteFile(filepath.Join(promptsDir, "req_empty.md"), []byte(md), 0644)
-		defs, _ := DiscoverPrompts(cp)
+		defs, _ := DiscoverPrompts(slog.New(slog.DiscardHandler), cp)
 		p := NewPromptProvider(defs, cp)
 
 		_, err := p.GetPrompt("req-empty", map[string]string{"arg1": ""})
@@ -248,7 +249,7 @@ Hello`
 	t.Run("OptionalArgumentMissing", func(t *testing.T) {
 		md := "---\nname: optional-arg\ndescription: d\n---\nHello {{.missing}}"
 		_ = os.WriteFile(filepath.Join(promptsDir, "opt.md"), []byte(md), 0644)
-		defs, _ := DiscoverPrompts(cp)
+		defs, _ := DiscoverPrompts(slog.New(slog.DiscardHandler), cp)
 		p := NewPromptProvider(defs, cp)
 
 		messages, err := p.GetPrompt("optional-arg", map[string]string{})

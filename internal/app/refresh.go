@@ -29,6 +29,8 @@ const refreshInterval = 2 * time.Second
 type catalogRefresher struct {
 	mu sync.Mutex
 
+	logger *slog.Logger
+
 	holder    *resources.CatalogHolder
 	searcher  search.Searcher
 	registrar *mcp.ResourceRegistrar
@@ -98,7 +100,7 @@ func (r *catalogRefresher) revalidateNow(ctx context.Context) {
 func (r *catalogRefresher) revalidateLocked(ctx context.Context) {
 	walkDigest, err := r.fingerprint(ctx)
 	if err != nil {
-		slog.Warn("Catalog refresh failed to fingerprint content root, retrying next interval", "error", err)
+		r.logger.Warn("Catalog refresh failed to fingerprint content root, retrying next interval", "error", err)
 		return
 	}
 	if walkDigest == r.walkDigest {
@@ -113,7 +115,7 @@ func (r *catalogRefresher) revalidateLocked(ctx context.Context) {
 	// walk retries from scratch.
 	discovery, err := r.discover(ctx)
 	if err != nil {
-		slog.Warn("Catalog refresh discovery failed, retrying next interval", "error", err)
+		r.logger.Warn("Catalog refresh discovery failed, retrying next interval", "error", err)
 		return
 	}
 
@@ -129,11 +131,11 @@ func (r *catalogRefresher) revalidateLocked(ctx context.Context) {
 
 	provider, err := r.assemble(discovery)
 	if err != nil {
-		slog.Warn("Catalog refresh failed to assemble resource provider, retrying next interval", "error", err)
+		r.logger.Warn("Catalog refresh failed to assemble resource provider, retrying next interval", "error", err)
 		return
 	}
 	if err := r.reindex(ctx, provider); err != nil {
-		slog.Warn("Catalog refresh failed to reindex content, retrying next interval", "error", err)
+		r.logger.Warn("Catalog refresh failed to reindex content, retrying next interval", "error", err)
 		return
 	}
 
@@ -153,7 +155,7 @@ func (r *catalogRefresher) revalidateLocked(ctx context.Context) {
 
 	r.walkDigest = walkDigest
 	r.contentDigest = newContentDigest
-	slog.Info("Catalog refresh republished catalog", "sources", len(discovery.Sources))
+	r.logger.Info("Catalog refresh republished catalog", "sources", len(discovery.Sources))
 }
 
 // computeContentDigest digests the selected source set's content fingerprints

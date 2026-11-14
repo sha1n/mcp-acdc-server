@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -36,7 +37,7 @@ func TestCreateServer(t *testing.T) {
 	promptProvider := prompts.NewPromptProvider([]prompts.PromptDefinition{}, nil)
 	searchService := &mockSearcher{}
 
-	server, registrar := CreateServer(metadata, resourceProvider, promptProvider, searchService, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences}, nil)
+	server, registrar := CreateServer(slog.New(slog.DiscardHandler), metadata, resourceProvider, promptProvider, searchService, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences}, nil)
 	if server == nil {
 		t.Fatal("Server should not be nil")
 	}
@@ -67,7 +68,7 @@ func TestCreateServer_InstructionsReachClient(t *testing.T) {
 	require.NoError(t, err)
 	promptProvider := prompts.NewPromptProvider([]prompts.PromptDefinition{}, nil)
 
-	server, _ := CreateServer(metadata, resourceProvider, promptProvider, &mockSearcher{}, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences}, nil)
+	server, _ := CreateServer(slog.New(slog.DiscardHandler), metadata, resourceProvider, promptProvider, &mockSearcher{}, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences}, nil)
 	require.NotNil(t, server)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -105,7 +106,7 @@ func TestCreateServer_EmptyInstructionsDoesNotBreakCreation(t *testing.T) {
 	require.NoError(t, err)
 	promptProvider := prompts.NewPromptProvider([]prompts.PromptDefinition{}, nil)
 
-	server, _ := CreateServer(metadata, resourceProvider, promptProvider, &mockSearcher{}, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences}, nil)
+	server, _ := CreateServer(slog.New(slog.DiscardHandler), metadata, resourceProvider, promptProvider, &mockSearcher{}, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences}, nil)
 	require.NotNil(t, server)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

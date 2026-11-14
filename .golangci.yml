@@ -3,9 +3,17 @@ version: "2"
 linters:
   default: standard
   enable:
+    - forbidigo
     - gocognit
     - gocyclo
+    - sloglint
   settings:
+    forbidigo:
+      forbid:
+        - pattern: ^slog\.(Default|SetDefault)$
+          msg: pass an explicit *slog.Logger instead of the process-wide default
+    sloglint:
+      no-global: all
     # min-complexity is the highest value that still passes, not the value at
     # which reporting starts.
     gocognit:
@@ -22,6 +30,10 @@ linters:
         linters:
           - gocognit
           - gocyclo
+      # Tests read slog.Default to prove production code leaves it unchanged.
+      - path: _test\.go
+        linters:
+          - forbidigo
 
 issues:
   # Report every metric a function violates in one run. With the default, an

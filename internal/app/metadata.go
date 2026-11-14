@@ -35,7 +35,7 @@ type resolvedMetadata struct {
 // fs.ErrNotExist, which would otherwise be misread as "no manifest" and
 // silently defaulted, only to fail one step later during content root
 // resolution with no mention of the actual misconfiguration.
-func resolveMetadata(cp *content.ContentProvider, version string) (resolvedMetadata, error) {
+func resolveMetadata(logger *slog.Logger, cp *content.ContentProvider, version string) (resolvedMetadata, error) {
 	if info, statErr := os.Stat(cp.ContentDir); statErr != nil || !info.IsDir() {
 		return resolvedMetadata{}, fmt.Errorf("failed to resolve content directory %s: not found or not a directory", cp.ContentDir)
 	}
@@ -46,7 +46,7 @@ func resolveMetadata(cp *content.ContentProvider, version string) (resolvedMetad
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			metadata := domain.DefaultMetadata(repoBaseName(cp.ContentDir), resolveVersion(version))
-			slog.Info(".acdc/config.yaml not found, using built-in defaults",
+			logger.Info(".acdc/config.yaml not found, using built-in defaults",
 				"server_name", metadata.Server.Name,
 				"index_include", metadata.Index.Include,
 			)

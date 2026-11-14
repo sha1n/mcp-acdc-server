@@ -100,13 +100,13 @@ func shouldPruneDir(name string, lenient bool) bool {
 // index is nil. A selected file that cannot be read, parsed or addressed is
 // always skipped with a warning; an empty selection fails discovery unless
 // WithLenientIndex is passed.
-func Discover(ctx context.Context, cp *content.ContentProvider, index *domain.IndexMetadata, scheme string, opts ...DiscoverOption) (DiscoveryResult, error) {
-	return discoverWithOps(ctx, cp, index, scheme, defaultDiscoveryOps(), opts...)
+func Discover(ctx context.Context, logger *slog.Logger, cp *content.ContentProvider, index *domain.IndexMetadata, scheme string, opts ...DiscoverOption) (DiscoveryResult, error) {
+	return discoverWithOps(ctx, logger, cp, index, scheme, defaultDiscoveryOps(), opts...)
 }
 
-func discoverWithOps(ctx context.Context, cp *content.ContentProvider, index *domain.IndexMetadata, scheme string, ops discoveryOps, opts ...DiscoverOption) (DiscoveryResult, error) {
+func discoverWithOps(ctx context.Context, logger *slog.Logger, cp *content.ContentProvider, index *domain.IndexMetadata, scheme string, ops discoveryOps, opts ...DiscoverOption) (DiscoveryResult, error) {
 	if index == nil {
-		return discoverLegacy(ctx, cp, scheme, ops)
+		return discoverLegacy(ctx, logger, cp, scheme, ops)
 	}
 	policy := resolvePolicy(opts)
 
@@ -116,7 +116,7 @@ func discoverWithOps(ctx context.Context, cp *content.ContentProvider, index *do
 	}
 	if len(selected) == 0 {
 		if policy.lenient {
-			slog.Warn("Configured index matched no files", "root", root)
+			logger.Warn("Configured index matched no files", "root", root)
 			return DiscoveryResult{}, nil
 		}
 		return DiscoveryResult{}, fmt.Errorf("configured index matched no files")
@@ -126,7 +126,7 @@ func discoverWithOps(ctx context.Context, cp *content.ContentProvider, index *do
 	for i, file := range selected {
 		paths[i] = file.path
 	}
-	return buildCatalog(ctx, root, paths, scheme, ops)
+	return buildCatalog(ctx, logger, root, paths, scheme, ops)
 }
 
 // selectedFile is a member of the file set a Discover call would select,
@@ -269,15 +269,15 @@ func (s *configuredSelector) visitFile(filePath string, entry fs.DirEntry) error
 
 // DiscoverResources returns legacy .acdc/resources definitions for callers that
 // only need source metadata.
-func DiscoverResources(cp *content.ContentProvider, scheme string) ([]ResourceDefinition, error) {
-	result, err := Discover(context.Background(), cp, nil, scheme)
+func DiscoverResources(logger *slog.Logger, cp *content.ContentProvider, scheme string) ([]ResourceDefinition, error) {
+	result, err := Discover(context.Background(), logger, cp, nil, scheme)
 	if err != nil {
 		return nil, err
 	}
 	return result.Sources, nil
 }
 
-func discoverLegacy(ctx context.Context, cp *content.ContentProvider, scheme string, ops discoveryOps) (DiscoveryResult, error) {
+func discoverLegacy(ctx context.Context, logger *slog.Logger, cp *content.ContentProvider, scheme string, ops discoveryOps) (DiscoveryResult, error) {
 	_, files, err := selectLegacyFiles(ctx, cp, ops)
 	if err != nil {
 		return DiscoveryResult{}, err
@@ -291,26 +291,26 @@ func discoverLegacy(ctx context.Context, cp *content.ContentProvider, scheme str
 		}
 		raw, err := ops.readFile(file.path)
 		if err != nil {
-			skipSelectedFile("Skipping invalid resource file", file.relativePath, err)
+			skipSelectedFile(logger, "Skipping invalid resource file", file.relativePath, err)
 			continue
 		}
 		parsed, err := content.ParseMarkdown(raw, content.FrontmatterRequired)
 		if err != nil {
-			skipSelectedFile("Skipping invalid resource file", file.relativePath, err)
+			skipSelectedFile(logger, "Skipping invalid resource file", file.relativePath, err)
 			continue
 		}
 		name, _ := parsed.Metadata["name"].(string)
 		description, _ := parsed.Metadata["description"].(string)
 		if name == "" || description == "" {
-			slog.Warn("Skipping resource with missing metadata", "file", file.relativePath)
+			logger.Warn("Skipping resource with missing metadata", "file", file.relativePath)
 			continue
 		}
 		uri := sourceURI(scheme, file.relativePath)
 		if _, err := url.Parse(uri); err != nil {
-			skipSelectedFile("Skipping invalid resource file", file.relativePath, err)
+			skipSelectedFile(logger, "Skipping invalid resource file", file.relativePath, err)
 			continue
 		}
-		if !claimSourceURI(claimed, uri, file.relativePath) {
+		if !claimSourceURI(logger, claimed, uri, file.relativePath) {
 			continue
 		}
 		source := buildParsedSource(parsed, content.SourceOptions{
@@ -319,7 +319,7 @@ func discoverLegacy(ctx context.Context, cp *content.ContentProvider, scheme str
 		chunks := chunkParsedSource(source, parsed)
 		result.Sources = append(result.Sources, source)
 		result.Chunks = append(result.Chunks, chunks...)
-		slog.Info("Loaded resource", "uri", uri, "name", source.Name)
+		logger.Info("Loaded resource", "uri", uri, "name", source.Name)
 	}
 	return result, nil
 }
@@ -387,7 +387,7 @@ func sortSelectedFiles(files []selectedFile) {
 	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
 }
 
-func buildCatalog(ctx context.Context, root string, files []string, scheme string, ops discoveryOps) (DiscoveryResult, error) {
+func buildCatalog(ctx context.Context, logger *slog.Logger, root string, files []string, scheme string, ops discoveryOps) (DiscoveryResult, error) {
 	result := DiscoveryResult{}
 	claimed := make(map[string]string, len(files))
 	skipped := 0
@@ -414,23 +414,23 @@ func buildCatalog(ctx context.Context, root string, files []string, scheme strin
 		// serving its last-known-good snapshot until the file was repaired.
 		raw, err := ops.readFile(filePath)
 		if err != nil {
-			skipSelectedFile("Skipping unreadable configured file", relativePath, err)
+			skipSelectedFile(logger, "Skipping unreadable configured file", relativePath, err)
 			skipped++
 			continue
 		}
 		parsed, err := content.ParseMarkdown(raw, content.FrontmatterOptional)
 		if err != nil {
-			skipSelectedFile("Skipping invalid configured file", relativePath, err)
+			skipSelectedFile(logger, "Skipping invalid configured file", relativePath, err)
 			skipped++
 			continue
 		}
 		uri := sourceURI(scheme, relativePath)
 		if _, err := url.Parse(uri); err != nil {
-			skipSelectedFile("Skipping unaddressable configured file", relativePath, err)
+			skipSelectedFile(logger, "Skipping unaddressable configured file", relativePath, err)
 			skipped++
 			continue
 		}
-		if !claimSourceURI(claimed, uri, relativePath) {
+		if !claimSourceURI(logger, claimed, uri, relativePath) {
 			skipped++
 			continue
 		}
@@ -442,20 +442,20 @@ func buildCatalog(ctx context.Context, root string, files []string, scheme strin
 		result.Chunks = append(result.Chunks, chunks...)
 	}
 	if skipped > 0 {
-		slog.Warn("Skipped configured files that could not be indexed",
+		logger.Warn("Skipped configured files that could not be indexed",
 			"skipped", skipped, "indexed", len(result.Sources), "root", root)
 	}
 	return result, nil
 }
 
-func skipSelectedFile(reason, relativePath string, err error) {
+func skipSelectedFile(logger *slog.Logger, reason, relativePath string, err error) {
 	// Named relative to the root the discovery mode walked, never by base
 	// name: a large corpus holds many identically named files, and the
 	// operator needs to know which one to repair.
-	slog.Warn(reason, "file", relativePath, "error", err)
+	logger.Warn(reason, "file", relativePath, "error", err)
 }
 
-func claimSourceURI(claimed map[string]string, uri, relativePath string) bool {
+func claimSourceURI(logger *slog.Logger, claimed map[string]string, uri, relativePath string) bool {
 	// Both discovery modes present files in sorted canonical-path order, so
 	// the document that claims a URI first is the same one on every run: the
 	// document dropped here is stable across restarts, not arbitrary.
@@ -463,7 +463,7 @@ func claimSourceURI(claimed map[string]string, uri, relativePath string) bool {
 	// rejects a duplicate URI outright and would otherwise take the whole
 	// catalog down over two files that merely share a name.
 	if owner, taken := claimed[uri]; taken {
-		slog.Warn("Skipping document whose resource URI is already claimed",
+		logger.Warn("Skipping document whose resource URI is already claimed",
 			"file", relativePath, "uri", uri, "claimed_by", owner)
 		return false
 	}
