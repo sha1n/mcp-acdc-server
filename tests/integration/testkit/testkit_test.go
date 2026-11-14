@@ -196,6 +196,23 @@ func TestACDCService_StartExit(t *testing.T) {
 	}
 }
 
+func TestACDCService_StartCleanExit(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	app.RegisterFlags(flags)
+	// No listener can ever accept on port 0, so the readiness probe cannot succeed.
+	require.NoError(t, flags.Set("port", "0"))
+
+	service := NewACDCService("clean-exit", flags)
+	acdc := service.(*acdcService)
+	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error {
+		return nil
+	}
+
+	_, err := service.Start()
+
+	require.EqualError(t, err, "server exited unexpectedly without an error before it started serving")
+}
+
 func TestACDCService_StdioStartFailureClosesThePipesWithTheStartupError(t *testing.T) {
 	flags := NewTestFlags(t, t.TempDir(), &FlagOptions{Transport: "stdio"})
 
