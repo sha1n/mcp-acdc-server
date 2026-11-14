@@ -136,7 +136,7 @@ func TestEnsureEndpointDir_RejectsANonAbsoluteDir(t *testing.T) {
 		t.Run(fmt.Sprintf("%q", dir), func(t *testing.T) {
 			cwd := chdirToEmptyDir(t)
 
-			err := EnsureEndpointDir(dir)
+			_, err := OpenEndpoint(dir)
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), fmt.Sprintf("endpoint directory %q is not an absolute path", dir))

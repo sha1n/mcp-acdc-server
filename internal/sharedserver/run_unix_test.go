@@ -43,7 +43,7 @@ func buildSpy(err error) (BuildFunc, *bool) {
 
 func assertLockReleased(t *testing.T, dir string) {
 	t.Helper()
-	lock := flock.New(LockPath(dir, testIdentity))
+	lock := flock.New(lockFileIn(dir))
 	locked, err := lock.TryLock()
 	require.NoError(t, err)
 	assert.True(t, locked, "the lock must be released when Run returns")
@@ -93,7 +93,7 @@ func TestRun_EndpointDirCheckFailureStopsBeforeTheLock(t *testing.T) {
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), strings.ReplaceAll(tt.wantErr, "{dir}", dir))
-			assert.NoFileExists(t, LockPath(dir, testIdentity))
+			assert.NoFileExists(t, lockFileIn(dir))
 			assert.False(t, *built)
 		})
 	}
@@ -106,13 +106,13 @@ func TestRun_RejectsAnOverLongSocketPathBeforeTheLock(t *testing.T) {
 	err := Run(context.Background(), Config{Identity: testIdentity, EndpointDir: dir, Build: build})
 
 	require.ErrorIs(t, err, ErrSocketPathTooLong)
-	assert.NoFileExists(t, LockPath(dir, testIdentity), "the lock must not be taken for an unusable socket path")
+	assert.NoFileExists(t, lockFileIn(dir), "the lock must not be taken for an unusable socket path")
 	assert.False(t, *built)
 }
 
 func TestRun_LockIOErrorIsReportedAsLockNotAcquired(t *testing.T) {
 	dir := shortTempDir(t)
-	require.NoError(t, os.Symlink(filepath.Join(dir, "missing", "lock"), LockPath(dir, testIdentity)))
+	require.NoError(t, os.Symlink(filepath.Join(dir, "missing", "lock"), lockFileIn(dir)))
 	build, built := buildSpy(nil)
 
 	err := Run(context.Background(), Config{Identity: testIdentity, EndpointDir: dir, Build: build})

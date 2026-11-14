@@ -131,15 +131,18 @@ func TestCheckSocketPathLength_PlatformLimits(t *testing.T) {
 }
 
 func TestSocketPath_NamesTheSocketAfterTheIdentity(t *testing.T) {
-	path, err := SocketPath("/tmp/ep", testIdentity)
+	endpoint := Endpoint{dir: "/tmp/ep"}
+	path, err := endpoint.SocketPath(testIdentity)
+	require.NoError(t, err)
+	lockPath, err := endpoint.LockPath(testIdentity)
 	require.NoError(t, err)
 
 	assert.Equal(t, filepath.Join("/tmp/ep", testIdentity+".sock"), path)
-	assert.Equal(t, filepath.Join("/tmp/ep", testIdentity+".lock"), LockPath("/tmp/ep", testIdentity))
+	assert.Equal(t, filepath.Join("/tmp/ep", testIdentity+".lock"), lockPath)
 }
 
 func TestSocketPath_RejectsOverLongPath(t *testing.T) {
-	_, err := SocketPath("/"+strings.Repeat("d", 200), testIdentity)
+	_, err := Endpoint{dir: "/" + strings.Repeat("d", 200)}.SocketPath(testIdentity)
 
 	assert.ErrorIs(t, err, ErrSocketPathTooLong)
 }
