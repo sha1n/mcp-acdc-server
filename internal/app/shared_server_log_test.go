@@ -212,3 +212,67 @@ func sharedServerLogTestField(t *testing.T, v reflect.Value, name, key string) r
 	t.Fatalf("dump line %q names no settings field", key)
 	return reflect.Value{}
 }
+
+func TestLogSharedServerStartup_EdgeValueOutputIsByteIdentical(t *testing.T) {
+	startup := `level=INFO msg="Starting MCP Acdc shared server" version=1.2.3 pid=` + strconv.Itoa(os.Getpid())
+	zeroDump := []string{
+		startup,
+		`level=INFO msg="Config: content_dir" value=""`,
+		`level=INFO msg="Config: search.max_results" value=0`,
+		`level=INFO msg="Config: search.in_memory" value=false`,
+		`level=INFO msg="Config: search.keywords_boost" value=0`,
+		`level=INFO msg="Config: search.heading_boost" value=0`,
+		`level=INFO msg="Config: search.path_boost" value=0`,
+		`level=INFO msg="Config: search.title_boost" value=0`,
+		`level=INFO msg="Config: search.content_boost" value=0`,
+		`level=INFO msg="Config: search.result_mode" value=""`,
+	}
+	populatedDump := []string{
+		startup,
+		`level=INFO msg="Config: content_dir" value=/content`,
+		`level=INFO msg="Config: search.max_results" value=10`,
+		`level=INFO msg="Config: search.in_memory" value=true`,
+		`level=INFO msg="Config: search.keywords_boost" value=3`,
+		`level=INFO msg="Config: search.heading_boost" value=2.5`,
+		`level=INFO msg="Config: search.path_boost" value=2`,
+		`level=INFO msg="Config: search.title_boost" value=2`,
+		`level=INFO msg="Config: search.content_boost" value=1`,
+		`level=INFO msg="Config: search.result_mode" value=references`,
+	}
+	populated := func(transport string, uiEnabled bool) *config.Settings {
+		s := sharedServerLogTestSettings(config.AuthSettings{Type: config.AuthTypeBasic})
+		s.Transport = transport
+		s.UI.Enabled = uiEnabled
+		return s
+	}
+	tests := []struct {
+		name     string
+		settings *config.Settings
+		expected []string
+	}{
+		{
+			name:     "sse with web UI disabled, zero values and no api keys",
+			settings: &config.Settings{Transport: "sse", Auth: config.AuthSettings{Type: config.AuthTypeAPIKey}},
+			expected: zeroDump,
+		},
+		{
+			name:     "stdio with ignored web UI, zero values and empty basic credentials",
+			settings: &config.Settings{Transport: "stdio", Auth: config.AuthSettings{Type: config.AuthTypeBasic}, UI: config.UISettings{Enabled: true}},
+			expected: zeroDump,
+		},
+		{name: "stdio with web UI enabled", settings: populated("stdio", true), expected: populatedDump},
+		{name: "stdio with web UI disabled", settings: populated("stdio", false), expected: populatedDump},
+		{name: "sse with web UI enabled", settings: populated("sse", true), expected: populatedDump},
+		{name: "sse with web UI disabled", settings: populated("sse", false), expected: populatedDump},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+
+			logSharedServerStartup(slog.New(slog.NewTextHandler(&buf, nil)), tt.settings, "1.2.3")
+
+			assert.Equal(t, tt.expected, sharedServerLogTestLines(t, &buf))
+		})
+	}
+}
