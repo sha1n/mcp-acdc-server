@@ -15,9 +15,9 @@ import (
 
 const promptExtension = ".md"
 
-var (
-	manifestRelPath = path.Join(content.ConfigDirName, content.ConfigFileName)
-	promptsRelPath  = path.Join(content.ConfigDirName, content.PromptsDirName)
+const (
+	manifestRelPath = content.ConfigDirName + "/" + content.ConfigFileName
+	promptsRelPath  = content.ConfigDirName + "/" + content.PromptsDirName
 )
 
 // startupFixedContent is what a server reads only once at startup and never
