@@ -58,6 +58,57 @@ func TestACDCService_StopReleasesTheServerWhenGracefulShutdownTimesOut(t *testin
 		"Stop must close the connections the graceful shutdown left open, got %v", readErr)
 }
 
+func TestACDCService_StopAfterAFailedStartReturnsTheStartupErrorPromptly(t *testing.T) {
+	startupErr := errors.New("startup failed")
+	flags := NewTestFlags(t, CreateTestContentDir(t, nil), nil)
+	service := NewACDCService("stop-after-failed-start", flags)
+	acdc := service.(*acdcService)
+	acdc.StopDelay = time.Minute
+	acdc.runner = func(context.Context, app.RunParams, *pflag.FlagSet, string) error {
+		return startupErr
+	}
+
+	_, err := service.Start()
+	require.ErrorIs(t, err, startupErr)
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		require.ErrorIs(t, stopWithin(t, service, 2*time.Second), startupErr, "Stop #%d", attempt)
+	}
+}
+
+func TestACDCService_StopIsIdempotentAfterASuccessfulStart(t *testing.T) {
+	flags := NewTestFlags(t, CreateTestContentDir(t, nil), nil)
+	service := NewACDCService("double-stop", flags)
+	service.(*acdcService).StopDelay = time.Minute
+
+	_, err := service.Start()
+	require.NoError(t, err)
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		require.NoError(t, stopWithin(t, service, 5*time.Second), "Stop #%d", attempt)
+	}
+}
+
+func TestACDCService_StopWithoutStartIsBoundedByTheStopDelay(t *testing.T) {
+	service := NewACDCService("stop-without-start", NewTestFlags(t, CreateTestContentDir(t, nil), nil))
+	service.(*acdcService).StopDelay = 50 * time.Millisecond
+
+	require.Error(t, stopWithin(t, service, 2*time.Second))
+}
+
+func stopWithin(t *testing.T, service Service, bound time.Duration) error {
+	t.Helper()
+	stopped := make(chan error, 1)
+	go func() { stopped <- service.Stop() }()
+	select {
+	case err := <-stopped:
+		return err
+	case <-time.After(bound):
+		t.Fatalf("Stop did not return within %v", bound)
+		return nil
+	}
+}
+
 func readUntilError(conn net.Conn) (int, error) {
 	buf := make([]byte, 4096)
 	total := 0
