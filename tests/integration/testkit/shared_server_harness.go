@@ -51,10 +51,8 @@ type SharedServerHarness struct {
 
 // SharedServerExit is how one spawned candidate ended.
 type SharedServerExit struct {
-	Built     bool
-	Err       error
-	SpawnedAt time.Time
-	ExitedAt  time.Time
+	Built bool
+	Err   error
 }
 
 // NewSharedServerHarness stops every shared server it spawned when the test
@@ -172,12 +170,11 @@ func (h *SharedServerHarness) SpawnSharedServer(args []string) func(string) erro
 		}
 		var built atomic.Bool
 		params := h.sharedServerParams(&built)
-		spawnedAt := time.Now()
 		h.servers.Add(1)
 		go func() {
 			defer h.servers.Done()
 			err := app.RunWithDeps(h.ctx, params, flags, h.Binary)
-			h.recordExit(SharedServerExit{Built: built.Load(), Err: err, SpawnedAt: spawnedAt, ExitedAt: time.Now()})
+			h.recordExit(SharedServerExit{Built: built.Load(), Err: err})
 			if err != nil {
 				h.t.Logf("shared server %s stopped with: %v", id, err)
 			}

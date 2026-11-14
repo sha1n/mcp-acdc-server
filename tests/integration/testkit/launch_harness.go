@@ -15,7 +15,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/app"
+	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,6 +30,9 @@ type LaunchUnderTest struct {
 	stderr *lockedBuffer
 	done   chan struct{}
 	err    error
+	// identity is computed before the launch starts: content edited later
+	// in the test must not change the identity the launch ran with.
+	identity string
 }
 
 type lineResult struct {
@@ -82,11 +87,12 @@ func startLaunch(t testing.TB, params app.RunParams, binary identity.Binary, gat
 	hostIn, launchIn := io.Pipe()
 	launchOut, hostOut := io.Pipe()
 	l := &LaunchUnderTest{
-		t:      t,
-		stdin:  launchIn,
-		stdout: bufio.NewReader(launchOut),
-		stderr: &lockedBuffer{},
-		done:   make(chan struct{}),
+		t:        t,
+		stdin:    launchIn,
+		stdout:   bufio.NewReader(launchOut),
+		stderr:   &lockedBuffer{},
+		done:     make(chan struct{}),
+		identity: launchIdentity(flags, binary),
 	}
 	params.Stdin = hostIn
 	params.Stdout = hostOut
@@ -202,6 +208,22 @@ func (l *LaunchUnderTest) Ended() bool {
 
 // Stderr returns what the launch has written to its stderr so far.
 func (l *LaunchUnderTest) Stderr() string { return l.stderr.String() }
+
+// SharedServerIdentity returns the server identity of the launch's content
+// when it started, or "" when its settings do not load.
+func (l *LaunchUnderTest) SharedServerIdentity() string { return l.identity }
+
+func launchIdentity(flags *pflag.FlagSet, binary identity.Binary) string {
+	settings, err := config.LoadSettingsWithFlags(flags)
+	if err != nil {
+		return ""
+	}
+	id, err := identity.Compute(settings, binary)
+	if err != nil {
+		return ""
+	}
+	return id
+}
 
 func (l *LaunchUnderTest) waitWithin(d time.Duration) (bool, error) {
 	select {

@@ -140,7 +140,7 @@ func attachWithoutLingerLoss(t *testing.T, attempt func(h *testkit.SharedServerH
 
 // lostToTheInitialLinger classifies an attempt whose shared server answered
 // or whose fallback answered. A won attempt has its single built candidate
-// still attached; a lost one had a built candidate linger out after bind
+// still attached; a lost one had a shared server of its identity linger out after bind
 // before the session proxy reached it (#196), which may show as a fallback
 // or as a second build. Anything else fails the test.
 func lostToTheInitialLinger(t *testing.T, h *testkit.SharedServerHarness, l *testkit.LaunchUnderTest, deadline time.Time) bool {
@@ -148,9 +148,9 @@ func lostToTheInitialLinger(t *testing.T, h *testkit.SharedServerHarness, l *tes
 	if h.Builds() == 1 && len(l.FallbackWarnings()) == 0 && len(builtExits(h)) == 0 {
 		return false
 	}
-	exits := awaitBuiltExits(h, deadline, 1)
-	require.NotEmpty(t, exits, "a lost attempt must have a built candidate that lingered out")
-	if verdict, failedCheck := checkLingerExits(coldStartEvidence{exits: exits}); failedCheck {
+	id := l.SharedServerIdentity()
+	verdict := awaitVerdict(deadline, func() coldStartVerdict { return lingeredOutOnce(h, id) })
+	if verdict.outcome == coldStartFailed {
 		require.FailNow(t, "a lost attempt's candidate did not linger out", verdict.reason)
 	}
 	return true
