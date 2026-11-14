@@ -26,7 +26,6 @@ func NewLaunchGate() *LaunchGate {
 // gate is released.
 func (h *SharedServerHarness) LaunchBehind(gate *LaunchGate, args ...string) *LaunchUnderTest {
 	h.t.Helper()
-	gate.parked.Add(1)
 	return startLaunch(h.t, h.SessionProxyParams(args), h.Binary, gate, args...)
 }
 
@@ -40,6 +39,16 @@ func (g *LaunchGate) Release() {
 		g.parked.Wait()
 		close(g.open)
 	})
+}
+
+// join registers one launch that will await the gate. It must be called only
+// once nothing can fail before that launch's goroutine starts: a launch that
+// joined and then failed would never await, and Release would wait forever.
+func (g *LaunchGate) join() {
+	if g == nil {
+		return
+	}
+	g.parked.Add(1)
 }
 
 func (g *LaunchGate) await() {

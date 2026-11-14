@@ -67,6 +67,7 @@ func startLaunch(t testing.TB, params app.RunParams, binary identity.Binary, gat
 	params.CustomIOTransport = &mcp.IOTransport{Reader: hostIn, Writer: hostOut}
 	params.Stderr = l.stderr
 
+	gate.join()
 	go func() {
 		defer close(l.done)
 		gate.await()
