@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -43,6 +44,13 @@ func (h *SharedServerHarness) Launch(args ...string) *LaunchUnderTest {
 	defer h.launchesMu.Unlock()
 	h.launches = append(h.launches, l)
 	return l
+}
+
+// Launches returns every launch started with Launch so far.
+func (h *SharedServerHarness) Launches() []*LaunchUnderTest {
+	h.launchesMu.Lock()
+	defer h.launchesMu.Unlock()
+	return slices.Clone(h.launches)
 }
 
 // FallbackWarnings counts the fallback warnings written so far by every

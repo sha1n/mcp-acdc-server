@@ -148,7 +148,11 @@ func lostToTheInitialLinger(t *testing.T, h *testkit.SharedServerHarness, l *tes
 	if h.Builds() == 1 && len(l.FallbackWarnings()) == 0 && len(builtExits(h)) == 0 {
 		return false
 	}
-	requireLingerExits(t, awaitBuiltExits(t, h, deadline, 1))
+	exits := awaitBuiltExits(h, deadline, 1)
+	require.NotEmpty(t, exits, "a lost attempt must have a built candidate that lingered out")
+	if verdict, failedCheck := checkLingerExits(coldStartEvidence{exits: exits}); failedCheck {
+		require.FailNow(t, "a lost attempt's candidate did not linger out", verdict.reason)
+	}
 	return true
 }
 
