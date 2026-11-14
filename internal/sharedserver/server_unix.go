@@ -121,6 +121,9 @@ func attach(ctx context.Context, logger *slog.Logger, conn *net.UnixConn, server
 		return
 	}
 	if _, err := conn.Write(readyLine); err != nil {
+		if peerDisconnected(err) || ctx.Err() != nil {
+			return
+		}
 		logger.Error("Failed to send ready line", "session", session, "error", err)
 		return
 	}
@@ -132,7 +135,7 @@ func attach(ctx context.Context, logger *slog.Logger, conn *net.UnixConn, server
 		logger.Error("Failed to connect session", "session", session, "error", err)
 		return
 	}
-	if err := serverSession.Wait(); err != nil && !errors.Is(err, io.EOF) && ctx.Err() == nil {
+	if err := serverSession.Wait(); err != nil && !peerDisconnected(err) && ctx.Err() == nil {
 		logger.Warn("Session ended with an error", "error", err)
 	}
 }
