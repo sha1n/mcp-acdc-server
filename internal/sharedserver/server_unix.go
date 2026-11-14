@@ -117,11 +117,7 @@ func attach(ctx context.Context, conn *net.UnixConn, server *mcp.Server) {
 	stopOnCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stopOnCancel()
 
-	session, err := NewSessionID()
-	if err != nil {
-		slog.Error("Failed to attach session", "error", err)
-		return
-	}
+	session := NewSessionID()
 	readyLine, err := EncodeReadyLine(session, "")
 	if err != nil {
 		slog.Error("Failed to attach session", "session", session, "error", err)

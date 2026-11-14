@@ -37,10 +37,9 @@ func DecodeReadyLine(line []byte) (ReadyLine, error) {
 
 // NewSessionID mints the identifier of one attached session: 8 random
 // lowercase hex characters.
-func NewSessionID() (string, error) {
+func NewSessionID() string {
 	b := make([]byte, 4)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("failed to mint session identifier: %w", err)
-	}
-	return hex.EncodeToString(b), nil
+	// crypto/rand.Read is documented to never return an error.
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }

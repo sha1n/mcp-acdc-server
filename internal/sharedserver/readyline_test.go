@@ -63,8 +63,7 @@ func TestDecodeReadyLine_RejectsInvalidLines(t *testing.T) {
 func TestNewSessionID_IsEightLowercaseHex(t *testing.T) {
 	seen := make(map[string]struct{})
 	for range 200 {
-		id, err := NewSessionID()
-		require.NoError(t, err)
+		id := NewSessionID()
 		assert.Regexp(t, sessionIDPattern, id)
 		seen[id] = struct{}{}
 	}
