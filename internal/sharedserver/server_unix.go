@@ -19,7 +19,7 @@ import (
 
 // Run serves the shared server for cfg.Identity until ctx is cancelled.
 //
-// The order is fixed: lock, bind, build, then accept. Only the endpoint
+// The order is fixed: lock, log, bind, build, then accept. Only the endpoint
 // directory is created or verified before the lock is held, and no catalog or
 // index is built before bind, so a dialable socket means "one is alive" while
 // the ready line means "it is ready".
@@ -43,6 +43,12 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer func() { _ = lock.Unlock() }()
 
+	logger, logPath, stopLog := startLog(cfg.LogDir, cfg.Identity)
+	defer stopLog()
+	if cfg.LogStartup != nil {
+		cfg.LogStartup(logger)
+	}
+
 	listener, err := bind(ep, cfg.Identity)
 	if err != nil {
 		return err
@@ -57,7 +63,7 @@ func Run(ctx context.Context, cfg Config) error {
 		defer cleanup()
 	}
 
-	return serve(ctx, listener, server, cfg.Revalidate)
+	return serve(ctx, listener, server, cfg.Revalidate, logPath)
 }
 
 func acquireLock(ep endpoint.Endpoint, identity string) (*flock.Flock, error) {
@@ -95,7 +101,7 @@ func bind(ep endpoint.Endpoint, identity string) (*net.UnixListener, error) {
 	return listener, nil
 }
 
-func serve(ctx context.Context, listener *net.UnixListener, server *mcp.Server, revalidate func(context.Context)) error {
+func serve(ctx context.Context, listener *net.UnixListener, server *mcp.Server, revalidate func(context.Context), logPath string) error {
 	stopAccepting := context.AfterFunc(ctx, func() { _ = listener.Close() })
 	defer stopAccepting()
 
@@ -119,11 +125,11 @@ func serve(ctx context.Context, listener *net.UnixListener, server *mcp.Server, 
 			}
 			return fmt.Errorf("failed to accept shared server connection: %w", err)
 		}
-		sessions.Go(func() { attach(sessionCtx, conn, server, revalidate) })
+		sessions.Go(func() { attach(sessionCtx, conn, server, revalidate, logPath) })
 	}
 }
 
-func attach(ctx context.Context, conn *net.UnixConn, server *mcp.Server, revalidate func(context.Context)) {
+func attach(ctx context.Context, conn *net.UnixConn, server *mcp.Server, revalidate func(context.Context), logPath string) {
 	defer func() { _ = conn.Close() }()
 	stopOnCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stopOnCancel()
@@ -132,7 +138,7 @@ func attach(ctx context.Context, conn *net.UnixConn, server *mcp.Server, revalid
 	if revalidate != nil {
 		revalidate(ctx)
 	}
-	readyLine, err := EncodeReadyLine(session, "")
+	readyLine, err := EncodeReadyLine(session, logPath)
 	if err != nil {
 		slog.Error("Failed to attach session", "session", session, "error", err)
 		return

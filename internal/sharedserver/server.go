@@ -3,6 +3,7 @@ package sharedserver
 import (
 	"context"
 	"errors"
+	"log/slog"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -20,7 +21,13 @@ type BuildFunc func(context.Context) (*mcp.Server, func(), error)
 type Config struct {
 	Identity    string
 	EndpointDir string
-	Build       BuildFunc
+	// LogDir holds <identity>.log; an empty or unusable directory discards
+	// the log instead of preventing the shared server from serving.
+	LogDir string
+	// LogStartup writes the shared server's startup entries once its log is
+	// open, so a candidate that loses the lock writes nothing.
+	LogStartup func(*slog.Logger)
+	Build      BuildFunc
 	// Revalidate, if set, runs for every accepted connection before its ready
 	// line, so a session's first listing reflects current content. It is
 	// called only after Build has returned.
