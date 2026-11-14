@@ -95,6 +95,25 @@ jobs:
           fail_ci_if_error: ${{ secrets.CODECOV_TOKEN != '' }}
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  # Shared server behaviour depends on OS socket and file-lock semantics, so its
+  # tests also run on macOS. The race step is scoped to the shared server
+  # packages; suite-wide -race is deliberately not part of CI.
+  test-macos:
+    needs: changes
+    if: needs.changes.outputs.src == 'true' || github.event_name != 'pull_request'
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Run shared server tests
+        run: make test-sharedserver
+      - name: Run shared server tests with the race detector
+        run: make test-race-sharedserver
+
   # Function-level complexity gate. Runs standalone so a threshold breach shows
   # as its own red check; the thresholds themselves live in .golangci.yml and are
   # also enforced by `make lint`.
@@ -246,14 +265,14 @@ jobs:
 
   # This job acts as a bridge for documentation-only PRs to satisfy status checks
   status-check:
-    needs: [changes, test, complexity, docker]
+    needs: [changes, test, test-macos, complexity, docker]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Verify status
         run: |
-          if [[ "${{ needs.test.result }}" == "failure" || "${{ needs.complexity.result }}" == "failure" || "${{ needs.docker.result }}" == "failure" ]]; then
-            echo "One or more critical jobs failed."
+          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more required jobs failed or were cancelled."
             exit 1
           fi
-          echo "All critical jobs passed or were skipped."
+          echo "All required jobs passed or were skipped."
