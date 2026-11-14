@@ -21,11 +21,12 @@ func sharedServerLogDir(params RunParams) string {
 	return dir
 }
 
-// logSharedServerStartup writes the startup entry and an allowlist of
-// settings. An allowlist rather than a filtered config.Log keeps a setting
-// added later out of the shared log until it is judged identity-relevant:
-// the excluded transport, host, port, auth, UI, server mode and shared server
-// settings may differ between the sessions sharing one server.
+// logSharedServerStartup writes the startup entry and the settings that every
+// session sharing this server agrees on. Only the identity-excluded settings
+// (transport, host, port, auth, UI, server mode, shared server) may differ
+// between those sessions, so only they are left out; any other setting is
+// identity-relevant and belongs here, which the comparison with config.Log in
+// the tests enforces.
 func logSharedServerStartup(logger *slog.Logger, s *config.Settings, version string) {
 	ctx := context.Background()
 	logger.InfoContext(ctx, "Starting MCP Acdc shared server", "version", version, "pid", os.Getpid())

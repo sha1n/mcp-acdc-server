@@ -3,7 +3,9 @@
 package sharedserver
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -20,7 +22,7 @@ func openLog(dir, identity string) (*os.File, []error) {
 	if !filepath.IsAbs(dir) {
 		return nil, []error{fmt.Errorf("log directory %q is not an absolute path", dir)}
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := createLogDir(dir); err != nil {
 		return nil, []error{fmt.Errorf("failed to create log directory: %w", err)}
 	}
 
@@ -36,7 +38,34 @@ func openLog(dir, identity string) (*os.File, []error) {
 	if err != nil {
 		return nil, append(issues, fmt.Errorf("failed to open log file: %w", err))
 	}
+	// The creation mode is subject to the umask, and an existing file keeps
+	// whatever mode it had.
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return nil, append(issues, fmt.Errorf("failed to set log file mode: %w", err))
+	}
 	return file, issues
+}
+
+// createLogDir creates each missing component itself instead of using
+// MkdirAll: the umask applies to every directory MkdirAll creates, and a mask
+// without owner write leaves a parent in which the next component cannot be
+// created. Directories that already exist keep their mode.
+func createLogDir(dir string) error {
+	if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if err := createLogDir(filepath.Dir(dir)); err != nil {
+		return err
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		// Another shared server created it first; it is now an existing directory.
+		if errors.Is(err, fs.ErrExist) {
+			return nil
+		}
+		return err
+	}
+	return os.Chmod(dir, 0o700)
 }
 
 // startLog makes the identity's log, or a discarding logger when it cannot be
