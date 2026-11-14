@@ -24,6 +24,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/app"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -132,7 +133,7 @@ func launchLingerTestServer(t *testing.T, opts lingerTestOptions) *lingerTestSer
 	s.cancel = cancel
 	s.launchedAt = time.Now()
 	go func() {
-		err := app.RunWithDeps(ctx, params, flags, "test")
+		err := app.RunWithDeps(ctx, params, flags, identity.Binary{Version: "test"})
 		s.exitedAt = time.Now()
 		s.done <- err
 	}()

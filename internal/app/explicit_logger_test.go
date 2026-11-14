@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"log/slog"
 	"os"
 	"regexp"
@@ -65,7 +66,7 @@ func TestRunWithDeps_OrdinaryLaunchWithoutStderrStartsNothing(t *testing.T) {
 	}
 	params.CustomIOTransport = &mockTransport{connectCalled: &connected}
 
-	err := RunWithDeps(context.Background(), params, loggingDestinationFlags(t, t.TempDir()), "test")
+	err := RunWithDeps(context.Background(), params, loggingDestinationFlags(t, t.TempDir()), identity.Binary{Version: "test"})
 
 	require.ErrorContains(t, err, "runner requires a stderr writer")
 	assert.False(t, created, "no server may be built without a log destination")

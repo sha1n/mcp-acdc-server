@@ -5,6 +5,7 @@ package app
 import (
 	"bufio"
 	"context"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"net"
 	"os"
 	"path/filepath"
@@ -55,7 +56,7 @@ func startLoggingSharedServer(t *testing.T, params RunParams, flags *pflag.FlagS
 		cancel:     cancel,
 		done:       make(chan error, 1),
 	}
-	go func() { server.done <- RunWithDeps(ctx, params, flags, "9.8.7") }()
+	go func() { server.done <- RunWithDeps(ctx, params, flags, identity.Binary{Version: "9.8.7"}) }()
 	t.Cleanup(func() {
 		cancel()
 		select {

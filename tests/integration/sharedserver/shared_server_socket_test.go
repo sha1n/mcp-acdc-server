@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -96,7 +97,7 @@ func (s *sharedServerUnderTest) launch(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
-	go func() { s.done <- app.RunWithDeps(ctx, params, flags, "test") }()
+	go func() { s.done <- app.RunWithDeps(ctx, params, flags, identity.Binary{Version: "test"}) }()
 	t.Cleanup(func() {
 		cancel()
 		select {

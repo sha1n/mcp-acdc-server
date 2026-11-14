@@ -4,6 +4,7 @@ package sharedserver
 
 import (
 	"context"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"os"
 	"path/filepath"
 	"testing"
@@ -44,7 +45,7 @@ func launchAttachRevalidationServer(t *testing.T, contentDir string) (server *sh
 
 	ctx, cancel := context.WithCancel(context.Background())
 	server.cancel = cancel
-	go func() { server.done <- app.RunWithDeps(ctx, params, flags, "test") }()
+	go func() { server.done <- app.RunWithDeps(ctx, params, flags, identity.Binary{Version: "test"}) }()
 	t.Cleanup(func() {
 		cancel()
 		select {

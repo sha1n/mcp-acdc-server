@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -73,7 +74,7 @@ func runOrdinaryStdioSession(t *testing.T, params RunParams, flags *pflag.FlagSe
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	done := make(chan error, 1)
-	go func() { done <- RunWithDeps(ctx, params, flags, "9.8.7") }()
+	go func() { done <- RunWithDeps(ctx, params, flags, identity.Binary{Version: "9.8.7"}) }()
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "logging-destination-client", Version: "1.0"}, nil)
 	session, err := client.Connect(ctx, clientTransport, nil)

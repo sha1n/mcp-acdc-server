@@ -15,12 +15,13 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/app"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"github.com/spf13/pflag"
 )
 
 const readinessPath = "/.testkit/readiness"
 
-type RunnerFunc func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error
+type RunnerFunc func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, binary identity.Binary) error
 
 type acdcService struct {
 	name         string
@@ -110,7 +111,7 @@ func (s *acdcService) Start() (props map[string]any, err error) {
 	}
 
 	go func() {
-		err := s.runner(ctx, params, s.flags, "testkit")
+		err := s.runner(ctx, params, s.flags, identity.Binary{Version: "testkit"})
 		s.closeStdioPipes(err)
 		s.errChan <- err
 	}()

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -120,14 +121,21 @@ func attach(ctx context.Context, logger *slog.Logger, conn *net.UnixConn, server
 		return
 	}
 	if _, err := conn.Write(readyLine); err != nil {
+		if peerDisconnected(err) || ctx.Err() != nil {
+			return
+		}
 		logger.Error("Failed to send ready line", "session", session, "error", err)
 		return
 	}
 
-	serverSession, err := server.Connect(ctx, &mcp.IOTransport{Reader: conn, Writer: conn}, nil)
+	// The SDK closes both halves; closing conn twice would end every clean
+	// session with a "use of closed network connection" error.
+	serverSession, err := server.Connect(ctx, &mcp.IOTransport{Reader: io.NopCloser(conn), Writer: conn}, nil)
 	if err != nil {
 		logger.Error("Failed to connect session", "session", session, "error", err)
 		return
 	}
-	_ = serverSession.Wait()
+	if err := serverSession.Wait(); err != nil && !peerDisconnected(err) && ctx.Err() == nil {
+		logger.Warn("Session ended with an error", "error", err)
+	}
 }
