@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/endpoint"
 )
 
 // acceptWake interrupts a blocked accept when the linger expires. The woken
@@ -51,7 +52,8 @@ type sessionAcceptor struct {
 	cancelBuild    context.CancelFunc
 	lingeredOut    bool
 	listener       *net.UnixListener
-	socketPath     string
+	endpoint       endpoint.Endpoint
+	identity       string
 	linger         *sessionLinger
 	wake           *acceptWake
 	built          chan struct{}
@@ -65,13 +67,14 @@ type sessionAcceptor struct {
 	err            error
 }
 
-func startAccepting(ctx context.Context, listener *net.UnixListener, socketPath string, linger time.Duration) *sessionAcceptor {
+func startAccepting(ctx context.Context, listener *net.UnixListener, ep endpoint.Endpoint, identity string, linger time.Duration) *sessionAcceptor {
 	a := &sessionAcceptor{
-		listener:   listener,
-		socketPath: socketPath,
-		wake:       &acceptWake{listener: listener},
-		built:      make(chan struct{}),
-		stopped:    make(chan struct{}),
+		listener: listener,
+		endpoint: ep,
+		identity: identity,
+		wake:     &acceptWake{listener: listener},
+		built:    make(chan struct{}),
+		stopped:  make(chan struct{}),
 	}
 	a.ctx, a.abandonCtx = context.WithCancel(ctx)
 	a.buildCtx, a.cancelBuild = context.WithCancel(ctx)
@@ -150,8 +153,10 @@ func (a *sessionAcceptor) acceptLoop() error {
 func (a *sessionAcceptor) closeAndUnlink() {
 	_ = a.listener.Close()
 	// A socket that cannot be removed is stale and is replaced by the next
-	// lock holder at bind.
-	_ = os.Remove(a.socketPath)
+	// lock holder at bind. Run validated the path before taking the lock.
+	if socketPath, err := a.endpoint.SocketPath(a.identity); err == nil {
+		_ = os.Remove(socketPath)
+	}
 	a.lingeredOut = true
 	a.cancelBuild()
 }

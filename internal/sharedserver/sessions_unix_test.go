@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/endpoint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,8 +41,10 @@ func dialAcceptorTestSocket(t *testing.T, socketPath string) (net.Conn, *bufio.R
 
 func TestSessionAcceptor_AWakeLosingToAnAttachKeepsAccepting(t *testing.T) {
 	listener, socketPath := bindTestEndpoint(t)
+	ep, epErr := endpoint.OpenEndpoint(filepath.Dir(socketPath))
+	require.NoError(t, epErr)
 	ctx, cancel := context.WithCancel(context.Background())
-	acceptor := startAccepting(ctx, listener, socketPath, time.Hour)
+	acceptor := startAccepting(ctx, listener, ep, testIdentity, time.Hour)
 	done := make(chan error, 1)
 	go func() {
 		done <- acceptor.serve(mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil), nil, "")

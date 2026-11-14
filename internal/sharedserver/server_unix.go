@@ -32,8 +32,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	// Checked here although bind derives the path again: an unusable socket
 	// path must be rejected before the lock is taken.
-	socketPath, err := ep.SocketPath(cfg.Identity)
-	if err != nil {
+	if _, err := ep.SocketPath(cfg.Identity); err != nil {
 		return err
 	}
 
@@ -55,7 +54,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer func() { _ = listener.Close() }()
 
-	sessions := startAccepting(ctx, listener, socketPath, cfg.Linger)
+	sessions := startAccepting(ctx, listener, ep, cfg.Identity, cfg.Linger)
 	server, cleanup, err := cfg.Build(sessions.buildCtx)
 	if err != nil {
 		return sessions.abandon(err)
