@@ -3,13 +3,17 @@ package testkit
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/app"
+	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
@@ -381,4 +385,84 @@ func openEventStream(t *testing.T, baseURL string) net.Conn {
 	_, err = stream.Read(make([]byte, 1))
 	require.NoError(t, err, "the server must be serving the stream before it is stopped")
 	return stream
+}
+
+func TestACDCService_SecondStartFailsAndLeavesTheFirstRunning(t *testing.T) {
+	flags := NewTestFlags(t, CreateTestContentDir(t, nil), &FlagOptions{Transport: "stdio"})
+	service := NewACDCService("second-start", flags)
+	acdc := service.(*acdcService)
+	acdc.StopDelay = time.Minute
+	runs := make(chan context.Context, 2)
+	acdc.runner = func(ctx context.Context, _ app.RunParams, _ *pflag.FlagSet, _ string) error {
+		runs <- ctx
+		<-ctx.Done()
+		return ctx.Err()
+	}
+
+	_, err := service.Start()
+	require.NoError(t, err)
+	firstRun := <-runs
+
+	_, err = service.Start()
+
+	require.EqualError(t, err, "second-start was already started")
+	select {
+	case <-runs:
+		t.Fatal("the second Start ran the server again")
+	default:
+	}
+	require.NoError(t, firstRun.Err(), "the second Start must leave the first run alone")
+	for attempt := 1; attempt <= 2; attempt++ {
+		require.NoError(t, stopWithin(t, service, 2*time.Second), "Stop #%d", attempt)
+	}
+	require.Error(t, firstRun.Err(), "Stop must still stop the first run")
+}
+
+func TestACDCService_ServerPublishedAfterStopIsNeverServed(t *testing.T) {
+	flags := NewTestFlags(t, CreateTestContentDir(t, nil), nil)
+	service := NewACDCService("late-server", flags)
+	acdc := service.(*acdcService)
+	acdc.StopDelay = 50 * time.Millisecond
+	hookEntered := make(chan struct{})
+	releaseHook := make(chan struct{})
+	hookReturned := make(chan error, 1)
+	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error {
+		startSSEServer := params.StartSSEServer
+		params.StartSSEServer = func(logger *slog.Logger, mcpSrv *mcp.Server, settings *config.Settings, opts ...app.SSEOption) error {
+			close(hookEntered)
+			<-releaseHook
+			err := startSSEServer(logger, mcpSrv, settings, opts...)
+			hookReturned <- err
+			return err
+		}
+		return app.RunWithDeps(ctx, params, flags, version)
+	}
+
+	started := make(chan error, 1)
+	go func() {
+		_, err := service.Start()
+		started <- err
+	}()
+	<-hookEntered
+
+	// Stop has returned, so it has already looked for a server and found none.
+	stopErr := stopWithin(t, service, 2*time.Second)
+	require.Error(t, stopErr)
+	close(releaseHook)
+
+	select {
+	case err := <-hookReturned:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("a server published after Stop is serving")
+	}
+	require.NotNil(t, acdc.srv.Load(), "the hook must have published its server")
+	port, _ := flags.GetInt("port")
+	conn, dialErr := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
+	if dialErr == nil {
+		_ = conn.Close()
+	}
+	require.Error(t, dialErr, "nothing may listen after Stop")
+	require.EqualError(t, <-started, stopErr.Error())
+	require.Same(t, stopErr, stopWithin(t, service, 2*time.Second))
 }
