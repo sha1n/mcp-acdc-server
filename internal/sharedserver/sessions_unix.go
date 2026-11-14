@@ -46,25 +46,23 @@ func (w *acceptWake) consume() bool {
 // while the catalog and index are built is an attached session that waits
 // for the ready line instead of a connection left in the backlog.
 type sessionAcceptor struct {
-	ctx            context.Context
-	abandonCtx     context.CancelFunc
-	buildCtx       context.Context
-	cancelBuild    context.CancelFunc
-	lingeredOut    bool
-	listener       *net.UnixListener
-	endpoint       endpoint.Endpoint
-	identity       string
-	linger         *sessionLinger
-	wake           *acceptWake
-	built          chan struct{}
-	server         *mcp.Server
-	revalidate     func(context.Context)
-	logPath        string
-	sessionCtx     context.Context
-	cancelSessions context.CancelFunc
-	sessions       sync.WaitGroup
-	stopped        chan struct{}
-	err            error
+	// ctx scopes the build and every session. It is cancelled whenever the
+	// accept loop stops, whatever the reason, so that neither outlives it.
+	ctx         context.Context
+	cancel      context.CancelFunc
+	lingeredOut bool
+	listener    *net.UnixListener
+	endpoint    endpoint.Endpoint
+	identity    string
+	linger      *sessionLinger
+	wake        *acceptWake
+	built       chan struct{}
+	server      *mcp.Server
+	revalidate  func(context.Context)
+	logPath     string
+	sessions    sync.WaitGroup
+	stopped     chan struct{}
+	err         error
 }
 
 func startAccepting(ctx context.Context, listener *net.UnixListener, ep endpoint.Endpoint, identity string, linger time.Duration) *sessionAcceptor {
@@ -76,15 +74,17 @@ func startAccepting(ctx context.Context, listener *net.UnixListener, ep endpoint
 		built:    make(chan struct{}),
 		stopped:  make(chan struct{}),
 	}
-	a.ctx, a.abandonCtx = context.WithCancel(ctx)
-	a.buildCtx, a.cancelBuild = context.WithCancel(ctx)
-	a.sessionCtx, a.cancelSessions = context.WithCancel(a.ctx)
+	a.ctx, a.cancel = context.WithCancel(ctx)
 	a.linger = newSessionLinger(linger, realLingerClock{}, a.wake.wake)
 	go func() {
 		a.err = a.acceptLoop()
 		close(a.stopped)
 	}()
 	return a
+}
+
+func (a *sessionAcceptor) buildContext() context.Context {
+	return a.ctx
 }
 
 // serve hands the built server to every waiting and future session and
@@ -95,18 +95,19 @@ func (a *sessionAcceptor) serve(server *mcp.Server, revalidate func(context.Cont
 	a.logPath = logPath
 	close(a.built)
 	<-a.stopped
-	a.cancelBuild()
 	return a.err
 }
 
-// abandon drops every connection after a failed build and returns buildErr,
-// unless the build failed because the linger expired first: that is a
-// normal exit.
+// abandon drops every connection after a failed build. A build that failed
+// because the accept loop had already stopped reports why it stopped: an
+// accept error, or nothing for a linger exit, which is a normal exit.
 func (a *sessionAcceptor) abandon(buildErr error) error {
 	close(a.built)
-	a.abandonCtx()
+	a.cancel()
 	<-a.stopped
-	a.cancelBuild()
+	if a.err != nil {
+		return a.err
+	}
 	if a.lingeredOut {
 		return nil
 	}
@@ -124,7 +125,7 @@ func (a *sessionAcceptor) acceptLoop() error {
 	defer func() {
 		_ = a.listener.Close()
 		a.linger.stop()
-		a.cancelSessions()
+		a.cancel()
 		a.sessions.Wait()
 	}()
 
@@ -158,20 +159,21 @@ func (a *sessionAcceptor) closeAndUnlink() {
 		_ = os.Remove(socketPath)
 	}
 	a.lingeredOut = true
-	a.cancelBuild()
 }
 
 func (a *sessionAcceptor) handle(conn *net.UnixConn) {
 	defer a.linger.detach()
 	select {
 	case <-a.built:
-	case <-a.sessionCtx.Done():
+	case <-a.ctx.Done():
 		_ = conn.Close()
 		return
 	}
-	if a.server == nil {
+	// Both cases can be ready at once; a session already cancelled must not
+	// get a ready line.
+	if a.server == nil || a.ctx.Err() != nil {
 		_ = conn.Close()
 		return
 	}
-	attach(a.sessionCtx, conn, a.server, a.revalidate, a.logPath)
+	attach(a.ctx, conn, a.server, a.revalidate, a.logPath)
 }
