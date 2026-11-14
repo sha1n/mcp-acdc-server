@@ -432,3 +432,33 @@ level=INFO msg="Config: ui.enabled" value=false
 		})
 	}
 }
+
+func TestLogIdentitySettings_DumpsOnlyIdentityRelevantLines(t *testing.T) {
+	variants := map[string]*Settings{
+		"sse with basic auth and web UI": dumpTestSettings("sse",
+			AuthSettings{Type: AuthTypeBasic, Basic: BasicAuthSettings{Username: "alice", Password: "secret"}},
+			UISettings{Enabled: true, MaxResults: 20}),
+		"stdio with api keys and ignored web UI": dumpTestSettings("stdio",
+			AuthSettings{Type: AuthTypeAPIKey, APIKeys: []string{"k1", "k2"}},
+			UISettings{Enabled: true, MaxResults: 20}),
+		"stdio without auth or web UI": dumpTestSettings("stdio",
+			AuthSettings{Type: AuthTypeNone},
+			UISettings{Enabled: false, MaxResults: 20}),
+	}
+
+	for name, settings := range variants {
+		t.Run(name, func(t *testing.T) {
+			got := dumpTestOutput(func(logger *slog.Logger) { LogIdentitySettings(settings, logger) })
+
+			assert.Equal(t, `level=INFO msg="Config: content_dir" value="/content dir"
+`+dumpTestIdentityLines, got)
+		})
+	}
+}
+
+func TestDumpLines_EveryLineIsClassified(t *testing.T) {
+	require.NotEmpty(t, dumpLines)
+	for i, line := range dumpLines {
+		assert.Contains(t, []dumpScope{identityScope, sessionScope}, line.scope, "dump line %d has no scope", i)
+	}
+}
