@@ -60,32 +60,24 @@ func establish(ctx context.Context, cfg Config, abort <-chan struct{}) (*attachm
 func attachOnce(ctx context.Context, cfg Config, abort <-chan struct{}) (*attachment, error) {
 	conn, err := discover(ctx, cfg, abort)
 	if err != nil {
-		return nil, err
+		return nil, endedOr(ctx, abort, err)
 	}
 	fromServer := bufio.NewReader(conn)
 	if err := awaitReady(ctx, fromServer, abort); err != nil {
 		_ = conn.Close()
-		return nil, err
+		return nil, endedOr(ctx, abort, err)
 	}
 	return &attachment{conn: conn, fromServer: fromServer}, nil
 }
 
 func discover(ctx context.Context, cfg Config, abort <-chan struct{}) (net.Conn, error) {
-	identity, err := computeIdentity(ctx, cfg.Identity, abort)
+	identity, err := runPhase(ctx, abort, func() (string, error) { return computeIdentity(cfg.Identity) })
 	if err != nil {
 		return nil, err
 	}
-	dir, err := cfg.EndpointDir()
+	socketPath, err := runPhase(ctx, abort, func() (string, error) { return prepareSocketPath(cfg.EndpointDir, identity) })
 	if err != nil {
-		return nil, &discoveryError{cause: causeEndpoint, err: fmt.Errorf("failed to resolve the endpoint directory: %w", err)}
-	}
-	ep, err := endpoint.OpenEndpoint(dir)
-	if err != nil {
-		return nil, &discoveryError{cause: causeEndpoint, err: err}
-	}
-	socketPath, err := ep.SocketPath(identity)
-	if err != nil {
-		return nil, &discoveryError{cause: causeSocketPath, err: err}
+		return nil, err
 	}
 	var dialer net.Dialer
 	conn, err := discovery{
@@ -101,24 +93,71 @@ func discover(ctx context.Context, cfg Config, abort <-chan struct{}) (net.Conn,
 	return conn, err
 }
 
-// computeIdentity does not wait for an identity walk once the session ends:
-// the walk cannot be interrupted and may cover a large content tree.
-func computeIdentity(ctx context.Context, compute func() (string, error), abort <-chan struct{}) (string, error) {
-	phase, cancel := untilAborted(ctx, abort)
-	defer cancel(nil)
-	var identity string
-	err := supervise(phase, func() error {
-		var err error
-		identity, err = compute()
-		return err
-	})
-	if phase.Err() != nil {
-		return "", context.Cause(phase)
-	}
+func computeIdentity(compute func() (string, error)) (string, error) {
+	identity, err := compute()
 	if err != nil {
 		return "", &discoveryError{cause: causeIdentity, err: fmt.Errorf("failed to compute the server identity: %w", err)}
 	}
 	return identity, nil
+}
+
+func prepareSocketPath(endpointDir func() (string, error), identity string) (string, error) {
+	dir, err := endpointDir()
+	if err != nil {
+		return "", &discoveryError{cause: causeEndpoint, err: fmt.Errorf("failed to resolve the endpoint directory: %w", err)}
+	}
+	ep, err := endpoint.OpenEndpoint(dir)
+	if err != nil {
+		return "", &discoveryError{cause: causeEndpoint, err: err}
+	}
+	socketPath, err := ep.SocketPath(identity)
+	if err != nil {
+		return "", &discoveryError{cause: causeSocketPath, err: err}
+	}
+	return socketPath, nil
+}
+
+// runPhase does not wait for op once the session ends: an identity walk or an
+// endpoint directory resolution cannot be interrupted and may block. A result
+// that arrives with the session already ended is dropped unclassified.
+func runPhase[T any](ctx context.Context, abort <-chan struct{}, op func() (T, error)) (T, error) {
+	phase, cancel := untilAborted(ctx, abort)
+	defer cancel(nil)
+	result := make(chan T, 1)
+	err := supervise(phase, func() error {
+		value, err := op()
+		result <- value
+		return err
+	})
+	var zero T
+	if end := sessionEnd(ctx, abort); end != nil {
+		return zero, end
+	}
+	if err != nil {
+		return zero, err
+	}
+	return <-result, nil
+}
+
+// sessionEnd reports a session that ended, by cancellation or host EOF, even
+// when a phase result raced with the end: the end takes priority.
+func sessionEnd(ctx context.Context, abort <-chan struct{}) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case <-abort:
+		return errSessionEnded
+	default:
+		return nil
+	}
+}
+
+func endedOr(ctx context.Context, abort <-chan struct{}, err error) error {
+	if end := sessionEnd(ctx, abort); end != nil {
+		return end
+	}
+	return err
 }
 
 // awaitReady has no limit of its own: the shared server may still be building
