@@ -147,10 +147,16 @@ func connectSSEClient(t testing.TB, env TestEnv) *TestClient {
 // the cause with its own closing error depending on which goroutine observes the closed
 // pipe first; the server's error, collected by stopping it, is the deterministic cause.
 func connectFailure(connectErr, serverErr error) error {
-	if serverErr != nil {
+	switch {
+	case serverErr != nil && connectErr != nil:
 		return fmt.Errorf("server failed: %w (client connect error: %v)", serverErr, connectErr)
+	case serverErr != nil:
+		return fmt.Errorf("server failed: %w", serverErr)
+	case connectErr != nil:
+		return fmt.Errorf("failed to connect client: %w", connectErr)
+	default:
+		return nil
 	}
-	return fmt.Errorf("failed to connect client: %w", connectErr)
 }
 
 // Close stops the client and server
