@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/sha1n/mcp-acdc-server/internal/app"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -40,7 +41,7 @@ func Execute(version, build, programName string, args []string) error {
 		// buries that message under ~25 lines of help text.
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runWithFlags(cmd.Flags(), version)
+			return runWithFlags(cmd.Flags(), binary(version, build))
 		},
 	}
 
@@ -53,6 +54,16 @@ func Execute(version, build, programName string, args []string) error {
 	return rootCmd.Execute()
 }
 
-func runWithFlags(flags *pflag.FlagSet, version string) error {
-	return app.RunWithDeps(context.Background(), app.DefaultRunParams(), flags, version)
+func runWithFlags(flags *pflag.FlagSet, bin identity.Binary) error {
+	return app.RunWithDeps(context.Background(), app.DefaultRunParams(), flags, bin)
+}
+
+func binary(version, build string) identity.Binary {
+	// An unresolvable executable must not fail the launch: only an unstamped
+	// build hashes it, and that identity is then uncomputable.
+	executable, err := os.Executable()
+	if err != nil {
+		executable = ""
+	}
+	return identity.Binary{Version: version, Build: build, Executable: executable}
 }

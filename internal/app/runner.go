@@ -11,6 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"github.com/spf13/pflag"
 )
 
@@ -40,7 +41,7 @@ func DefaultRunParams() RunParams {
 }
 
 // RunWithDeps executes the server with the provided dependencies
-func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, version string) error {
+func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, binary identity.Binary) error {
 	// Load settings
 	settings, err := params.LoadSettings(flags)
 	if err != nil {
@@ -52,8 +53,8 @@ func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, ve
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	if identity, supplied := sharedServerIdentity(flags); supplied {
-		return runSharedServer(ctx, params, settings, identity, version)
+	if serverIdentity, supplied := sharedServerIdentity(flags); supplied {
+		return runSharedServer(ctx, params, settings, serverIdentity, binary.Version)
 	}
 
 	if params.Stderr == nil {
@@ -62,10 +63,10 @@ func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, ve
 	// Always log to stderr: stdout carries the stdio protocol stream.
 	logger := slog.New(slog.NewTextHandler(params.Stderr, nil))
 
-	logger.Info("Starting MCP Acdc server", "version", version)
+	logger.Info("Starting MCP Acdc server", "version", binary.Version)
 	config.LogWithLogger(settings, logger)
 
-	components, err := params.CreateServer(ctx, logger, settings, version)
+	components, err := params.CreateServer(ctx, logger, settings, binary.Version)
 	if err != nil {
 		return err
 	}
