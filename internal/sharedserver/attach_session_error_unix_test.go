@@ -54,7 +54,7 @@ func startAttach(t *testing.T) *attachUnderTest {
 		logs:   &bytes.Buffer{},
 		done:   make(chan struct{}),
 	}
-	logger := slog.New(slog.NewTextHandler(a.logs, nil))
+	logger := slog.New(newSessionHandler(slog.NewTextHandler(a.logs, nil)))
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil)
 	go func() {
 		defer close(a.done)

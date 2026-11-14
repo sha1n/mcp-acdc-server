@@ -140,33 +140,33 @@ func attach(ctx context.Context, logger *slog.Logger, conn *net.UnixConn, server
 	defer stopOnCancel()
 
 	session := NewSessionID()
-	sessionLogger := logger.With("session", session)
+	sessionCtx := withSession(ctx, session)
 	if revalidate != nil {
 		revalidate(ctx)
 	}
 	readyLine, err := EncodeReadyLine(session, logPath)
 	if err != nil {
-		sessionLogger.Error("Failed to attach session", "error", err)
+		logger.ErrorContext(sessionCtx, "Failed to attach session", "error", err)
 		return
 	}
 	if _, err := conn.Write(readyLine); err != nil {
 		if peerDisconnected(err) || ctx.Err() != nil {
 			return
 		}
-		sessionLogger.Error("Failed to send ready line", "error", err)
+		logger.ErrorContext(sessionCtx, "Failed to send ready line", "error", err)
 		return
 	}
-	sessionLogger.Info("Session attached")
-	defer sessionLogger.Info("Session detached")
+	logger.InfoContext(sessionCtx, "Session attached")
+	defer logger.InfoContext(sessionCtx, "Session detached")
 
 	// The SDK closes both halves; closing conn twice would end every clean
 	// session with a "use of closed network connection" error.
-	serverSession, err := server.Connect(withSession(ctx, session), &mcp.IOTransport{Reader: io.NopCloser(conn), Writer: conn}, nil)
+	serverSession, err := server.Connect(sessionCtx, &mcp.IOTransport{Reader: io.NopCloser(conn), Writer: conn}, nil)
 	if err != nil {
-		sessionLogger.Error("Failed to connect session", "error", err)
+		logger.ErrorContext(sessionCtx, "Failed to connect session", "error", err)
 		return
 	}
 	if err := serverSession.Wait(); err != nil && !peerDisconnected(err) && ctx.Err() == nil {
-		sessionLogger.Warn("Session ended with an error", "error", err)
+		logger.WarnContext(sessionCtx, "Session ended with an error", "error", err)
 	}
 }

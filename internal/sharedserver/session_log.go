@@ -23,24 +23,22 @@ func withSession(ctx context.Context, session string) context.Context {
 // derivation is one WithAttrs or WithGroup call, kept so it can be replayed
 // on top of the session attribute.
 type derivation struct {
-	attrs    []slog.Attr
-	group    string
-	topLevel bool
+	attrs []slog.Attr
+	group string
 }
 
-func (d derivation) apply(inner slog.Handler, attributed bool) slog.Handler {
+func (d derivation) apply(inner slog.Handler) slog.Handler {
 	if d.group != "" {
 		return inner.WithGroup(d.group)
-	}
-	if attributed && d.topLevel {
-		return inner.WithAttrs(withoutSession(d.attrs))
 	}
 	return inner.WithAttrs(d.attrs)
 }
 
-// sessionHandler keeps the session a top-level attribute even under groups
-// derived later, by replaying those derivations on top of it. The context's
-// session is the connection's own, so it replaces any other top-level one.
+// sessionHandler adds the session carried by an entry's context as a
+// top-level attribute, even under groups derived later, by replaying those
+// derivations on top of it. The context is the only source of the session:
+// attributes a caller supplies are never removed or rewritten, so a caller
+// that adds its own session attribute gets exactly what it wrote.
 type sessionHandler struct {
 	base    slog.Handler
 	derived []derivation
@@ -62,16 +60,16 @@ func (h *sessionHandler) Handle(ctx context.Context, record slog.Record) error {
 	}
 	attributed := h.base.WithAttrs([]slog.Attr{slog.String(sessionAttrKey, session)})
 	for _, d := range h.derived {
-		attributed = d.apply(attributed, true)
-	}
-	if !h.inGroup() {
-		record = recordWithoutSession(record)
+		attributed = d.apply(attributed)
 	}
 	return attributed.Handle(ctx, record)
 }
 
+// WithAttrs resolves attrs once, as the wrapped handler would at derivation,
+// so a replay neither invokes a LogValuer again nor sees a value it has since
+// changed to.
 func (h *sessionHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return h.derive(derivation{attrs: attrs, topLevel: !h.inGroup()})
+	return h.derive(derivation{attrs: resolveAttrs(attrs)})
 }
 
 func (h *sessionHandler) WithGroup(name string) slog.Handler {
@@ -81,37 +79,26 @@ func (h *sessionHandler) WithGroup(name string) slog.Handler {
 	return h.derive(derivation{group: name})
 }
 
-func (h *sessionHandler) inGroup() bool {
-	return slices.ContainsFunc(h.derived, func(d derivation) bool { return d.group != "" })
-}
-
 func (h *sessionHandler) derive(d derivation) slog.Handler {
 	return &sessionHandler{
 		base:    h.base,
-		derived: append(slices.Clone(h.derived), d),
-		handler: d.apply(h.handler, false),
+		derived: append(slices.Clip(h.derived), d),
+		handler: d.apply(h.handler),
 	}
 }
 
-func withoutSession(attrs []slog.Attr) []slog.Attr {
-	return slices.DeleteFunc(slices.Clone(attrs), func(a slog.Attr) bool { return a.Key == sessionAttrKey })
+func resolveAttrs(attrs []slog.Attr) []slog.Attr {
+	resolved := make([]slog.Attr, len(attrs))
+	for i, a := range attrs {
+		resolved[i] = slog.Attr{Key: a.Key, Value: resolveValue(a.Value)}
+	}
+	return resolved
 }
 
-func recordWithoutSession(record slog.Record) slog.Record {
-	var attrs []slog.Attr
-	found := false
-	record.Attrs(func(a slog.Attr) bool {
-		if a.Key == sessionAttrKey {
-			found = true
-		} else {
-			attrs = append(attrs, a)
-		}
-		return true
-	})
-	if !found {
-		return record
+func resolveValue(v slog.Value) slog.Value {
+	v = v.Resolve()
+	if v.Kind() != slog.KindGroup {
+		return v
 	}
-	stripped := slog.NewRecord(record.Time, record.Level, record.Message, record.PC)
-	stripped.AddAttrs(attrs...)
-	return stripped
+	return slog.GroupValue(resolveAttrs(v.Group())...)
 }
