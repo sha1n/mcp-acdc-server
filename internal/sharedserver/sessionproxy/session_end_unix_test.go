@@ -141,9 +141,18 @@ func (s *endedSession) endByEOF() {
 	}
 }
 
-func (s *endedSession) serveAsync(cfg Config) <-chan error {
+// endAsync runs the unattached path of Run over the host input the test owns.
+func (s *endedSession) endAsync(cfg Config) <-chan error {
 	done := make(chan error, 1)
-	go func() { done <- serve(s.ctx, cfg, s.input) }()
+	go func() {
+		att, err := establish(s.ctx, cfg, s.input.ended)
+		if err == nil {
+			_ = att.conn.Close()
+			done <- errors.New("attached instead of ending")
+			return
+		}
+		done <- endWithoutAttach(s.ctx, cfg, err, s.input)
+	}()
 	return done
 }
 
@@ -224,9 +233,8 @@ func failingPhaseCases() []sessionEndCase {
 			}},
 			sessionEndCase{name: attempt.name + "/connect wait", configure: func(t *testing.T, dir string, end func(), cfg *Config) {
 				prepare(t, dir)
-				c := &expiringClock{now: time.Unix(0, 0)}
-				cfg.clock = c
-				cfg.Spawn = func(string) error { end(); c.expire(); return nil }
+				cfg.ConnectWait = 10 * time.Millisecond
+				cfg.Spawn = func(string) error { end(); return nil }
 			}},
 		)
 	}
@@ -241,7 +249,7 @@ func failingPhaseCases() []sessionEndCase {
 	}})
 }
 
-func TestServe_NeverFallsBackWhenTheHostEndedBeforeAPhaseFailed(t *testing.T) {
+func TestSessionWithoutAttach_NeverFallsBackWhenTheHostEndedBeforeAPhaseFailed(t *testing.T) {
 	for _, tt := range failingPhaseCases() {
 		for _, way := range []string{"cancellation", "stdin EOF"} {
 			t.Run(tt.name+"/"+way, func(t *testing.T) {
@@ -254,7 +262,7 @@ func TestServe_NeverFallsBackWhenTheHostEndedBeforeAPhaseFailed(t *testing.T) {
 				cfg := s.config(dir)
 				tt.configure(t, dir, end, &cfg)
 
-				s.requireEndedWithoutFallback(s.serveAsync(cfg))
+				s.requireEndedWithoutFallback(s.endAsync(cfg))
 			})
 		}
 	}

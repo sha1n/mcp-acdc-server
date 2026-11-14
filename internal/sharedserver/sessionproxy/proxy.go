@@ -29,14 +29,6 @@ type Config struct {
 	Logger   *slog.Logger
 	Stdin    io.Reader
 	Stdout   io.Writer
-	clock    clock
-}
-
-func (cfg Config) clockOrReal() clock {
-	if cfg.clock == nil {
-		return realClock{}
-	}
-	return cfg.clock
 }
 
 // Run returns nil when the session ends normally, on host stdin EOF or on
@@ -50,10 +42,6 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	input := readHostInput(cfg.Stdin)
 	defer input.stop()
-	return serve(ctx, cfg, input)
-}
-
-func serve(ctx context.Context, cfg Config, input *hostInput) error {
 	att, err := establish(ctx, cfg, input.ended)
 	if err != nil {
 		return endWithoutAttach(ctx, cfg, err, input)

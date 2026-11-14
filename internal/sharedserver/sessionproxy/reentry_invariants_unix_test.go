@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,67 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// manualClock moves only when the test advances it; a back-off elapses at
-// once, so only the connect wait depends on the time the test sets.
-type manualClock struct {
-	mu     sync.Mutex
-	now    time.Time
-	nextID int
-	timers map[int]manualTimer
-}
-
-type manualTimer struct {
-	at time.Time
-	f  func()
-}
-
-func newManualClock() *manualClock {
-	return &manualClock{now: time.Unix(0, 0), timers: map[int]manualTimer{}}
-}
-
-func (c *manualClock) Now() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.now
-}
-
-func (c *manualClock) After(time.Duration) <-chan time.Time {
-	fired := make(chan time.Time, 1)
-	fired <- c.Now()
-	return fired
-}
-
-func (c *manualClock) AfterFunc(d time.Duration, f func()) func() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	id := c.nextID
-	c.nextID++
-	c.timers[id] = manualTimer{at: c.now.Add(d), f: f}
-	return func() bool {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		_, pending := c.timers[id]
-		delete(c.timers, id)
-		return pending
-	}
-}
-
-func (c *manualClock) advance(d time.Duration) {
-	c.mu.Lock()
-	c.now = c.now.Add(d)
-	var due []func()
-	for id, timer := range c.timers {
-		if !timer.at.After(c.now) {
-			due = append(due, timer.f)
-			delete(c.timers, id)
-		}
-	}
-	c.mu.Unlock()
-	for _, f := range due {
-		f()
-	}
-}
 
 type established struct {
 	att *attachment
@@ -147,26 +85,29 @@ func TestEstablish_RecomputesTheIdentityOnReentry(t *testing.T) {
 	assert.Equal(t, int32(2), calls.Load())
 }
 
+// The ready line is withheld for real time beyond the connect wait: a
+// re-entry charged with the time spent waiting for it would expire at once.
 func TestEstablish_GivesTheReentryAFreshConnectWaitAfterALongReadyWait(t *testing.T) {
 	const connectWait = time.Second
 	dir := sessionEndTestDir(t)
-	c := newManualClock()
 	first := listenFor(t, dir, firstIdentity)
 	relistened := make(chan *identityListener, 1)
 	result := establishAsync(t, Config{
 		EndpointDir: func() (string, error) { return dir, nil },
 		Identity:    func() (string, error) { return firstIdentity, nil },
 		ConnectWait: connectWait,
-		clock:       c,
 		Spawn: func(string) error {
-			c.advance(connectWait / 2)
 			relistened <- listenFor(t, dir, firstIdentity)
 			return nil
 		},
 	})
 
 	conn := first.nextConn()
-	c.advance(2 * connectWait)
+	select {
+	case r := <-result:
+		t.Fatalf("establish returned while the ready line was withheld: %v", r.err)
+	case <-time.After(connectWait + connectWait/2):
+	}
 	_ = first.listener.Close()
 	_ = conn.Close()
 	select {
