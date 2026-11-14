@@ -3,11 +3,9 @@
 package testkit
 
 import (
-	"io"
 	"net"
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 	"time"
 
@@ -84,7 +82,7 @@ func TestHoldSharedServer_LingersBeyondItsDeadlineWithoutChangingTheIdentity(t *
 func TestHoldSharedServer_IgnoresTheExitOfAnotherCandidate(t *testing.T) {
 	h := NewSharedServerHarness(t)
 	args := SharedLaunchArgs(CreateTestContentDir(t, nil))
-	releaseLog := withholdLog(t, h, h.Identity(args))
+	gate := withholdLog(t, h, h.Identity(args))
 	result := holdInBackground(h, args, time.Now().Add(SharedServerDeadline))
 	h.Eventually(func() bool { return h.Spawns() == 1 }, "the held candidate is not spawned")
 
@@ -93,7 +91,7 @@ func TestHoldSharedServer_IgnoresTheExitOfAnotherCandidate(t *testing.T) {
 	h.HoldLock(otherID)
 	require.NoError(t, h.SpawnSharedServer(otherArgs)(otherID))
 	h.Eventually(func() bool { return len(h.SharedServerExits()) == 1 }, "the other candidate's exit is not recorded")
-	releaseLog()
+	require.NoError(t, gate.release())
 
 	got := awaitHoldResult(t, result)
 	require.NoError(t, got.err)
@@ -109,7 +107,7 @@ func TestHoldSharedServer_ReportsAnExitDuringABlockedAttachWithoutAwaitingTheDea
 	id := h.Identity(args)
 	socketPath, err := h.Endpoint().SocketPath(id)
 	require.NoError(t, err)
-	releaseLog := withholdLog(t, h, id)
+	gate := withholdLog(t, h, id)
 	// It accepts the helper's attach and never writes a ready line.
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
 	require.NoError(t, err)
@@ -127,7 +125,7 @@ func TestHoldSharedServer_ReportsAnExitDuringABlockedAttachWithoutAwaitingTheDea
 	require.NoError(t, os.Remove(socketPath))
 	require.NoError(t, os.MkdirAll(socketPath, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(socketPath, "occupied"), nil, 0o600))
-	releaseLog()
+	require.NoError(t, gate.release())
 
 	got := awaitHoldResult(t, result)
 	require.Error(t, got.err)
@@ -159,25 +157,5 @@ func awaitHoldResult(t *testing.T, result <-chan holdResult) holdResult {
 	case <-time.After(SharedServerDeadline):
 		t.Fatalf("the helper did not return within %s", SharedServerDeadline)
 		return holdResult{}
-	}
-}
-
-// withholdLog puts a FIFO at the log path of id, so a candidate for id blocks
-// opening its log, after it takes its lock and before it binds its socket,
-// until release opens the FIFO for reading. The log is then drained until the
-// candidate closes it.
-func withholdLog(t *testing.T, h *SharedServerHarness, id string) (release func()) {
-	t.Helper()
-	logPath := filepath.Join(h.LogDir, id+".log")
-	require.NoError(t, syscall.Mkfifo(logPath, 0o600))
-	return func() {
-		go func() {
-			log, err := os.Open(logPath)
-			if err != nil {
-				return
-			}
-			defer func() { _ = log.Close() }()
-			_, _ = io.Copy(io.Discard, log)
-		}()
 	}
 }
