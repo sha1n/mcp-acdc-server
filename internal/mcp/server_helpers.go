@@ -13,10 +13,10 @@ import (
 func makeResourceHandler(logger *slog.Logger, catalog resources.Catalog, revalidator Revalidator, uri string) mcp.ResourceHandler {
 	return func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 		revalidator.Revalidate(ctx)
-		logger.Info("Resource request", "uri", uri)
+		logger.InfoContext(ctx, "Resource request", "uri", uri)
 		content, err := catalog.ReadResource(uri)
 		if err != nil {
-			logger.Error("Resource read failed", "uri", uri, "error", err)
+			logger.ErrorContext(ctx, "Resource read failed", "uri", uri, "error", err)
 			return nil, err
 		}
 		return &mcp.ReadResourceResult{
@@ -31,10 +31,10 @@ func makeResourceHandler(logger *slog.Logger, catalog resources.Catalog, revalid
 
 func makePromptHandler(logger *slog.Logger, promptProvider *prompts.PromptProvider, name string) mcp.PromptHandler {
 	return func(ctx context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-		logger.Info("Prompt request", "name", name)
+		logger.InfoContext(ctx, "Prompt request", "name", name)
 		messages, err := promptProvider.GetPrompt(name, req.Params.Arguments)
 		if err != nil {
-			logger.Error("Prompt retrieval failed", "name", name, "error", err)
+			logger.ErrorContext(ctx, "Prompt retrieval failed", "name", name, "error", err)
 			return nil, err
 		}
 		return &mcp.GetPromptResult{

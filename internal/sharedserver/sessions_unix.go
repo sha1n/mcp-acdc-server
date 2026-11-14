@@ -147,6 +147,7 @@ func (a *sessionAcceptor) acceptLoop() error {
 		}
 		if errors.Is(err, os.ErrDeadlineExceeded) && a.wake.consume() {
 			if a.linger.shutdownIfExpired(a.closeAndUnlink) {
+				a.logger.Info("Shared server linger expired with no session attached", "linger", a.linger.linger)
 				return nil
 			}
 			continue

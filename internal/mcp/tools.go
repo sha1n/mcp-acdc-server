@@ -50,11 +50,11 @@ func NewSearchToolHandler(logger *slog.Logger, searchService search.Searcher, re
 	return func(ctx context.Context, req *mcp.CallToolRequest, args SearchToolArgument) (*mcp.CallToolResult, any, error) {
 		revalidator.Revalidate(ctx)
 		// Args are already validated and unmarshaled by SDK via jsonschema tags
-		logger.Info("Search request", "query", args.Query)
+		logger.InfoContext(ctx, "Search request", "query", args.Query)
 
 		selected, err := fillSearchPage(searchService, args.Query, settings.ResultMode, settings.MaxResults)
 		if err != nil {
-			logger.Error("Search failed", "query", args.Query, "error", err)
+			logger.ErrorContext(ctx, "Search failed", "query", args.Query, "error", err)
 			return nil, nil, err
 		}
 
@@ -71,11 +71,11 @@ func NewReadToolHandler(logger *slog.Logger, catalog resources.Catalog, revalida
 	return func(ctx context.Context, req *mcp.CallToolRequest, args ReadToolArgument) (*mcp.CallToolResult, any, error) {
 		revalidator.Revalidate(ctx)
 		// Args are already validated and unmarshaled by SDK via jsonschema tags
-		logger.Info("Get resource request", "uri", args.URI)
+		logger.InfoContext(ctx, "Get resource request", "uri", args.URI)
 
 		content, err := catalog.ReadResource(args.URI)
 		if err != nil {
-			logger.Error("Get resource failed", "uri", args.URI, "error", err)
+			logger.ErrorContext(ctx, "Get resource failed", "uri", args.URI, "error", err)
 			return nil, nil, err
 		}
 

@@ -44,9 +44,11 @@ func Run(ctx context.Context, cfg Config) error {
 	defer func() { _ = conn.Close() }()
 
 	fromServer := bufio.NewReader(conn)
-	if err := awaitReady(ctx, fromServer, input.ended); err != nil {
+	ready, err := awaitReady(ctx, fromServer, input.ended)
+	if err != nil {
 		return sessionResult(ctx, err)
 	}
+	logAttached(cfg.Logger, ready)
 	return sessionResult(ctx, relay(ctx, conn, fromServer, input, cfg.Stdout))
 }
 
@@ -102,25 +104,37 @@ func computeIdentity(ctx context.Context, compute func() (string, error), abort 
 
 // awaitReady has no limit of its own: the shared server may still be building
 // its index, and the host's initialize timeout governs that wait.
-func awaitReady(ctx context.Context, fromServer *bufio.Reader, abort <-chan struct{}) error {
-	result := make(chan error, 1)
+func awaitReady(ctx context.Context, fromServer *bufio.Reader, abort <-chan struct{}) (sharedserver.ReadyLine, error) {
+	type decoded struct {
+		ready sharedserver.ReadyLine
+		err   error
+	}
+	result := make(chan decoded, 1)
 	go func() {
 		line, err := fromServer.ReadBytes('\n')
 		if err != nil {
-			result <- fmt.Errorf("shared server connection dropped before the ready line: %w", err)
+			result <- decoded{err: fmt.Errorf("shared server connection dropped before the ready line: %w", err)}
 			return
 		}
-		_, err = sharedserver.DecodeReadyLine(line)
-		result <- err
+		ready, err := sharedserver.DecodeReadyLine(line)
+		result <- decoded{ready: ready, err: err}
 	}()
 	select {
-	case err := <-result:
-		return err
+	case r := <-result:
+		return r.ready, r.err
 	case <-ctx.Done():
-		return ctx.Err()
+		return sharedserver.ReadyLine{}, ctx.Err()
 	case <-abort:
-		return errSessionEnded
+		return sharedserver.ReadyLine{}, errSessionEnded
 	}
+}
+
+func logAttached(logger *slog.Logger, ready sharedserver.ReadyLine) {
+	if ready.Log == "" {
+		logger.Warn("Attached to the shared server, which has no log file", "session", ready.Session)
+		return
+	}
+	logger.Info("Attached to the shared server", "session", ready.Session, "log", ready.Log)
 }
 
 func relay(ctx context.Context, conn net.Conn, fromServer *bufio.Reader, input *hostInput, stdout io.Writer) error {
