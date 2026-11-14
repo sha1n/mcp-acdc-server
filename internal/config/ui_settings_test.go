@@ -120,11 +120,13 @@ func TestLoadSettings_UIMaxResultsInvalidEnv(t *testing.T) {
 
 func validUIBaseSettings(ui UISettings) *Settings {
 	return &Settings{
-		Transport: "sse",
-		Scheme:    "acdc",
-		Search:    defaultSearchSettings(),
-		Auth:      AuthSettings{Type: AuthTypeNone},
-		UI:        ui,
+		Transport:    "sse",
+		ServerMode:   ServerModeShared,
+		SharedServer: defaultSharedServerSettings(),
+		Scheme:       "acdc",
+		Search:       defaultSearchSettings(),
+		Auth:         AuthSettings{Type: AuthTypeNone},
+		UI:           ui,
 	}
 }
 
