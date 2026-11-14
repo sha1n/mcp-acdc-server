@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -11,8 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func sharedServerCreateSpy(created *bool) func(context.Context, *config.Settings, string) (Components, error) {
-	return func(context.Context, *config.Settings, string) (Components, error) {
+func sharedServerCreateSpy(created *bool) func(context.Context, *slog.Logger, *config.Settings, string) (Components, error) {
+	return func(context.Context, *slog.Logger, *config.Settings, string) (Components, error) {
 		*created = true
 		return Components{MCP: mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil)}, nil
 	}

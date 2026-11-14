@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,7 +154,7 @@ tools: []
 		},
 	}
 
-	components, err := CreateServer(context.Background(), settings, "test")
+	components, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), settings, "test")
 
 	server, cleanup := components.MCP, components.Cleanup
 	if err != nil {
@@ -184,7 +185,7 @@ func TestCreateServer_MissingManifestNoDefaultDocsSucceedsLeniently(t *testing.T
 		},
 	}
 
-	components, err := CreateServer(context.Background(), settings, "test")
+	components, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), settings, "test")
 
 	server, cleanup := components.MCP, components.Cleanup
 	if err != nil {
@@ -206,7 +207,7 @@ func TestCreateServer_MissingManifestWithDefaultDocsSucceeds(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(contentDir, "docs"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "a.md"), []byte("# Doc A\n"), 0o644))
 
-	components, err := CreateServer(context.Background(), appTestSettings(contentDir), "test")
+	components, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), appTestSettings(contentDir), "test")
 
 	server, cleanup := components.MCP, components.Cleanup
 	require.NoError(t, err)
@@ -230,7 +231,7 @@ func TestCreateServer_MissingManifestOverLegacyLayoutSucceeds(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(resourcesDir, "guide.md"),
 		[]byte("---\nname: Guide\ndescription: A guide.\n---\ncontent"), 0o644))
 
-	components, err := CreateServer(context.Background(), appTestSettings(contentDir), "test")
+	components, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), appTestSettings(contentDir), "test")
 
 	server, cleanup := components.MCP, components.Cleanup
 	require.NoError(t, err)
@@ -245,7 +246,7 @@ func TestCreateServer_DefaultedMetadataCarriesInjectedVersion(t *testing.T) {
 	contentDir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "README.md"), []byte("# Hello\n"), 0o644))
 
-	components, err := CreateServer(context.Background(), appTestSettings(contentDir), "9.9.9")
+	components, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), appTestSettings(contentDir), "9.9.9")
 
 	server, cleanup := components.MCP, components.Cleanup
 	require.NoError(t, err)
@@ -283,7 +284,7 @@ func TestCreateServer_InvalidMetadataYAML(t *testing.T) {
 		},
 	}
 
-	_, err := CreateServer(context.Background(), settings, "test")
+	_, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), settings, "test")
 	if err == nil {
 		t.Fatal("Expected error for invalid YAML")
 	}
@@ -315,7 +316,7 @@ server:
 		},
 	}
 
-	_, err := CreateServer(context.Background(), settings, "test")
+	_, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), settings, "test")
 	if err == nil {
 		t.Fatal("Expected error for invalid metadata")
 	}
@@ -352,7 +353,7 @@ tools: []
 	}
 
 	// Invalid resources are skipped, not failed
-	components, err := CreateServer(context.Background(), settings, "test")
+	components, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), settings, "test")
 	server, cleanup := components.MCP, components.Cleanup
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
@@ -384,7 +385,7 @@ func TestCreateServer_ResourceWithKeywords(t *testing.T) {
 		Search:     config.SearchSettings{InMemory: true, MaxResults: 10},
 	}
 
-	components, err := CreateServer(context.Background(), settings, "test")
+	components, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), settings, "test")
 
 	server, cleanup := components.MCP, components.Cleanup
 	if err != nil {
@@ -422,7 +423,7 @@ tools: []
 	}
 
 	// Should succeed with no resources
-	components, err := CreateServer(context.Background(), settings, "test")
+	components, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), settings, "test")
 	server, cleanup := components.MCP, components.Cleanup
 	if err != nil {
 		t.Fatalf("Failed to create server with no resources: %v", err)
@@ -444,7 +445,7 @@ index:
   include: ["docs/**/*.md"]
 `)
 
-	components, err := CreateServer(context.Background(), appTestSettings(contentDir), "test")
+	components, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), appTestSettings(contentDir), "test")
 
 	cleanup := components.Cleanup
 
@@ -460,14 +461,14 @@ func TestCreateServer_IndexFailureStopsConstruction(t *testing.T) {
 `)
 	indexer := &fakeSearcher{indexErr: errors.New("index failed")}
 	deps := defaultFactoryDeps()
-	deps.discover = func(context.Context, *content.ContentProvider, *domain.IndexMetadata, string, ...resources.DiscoverOption) (resources.DiscoveryResult, error) {
+	deps.discover = func(context.Context, *slog.Logger, *content.ContentProvider, *domain.IndexMetadata, string, ...resources.DiscoverOption) (resources.DiscoveryResult, error) {
 		return resources.DiscoveryResult{}, nil
 	}
 	deps.newSearch = func(config.SearchSettings) uiSearcher {
 		return indexer
 	}
 
-	components, err := createServer(context.Background(), appTestSettings(contentDir), "test", deps)
+	components, err := createServer(context.Background(), slog.New(slog.DiscardHandler), appTestSettings(contentDir), "test", deps)
 
 	server, cleanup := components.MCP, components.Cleanup
 
@@ -486,7 +487,7 @@ func TestCreateServer_PassesCallerContextToDiscovery(t *testing.T) {
 	ctx := context.WithValue(context.Background(), factoryContextKey{}, "request-context")
 	deps := defaultFactoryDeps()
 	var discoveryCtx context.Context
-	deps.discover = func(gotCtx context.Context, _ *content.ContentProvider, _ *domain.IndexMetadata, _ string, _ ...resources.DiscoverOption) (resources.DiscoveryResult, error) {
+	deps.discover = func(gotCtx context.Context, _ *slog.Logger, _ *content.ContentProvider, _ *domain.IndexMetadata, _ string, _ ...resources.DiscoverOption) (resources.DiscoveryResult, error) {
 		discoveryCtx = gotCtx
 		return resources.DiscoveryResult{}, nil
 	}
@@ -494,7 +495,7 @@ func TestCreateServer_PassesCallerContextToDiscovery(t *testing.T) {
 		return &fakeSearcher{drain: true}
 	}
 
-	components, err := createServer(ctx, appTestSettings(contentDir), "test", deps)
+	components, err := createServer(ctx, slog.New(slog.DiscardHandler), appTestSettings(contentDir), "test", deps)
 
 	server, cleanup := components.MCP, components.Cleanup
 
@@ -521,14 +522,14 @@ index:
   include: ["/abs/pattern/**"]
 `)
 	deps := defaultFactoryDeps()
-	deps.discover = func(context.Context, *content.ContentProvider, *domain.IndexMetadata, string, ...resources.DiscoverOption) (resources.DiscoveryResult, error) {
+	deps.discover = func(context.Context, *slog.Logger, *content.ContentProvider, *domain.IndexMetadata, string, ...resources.DiscoverOption) (resources.DiscoveryResult, error) {
 		return resources.DiscoveryResult{}, nil
 	}
 	deps.newSearch = func(config.SearchSettings) uiSearcher {
 		return &fakeSearcher{drain: true}
 	}
 
-	components, err := createServer(context.Background(), appTestSettings(contentDir), "test", deps)
+	components, err := createServer(context.Background(), slog.New(slog.DiscardHandler), appTestSettings(contentDir), "test", deps)
 
 	server, cleanup := components.MCP, components.Cleanup
 
@@ -552,7 +553,7 @@ index:
 	require.NoError(t, os.MkdirAll(filepath.Join(contentDir, "docs"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "data.txt"), []byte("not markdown"), 0o644))
 
-	_, err := CreateServer(context.Background(), &config.Settings{ContentDir: contentDir, Scheme: "acdc", Search: config.SearchSettings{InMemory: true}}, "test")
+	_, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), &config.Settings{ContentDir: contentDir, Scheme: "acdc", Search: config.SearchSettings{InMemory: true}}, "test")
 	require.ErrorContains(t, err, "failed to discover resources")
 	require.ErrorContains(t, err, "configured index selected non-Markdown file")
 }
@@ -572,7 +573,7 @@ index:
 	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "guide.md"), []byte("# Guide"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(contentDir, "docs", "guide.markdown"), []byte("# Guide duplicate"), 0o644))
 
-	components, err := CreateServer(context.Background(), &config.Settings{ContentDir: contentDir, Scheme: "acdc", Search: config.SearchSettings{InMemory: true}}, "test")
+	components, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), &config.Settings{ContentDir: contentDir, Scheme: "acdc", Search: config.SearchSettings{InMemory: true}}, "test")
 
 	server, cleanup := components.MCP, components.Cleanup
 	require.NoError(t, err)
@@ -595,7 +596,7 @@ tools:
 	_ = os.WriteFile(cp.ConfigFile, []byte(metadataContent), 0644)
 
 	settings := &config.Settings{ContentDir: contentDir}
-	_, err := CreateServer(context.Background(), settings, "test")
+	_, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), settings, "test")
 	if err == nil || !strings.Contains(err.Error(), "metadata validation failed") {
 		t.Errorf("Expected metadata validation error, got: %v", err)
 	}
@@ -616,7 +617,7 @@ tools:
 	_ = os.WriteFile(cp.ConfigFile, []byte(metadataContent), 0644)
 
 	settings := &config.Settings{ContentDir: contentDir}
-	_, err := CreateServer(context.Background(), settings, "test")
+	_, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), settings, "test")
 	if err == nil || !strings.Contains(err.Error(), "metadata validation failed") {
 		t.Errorf("Expected metadata validation error, got: %v", err)
 	}
@@ -637,7 +638,7 @@ tools:
 	_ = os.WriteFile(cp.ConfigFile, []byte(metadataContent), 0644)
 
 	settings := &config.Settings{ContentDir: contentDir}
-	_, err := CreateServer(context.Background(), settings, "test")
+	_, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), settings, "test")
 	if err == nil || !strings.Contains(err.Error(), "duplicate tool name") {
 		t.Errorf("Expected duplicate tool name error, got: %v", err)
 	}
@@ -662,7 +663,7 @@ func TestCreateServer_PromptDiscoveryError(t *testing.T) {
 		Search:     config.SearchSettings{InMemory: true},
 	}
 
-	_, err := CreateServer(context.Background(), settings, "test")
+	_, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), settings, "test")
 	if err == nil {
 		t.Fatal("Expected error for prompt discovery failure")
 	}
@@ -697,7 +698,7 @@ func TestCreateServer_CrossRefTransformation(t *testing.T) {
 		Search:     config.SearchSettings{InMemory: true, MaxResults: 10},
 	}
 
-	components, err := CreateServer(context.Background(), settings, "test")
+	components, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), settings, "test")
 
 	server, cleanup := components.MCP, components.Cleanup
 	if err != nil {
@@ -727,7 +728,7 @@ func TestCreateServer_CrossRefTransformation_ContentVerification(t *testing.T) {
 
 	// Replicate the factory wiring to verify content transformation
 	cp := content.NewContentProvider(contentDir)
-	defs, err := resources.DiscoverResources(cp, "acdc")
+	defs, err := resources.DiscoverResources(slog.New(slog.DiscardHandler), cp, "acdc")
 	if err != nil {
 		t.Fatalf("DiscoverResources error: %v", err)
 	}
@@ -779,7 +780,7 @@ func TestCreateServer_CrossRefDisabledByDefault(t *testing.T) {
 
 	// CrossRef not set (defaults to false)
 	cp := content.NewContentProvider(contentDir)
-	defs, err := resources.DiscoverResources(cp, "acdc")
+	defs, err := resources.DiscoverResources(slog.New(slog.DiscardHandler), cp, "acdc")
 	if err != nil {
 		t.Fatalf("DiscoverResources error: %v", err)
 	}
@@ -819,7 +820,7 @@ func TestCreateServer_CrossRefTransformation_CustomScheme(t *testing.T) {
 	_ = os.WriteFile(resB, []byte("---\nname: B\ndescription: B\n---\nContent B."), 0644)
 
 	cp := content.NewContentProvider(contentDir)
-	defs, err := resources.DiscoverResources(cp, "myco")
+	defs, err := resources.DiscoverResources(slog.New(slog.DiscardHandler), cp, "myco")
 	if err != nil {
 		t.Fatalf("DiscoverResources error: %v", err)
 	}
@@ -857,7 +858,7 @@ func applySSEOptions(opts []SSEOption) sseOptions {
 }
 
 func TestCreateServer_SSEOptionsSupplyWebUIComponents(t *testing.T) {
-	components, err := CreateServer(context.Background(), appTestSettings(writeZeroConfigContent(t)), "test")
+	components, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), appTestSettings(writeZeroConfigContent(t)), "test")
 	require.NoError(t, err)
 	defer components.Cleanup()
 
@@ -886,7 +887,7 @@ func TestCreateServer_SSEOptionsSuppliedWhenUIDisabled(t *testing.T) {
 	settings := appTestSettings(writeZeroConfigContent(t))
 	settings.UI = config.UISettings{Enabled: false}
 
-	components, err := CreateServer(context.Background(), settings, "test")
+	components, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), settings, "test")
 	require.NoError(t, err)
 	defer components.Cleanup()
 
@@ -908,7 +909,7 @@ func TestCreateServer_DocumentsFollowCrossRefSetting(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			settings := appTestSettings(writeZeroConfigContent(t))
 			settings.CrossRef = tt.crossRef
-			components, err := CreateServer(context.Background(), settings, "test")
+			components, err := CreateServer(context.Background(), slog.New(slog.DiscardHandler), settings, "test")
 			require.NoError(t, err)
 			defer components.Cleanup()
 
@@ -929,11 +930,11 @@ func TestCreateServer_ErrorReturnsZeroComponents(t *testing.T) {
   instructions: test
 `)
 	deps := defaultFactoryDeps()
-	deps.discover = func(context.Context, *content.ContentProvider, *domain.IndexMetadata, string, ...resources.DiscoverOption) (resources.DiscoveryResult, error) {
+	deps.discover = func(context.Context, *slog.Logger, *content.ContentProvider, *domain.IndexMetadata, string, ...resources.DiscoverOption) (resources.DiscoveryResult, error) {
 		return resources.DiscoveryResult{}, errors.New("discovery failed")
 	}
 
-	components, err := createServer(context.Background(), appTestSettings(contentDir), "test", deps)
+	components, err := createServer(context.Background(), slog.New(slog.DiscardHandler), appTestSettings(contentDir), "test", deps)
 
 	require.ErrorContains(t, err, "discovery failed")
 	require.Nil(t, components.MCP)
@@ -946,7 +947,7 @@ func TestCreateServer_WebUIBackendIsTheIndexedSearcher(t *testing.T) {
 	deps := defaultFactoryDeps()
 	deps.newSearch = func(config.SearchSettings) uiSearcher { return searcher }
 
-	components, err := createServer(context.Background(), appTestSettings(writeZeroConfigContent(t)), "test", deps)
+	components, err := createServer(context.Background(), slog.New(slog.DiscardHandler), appTestSettings(writeZeroConfigContent(t)), "test", deps)
 	require.NoError(t, err)
 	defer components.Cleanup()
 
@@ -964,12 +965,12 @@ func TestCreateServer_DuplicateDiscoveredSourceURIStopsConstruction(t *testing.T
   instructions: test
 `)
 	deps := defaultFactoryDeps()
-	deps.discover = func(context.Context, *content.ContentProvider, *domain.IndexMetadata, string, ...resources.DiscoverOption) (resources.DiscoveryResult, error) {
+	deps.discover = func(context.Context, *slog.Logger, *content.ContentProvider, *domain.IndexMetadata, string, ...resources.DiscoverOption) (resources.DiscoveryResult, error) {
 		duplicate := domain.SourceDocument{URI: "acdc://docs/guide"}
 		return resources.DiscoveryResult{Sources: []domain.SourceDocument{duplicate, duplicate}}, nil
 	}
 
-	components, err := createServer(context.Background(), appTestSettings(contentDir), "test", deps)
+	components, err := createServer(context.Background(), slog.New(slog.DiscardHandler), appTestSettings(contentDir), "test", deps)
 
 	require.ErrorContains(t, err, "failed to create resource provider: duplicate source URI: acdc://docs/guide")
 	require.Nil(t, components.MCP)

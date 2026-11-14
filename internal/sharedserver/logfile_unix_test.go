@@ -133,36 +133,30 @@ func TestOpenLog_UnopenableDirectoryYieldsNoFile(t *testing.T) {
 	}
 }
 
-func TestStartLog_InstallsTheFileLoggerAndRestoresTheDefault(t *testing.T) {
-	previous := slog.Default()
+func TestStartLog_ReturnsAnInfoLevelTextLoggerOverTheIdentityLog(t *testing.T) {
 	dir := t.TempDir()
 
-	logger, path, stop := startLog(dir, testIdentity)
+	logger, path, closeLog := startLog(dir, testIdentity)
 
 	assert.Equal(t, filepath.Join(dir, testIdentity+".log"), path)
-	assert.Same(t, logger, slog.Default(), "the shared server's entries must all reach its log")
-	slog.Info("routed entry")
+	logger.Info("routed entry")
 	logger.Debug("below the Info level")
-	stop()
-	assert.Same(t, previous, slog.Default())
+	closeLog()
 
 	content, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Regexp(t, `^time=\S+ level=INFO msg="routed entry"\n$`, string(content))
 }
 
-func TestStartLog_UnopenableLogDiscardsEntries(t *testing.T) {
-	previous := slog.Default()
+func TestStartLog_UnopenableLogReturnsADiscardingLogger(t *testing.T) {
 	parent := filepath.Join(t.TempDir(), "file")
 	require.NoError(t, os.WriteFile(parent, nil, 0o600))
 
-	logger, path, stop := startLog(filepath.Join(parent, "acdc-mcp"), testIdentity)
+	logger, path, closeLog := startLog(filepath.Join(parent, "acdc-mcp"), testIdentity)
 
 	assert.Empty(t, path)
-	assert.Same(t, logger, slog.Default())
 	assert.False(t, logger.Enabled(context.Background(), slog.LevelError), "a discarded log must not format entries")
-	stop()
-	assert.Same(t, previous, slog.Default())
+	closeLog()
 }
 
 func TestStartLog_MaintenanceFailuresAreWrittenAsWarnings(t *testing.T) {
@@ -174,8 +168,8 @@ func TestStartLog_MaintenanceFailuresAreWrittenAsWarnings(t *testing.T) {
 	require.NoError(t, os.Mkdir(current+".1", 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(current+".1", "keep"), nil, 0o600))
 
-	_, path, stop := startLog(dir, testIdentity)
-	stop()
+	_, path, closeLog := startLog(dir, testIdentity)
+	closeLog()
 
 	require.Equal(t, current, path)
 	file, err := os.Open(path)

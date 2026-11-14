@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -117,7 +118,7 @@ func startRawServer(t *testing.T, contentDir string) *rawServer {
 	settings, err := config.LoadSettingsWithFlags(flags)
 	require.NoError(t, err)
 
-	components, err := app.CreateServer(context.Background(), settings, "probe")
+	components, err := app.CreateServer(context.Background(), slog.New(slog.DiscardHandler), settings, "probe")
 	require.NoError(t, err)
 
 	clientConn, serverConn := net.Pipe()

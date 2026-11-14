@@ -36,15 +36,11 @@ func (h *recordingHandler) Handle(_ context.Context, r slog.Record) error {
 func (h *recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
 func (h *recordingHandler) WithGroup(string) slog.Handler      { return h }
 
-// Not parallel: the handler logs through slog.Default, which this test swaps.
 func TestAPI_WriteFailureIsLoggedAsWarning(t *testing.T) {
 	recorder := &recordingHandler{}
-	previous := slog.Default()
-	slog.SetDefault(slog.New(recorder))
-	t.Cleanup(func() { slog.SetDefault(previous) })
 
 	w := &failingWriter{header: http.Header{}}
-	newHandler(t, &fakeBackend{}, newFakeReader()).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/config", nil))
+	newLoggingHandler(t, slog.New(recorder), &fakeBackend{}, newFakeReader()).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/config", nil))
 
 	require.Equal(t, http.StatusOK, w.status)
 	require.Len(t, recorder.records, 1)

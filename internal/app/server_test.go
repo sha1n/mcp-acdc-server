@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -74,7 +75,7 @@ func TestNewSSEServer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil)
-			srv, err := NewSSEServer(mcpSrv, tt.settings)
+			srv, err := NewSSEServer(slog.New(slog.DiscardHandler), mcpSrv, tt.settings)
 
 			if tt.wantErr {
 				if err == nil {
@@ -101,7 +102,7 @@ func TestStartSSEServer_NewSSEServerError(t *testing.T) {
 	settings := &config.Settings{
 		Auth: config.AuthSettings{Type: "invalid"},
 	}
-	err := StartSSEServer(mcpSrv, settings)
+	err := StartSSEServer(slog.New(slog.DiscardHandler), mcpSrv, settings)
 	if err == nil {
 		t.Error("Expected error for invalid auth type")
 	}
@@ -124,7 +125,7 @@ func TestStartSSEServer_PortCollision(t *testing.T) {
 		Auth: config.AuthSettings{Type: config.AuthTypeNone},
 	}
 
-	err = StartSSEServer(mcpSrv, settings)
+	err = StartSSEServer(slog.New(slog.DiscardHandler), mcpSrv, settings)
 	if err == nil {
 		t.Error("Expected error because port is already in use")
 	}
@@ -200,7 +201,7 @@ func newUISSEServer(t *testing.T, auth config.AuthSettings, enabled bool) *http.
 		Auth: auth,
 		UI:   config.UISettings{Enabled: enabled, MaxResults: 7},
 	}
-	srv, err := NewSSEServer(mcpSrv, settings, WithWebUI(stubUIBackend{}, stubUIDocuments{}))
+	srv, err := NewSSEServer(slog.New(slog.DiscardHandler), mcpSrv, settings, WithWebUI(stubUIBackend{}, stubUIDocuments{}))
 	require.NoError(t, err)
 	return srv
 }
@@ -267,7 +268,7 @@ func TestNewSSEServer_WebUIDisabledRoutesAreNotFound(t *testing.T) {
 			mcpSrv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil)
 			settings := &config.Settings{Host: "localhost", Auth: config.AuthSettings{Type: config.AuthTypeNone}}
 
-			srv, err := NewSSEServer(mcpSrv, settings, tt.opts...)
+			srv, err := NewSSEServer(slog.New(slog.DiscardHandler), mcpSrv, settings, tt.opts...)
 
 			require.NoError(t, err)
 			for _, path := range []string{"/ui", "/ui/", "/ui/doc", "/api/v1/config", "/api/v1/search?q=x", "/api/v1/unknown"} {
@@ -286,7 +287,7 @@ func TestNewSSEServer_WebUIEnabledWithoutComponentsFails(t *testing.T) {
 		UI:   config.UISettings{Enabled: true, MaxResults: 20},
 	}
 
-	srv, err := NewSSEServer(mcpSrv, settings)
+	srv, err := NewSSEServer(slog.New(slog.DiscardHandler), mcpSrv, settings)
 
 	require.EqualError(t, err, "web UI enabled but no UI components supplied")
 	require.Nil(t, srv)
@@ -301,7 +302,7 @@ func TestStartSSEServer_WebUIEnabledWithoutComponentsFails(t *testing.T) {
 	}
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- StartSSEServer(mcpSrv, settings) }()
+	go func() { errCh <- StartSSEServer(slog.New(slog.DiscardHandler), mcpSrv, settings) }()
 
 	select {
 	case err := <-errCh:

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -52,7 +53,7 @@ func (noopTestRevalidator) Revalidate(context.Context) {}
 func newTestRegistrar(t *testing.T, catalog resources.Catalog) (*mcpserver.ResourceRegistrar, *mcpsdk.Server) {
 	t.Helper()
 	s := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "test-server", Version: "1.0.0"}, nil)
-	registrar := mcpserver.NewResourceRegistrar(s, catalog, noopTestRevalidator{})
+	registrar := mcpserver.NewResourceRegistrar(slog.New(slog.DiscardHandler), s, catalog, noopTestRevalidator{})
 	registrar.Sync(catalog)
 	return registrar, s
 }
@@ -105,6 +106,7 @@ func newTestRefresher(t *testing.T, initialProvider *resources.ResourceProvider,
 	registrar, server := newTestRegistrar(t, holder)
 
 	return &catalogRefresher{
+		logger:    slog.New(slog.DiscardHandler),
 		holder:    holder,
 		registrar: registrar,
 		fingerprint: func(context.Context) (string, error) {
@@ -131,6 +133,7 @@ func newTestRefresher(t *testing.T, initialProvider *resources.ResourceProvider,
 func TestCatalogRefresher_Revalidate_RegistrarNil_ReturnsImmediately(t *testing.T) {
 	clock := newFakeClock()
 	r := &catalogRefresher{
+		logger:   slog.New(slog.DiscardHandler),
 		now:      clock.Now,
 		interval: refreshInterval,
 		fingerprint: func(context.Context) (string, error) {

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -85,9 +86,9 @@ func (s *sharedServerUnderTest) launch(t *testing.T) {
 
 	params := app.DefaultRunParams()
 	createServer := params.CreateServer
-	params.CreateServer = func(ctx context.Context, settings *config.Settings, version string) (app.Components, error) {
+	params.CreateServer = func(ctx context.Context, logger *slog.Logger, settings *config.Settings, version string) (app.Components, error) {
 		s.builds.Add(1)
-		return createServer(ctx, settings, version)
+		return createServer(ctx, logger, settings, version)
 	}
 	params.EndpointDir = func() (string, error) { return s.endpointDir, nil }
 	logDir := t.TempDir()

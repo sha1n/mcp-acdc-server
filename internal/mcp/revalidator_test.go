@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -71,7 +72,7 @@ func TestMakeResourceHandler_RevalidatesBeforeCatalogAccess(t *testing.T) {
 	catalog := tracingCatalog{trace: &trace, content: "body"}
 	revalidator := tracingRevalidator{trace: &trace}
 
-	handler := makeResourceHandler(catalog, revalidator, "acdc://doc")
+	handler := makeResourceHandler(slog.New(slog.DiscardHandler), catalog, revalidator, "acdc://doc")
 	_, err := handler(context.Background(), &mcp.ReadResourceRequest{
 		Params: &mcp.ReadResourceParams{URI: "acdc://doc"},
 	})
@@ -85,7 +86,7 @@ func TestReadToolHandler_RevalidatesBeforeCatalogAccess(t *testing.T) {
 	catalog := tracingCatalog{trace: &trace, content: "body"}
 	revalidator := tracingRevalidator{trace: &trace}
 
-	handler := NewReadToolHandler(catalog, revalidator)
+	handler := NewReadToolHandler(slog.New(slog.DiscardHandler), catalog, revalidator)
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, ReadToolArgument{URI: "acdc://doc"})
 
 	require.NoError(t, err)
@@ -97,7 +98,7 @@ func TestSearchToolHandler_RevalidatesBeforeSearcherAccess(t *testing.T) {
 	searcher := tracingSearcher{trace: &trace}
 	revalidator := tracingRevalidator{trace: &trace}
 
-	handler := NewSearchToolHandler(searcher, revalidator, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences})
+	handler := NewSearchToolHandler(slog.New(slog.DiscardHandler), searcher, revalidator, config.SearchSettings{MaxResults: 10, ResultMode: config.SearchResultModeReferences})
 	_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, SearchToolArgument{Query: "test"})
 
 	require.NoError(t, err)

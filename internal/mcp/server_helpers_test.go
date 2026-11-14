@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -35,7 +36,7 @@ func TestMakeResourceHandler_Success(t *testing.T) {
 	}, nil)
 	require.NoError(t, err)
 
-	handler := makeResourceHandler(resourceProvider, noopRevalidator{}, "acdc://test-resource")
+	handler := makeResourceHandler(slog.New(slog.DiscardHandler), resourceProvider, noopRevalidator{}, "acdc://test-resource")
 	require.NotNil(t, handler)
 
 	ctx := context.Background()
@@ -67,7 +68,7 @@ func TestMakeResourceHandler_ServesSwappedCatalogContent(t *testing.T) {
 	require.NoError(t, err)
 	holder := resources.NewCatalogHolder(initial)
 
-	handler := makeResourceHandler(holder, noopRevalidator{}, "acdc://doc")
+	handler := makeResourceHandler(slog.New(slog.DiscardHandler), holder, noopRevalidator{}, "acdc://doc")
 
 	ctx := context.Background()
 	req := &mcp.ReadResourceRequest{Params: &mcp.ReadResourceParams{URI: "acdc://doc"}}
@@ -93,7 +94,7 @@ func TestMakeResourceHandler_Error_NotFound(t *testing.T) {
 	resourceProvider, err := resources.NewResourceProvider([]resources.ResourceDefinition{}, nil)
 	require.NoError(t, err)
 
-	handler := makeResourceHandler(resourceProvider, noopRevalidator{}, "acdc://nonexistent")
+	handler := makeResourceHandler(slog.New(slog.DiscardHandler), resourceProvider, noopRevalidator{}, "acdc://nonexistent")
 	require.NotNil(t, handler)
 
 	ctx := context.Background()
@@ -132,7 +133,7 @@ func TestMakePromptHandler_Success(t *testing.T) {
 		},
 	}, contentProvider)
 
-	handler := makePromptHandler(promptProvider, "test-prompt")
+	handler := makePromptHandler(slog.New(slog.DiscardHandler), promptProvider, "test-prompt")
 	require.NotNil(t, handler)
 
 	ctx := context.Background()
@@ -164,7 +165,7 @@ func TestMakePromptHandler_Error_PromptNotFound(t *testing.T) {
 
 	promptProvider := prompts.NewPromptProvider([]prompts.PromptDefinition{}, contentProvider)
 
-	handler := makePromptHandler(promptProvider, "nonexistent-prompt")
+	handler := makePromptHandler(slog.New(slog.DiscardHandler), promptProvider, "nonexistent-prompt")
 	require.NotNil(t, handler)
 
 	ctx := context.Background()
@@ -204,7 +205,7 @@ func TestMakePromptHandler_Error_MissingRequiredArgument(t *testing.T) {
 		},
 	}, contentProvider)
 
-	handler := makePromptHandler(promptProvider, "test-prompt")
+	handler := makePromptHandler(slog.New(slog.DiscardHandler), promptProvider, "test-prompt")
 	require.NotNil(t, handler)
 
 	ctx := context.Background()

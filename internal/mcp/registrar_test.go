@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"log/slog"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -76,7 +77,7 @@ func TestResourceRegistrar_Sync_IdenticalCatalog_NoNotification(t *testing.T) {
 		{URI: "acdc://a", Name: "A", Description: "doc a", MIMEType: "text/markdown"},
 	}}
 
-	registrar := NewResourceRegistrar(s, catalog, noopRevalidator{})
+	registrar := NewResourceRegistrar(slog.New(slog.DiscardHandler), s, catalog, noopRevalidator{})
 	registrar.Sync(catalog) // initial registration, before any session connects
 
 	var notifications atomic.Int64
@@ -101,7 +102,7 @@ func TestResourceRegistrar_Sync_AddRemoveChange_ProducesExactSet(t *testing.T) {
 		{URI: "acdc://change", Name: "Change", Description: "old description", MIMEType: "text/markdown"},
 	}}
 
-	registrar := NewResourceRegistrar(s, initial, noopRevalidator{})
+	registrar := NewResourceRegistrar(slog.New(slog.DiscardHandler), s, initial, noopRevalidator{})
 	registrar.Sync(initial)
 
 	updated := listCatalog{resourcesList: []mcp.Resource{
@@ -144,7 +145,7 @@ func TestResourceRegistrar_Sync_UnparseableURI_SkippedWithoutPanic(t *testing.T)
 		{URI: "acdc://good-after", Name: "After", Description: "fine", MIMEType: "text/markdown"},
 	}}
 
-	registrar := NewResourceRegistrar(s, catalog, noopRevalidator{})
+	registrar := NewResourceRegistrar(slog.New(slog.DiscardHandler), s, catalog, noopRevalidator{})
 
 	require.NotPanics(t, func() { registrar.Sync(catalog) })
 
@@ -178,7 +179,7 @@ func TestResourceRegistrar_HandlersReadThroughConstructorHolder(t *testing.T) {
 	require.NoError(t, err)
 	holder := resources.NewCatalogHolder(initialProvider)
 
-	registrar := NewResourceRegistrar(s, holder, noopRevalidator{})
+	registrar := NewResourceRegistrar(slog.New(slog.DiscardHandler), s, holder, noopRevalidator{})
 	// Sync with a listing snapshot distinct from the holder, so a pass
 	// proves reads resolve through the holder and not this value.
 	registrar.Sync(listCatalog{resourcesList: holder.ListResources()})

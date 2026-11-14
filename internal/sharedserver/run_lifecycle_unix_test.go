@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -29,7 +30,7 @@ type gatedBuildObservation struct {
 // returns only once its context is cancelled, or fails after the deadline.
 func buildGatedOnItsContext(socketPath string, server *mcp.Server, cleanup func()) (BuildFunc, <-chan gatedBuildObservation) {
 	observed := make(chan gatedBuildObservation, 1)
-	build := func(ctx context.Context) (*mcp.Server, func(), error) {
+	build := func(ctx context.Context, _ *slog.Logger) (*mcp.Server, func(), error) {
 		select {
 		case <-ctx.Done():
 			_, err := os.Lstat(socketPath)
@@ -101,7 +102,7 @@ func TestRun_CancellationRacingTheBuildCompletionDropsWaitingConnections(t *test
 			dir := shortTempDir(t)
 			socketPath := filepath.Join(dir, testIdentity+".sock")
 			release := make(chan struct{})
-			build := func(context.Context) (*mcp.Server, func(), error) {
+			build := func(context.Context, *slog.Logger) (*mcp.Server, func(), error) {
 				<-release
 				return mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil), nil, nil
 			}
@@ -163,7 +164,7 @@ func TestRun_CancellationDropsTheConnectionBeforeAContextIgnoringHandlerReturns(
 			<-gate
 			return &mcp.CallToolResult{}, struct{}{}, nil
 		})
-	build := func(context.Context) (*mcp.Server, func(), error) { return server, nil, nil }
+	build := func(context.Context, *slog.Logger) (*mcp.Server, func(), error) { return server, nil, nil }
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {

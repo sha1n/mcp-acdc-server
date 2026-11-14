@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -28,7 +29,7 @@ func TestServe_AcceptFailureClosesListenerAndIdleSessions(t *testing.T) {
 	require.NoError(t, epErr)
 	done := make(chan error, 1)
 	go func() {
-		done <- startAccepting(context.Background(), listener, ep, testIdentity, time.Hour).serve(server, nil, "")
+		done <- startAccepting(context.Background(), slog.New(slog.DiscardHandler), listener, ep, testIdentity, time.Hour).serve(server, nil, "")
 	}()
 
 	client, err := net.Dial("unix", socketPath)
@@ -69,7 +70,7 @@ func TestServe_ContextCancellationReturnsNil(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- startAccepting(ctx, listener, ep, testIdentity, time.Hour).serve(mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil), nil, "")
+		done <- startAccepting(ctx, slog.New(slog.DiscardHandler), listener, ep, testIdentity, time.Hour).serve(mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil), nil, "")
 	}()
 	cancel()
 

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -97,11 +98,11 @@ func launchLingerTestServer(t *testing.T, opts lingerTestOptions) *lingerTestSer
 
 	params := app.DefaultRunParams()
 	createServer := params.CreateServer
-	params.CreateServer = func(ctx context.Context, settings *config.Settings, version string) (app.Components, error) {
+	params.CreateServer = func(ctx context.Context, logger *slog.Logger, settings *config.Settings, version string) (app.Components, error) {
 		if opts.buildGate != nil {
 			<-opts.buildGate
 		}
-		components, err := createServer(ctx, settings, version)
+		components, err := createServer(ctx, logger, settings, version)
 		if err == nil && opts.slowStarted != nil {
 			addLingerTestSlowTool(components.MCP, opts.slowStarted)
 		}

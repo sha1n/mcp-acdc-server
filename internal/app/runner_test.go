@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -28,6 +30,7 @@ func TestRunWithDeps_ErrorCases(t *testing.T) {
 		{
 			name: "LoadSettings error",
 			params: RunParams{
+				Stderr: io.Discard,
 				LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
 					return nil, errors.New("settings error")
 				},
@@ -38,6 +41,7 @@ func TestRunWithDeps_ErrorCases(t *testing.T) {
 		{
 			name: "ValidSettings error",
 			params: RunParams{
+				Stderr: io.Discard,
 				LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
 					return &config.Settings{Transport: "sse"}, nil
 				},
@@ -50,11 +54,12 @@ func TestRunWithDeps_ErrorCases(t *testing.T) {
 		{
 			name: "CreateServer error",
 			params: RunParams{
+				Stderr: io.Discard,
 				LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
 					return &config.Settings{Transport: "sse"}, nil
 				},
 				ValidSettings: noopValidate,
-				CreateServer: func(context.Context, *config.Settings, string) (Components, error) {
+				CreateServer: func(context.Context, *slog.Logger, *config.Settings, string) (Components, error) {
 					return Components{}, errors.New("create server error")
 				},
 			},
@@ -63,14 +68,15 @@ func TestRunWithDeps_ErrorCases(t *testing.T) {
 		{
 			name: "StartSSEServer error",
 			params: RunParams{
+				Stderr: io.Discard,
 				LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
 					return &config.Settings{Transport: "sse"}, nil
 				},
 				ValidSettings: noopValidate,
-				CreateServer: func(context.Context, *config.Settings, string) (Components, error) {
+				CreateServer: func(context.Context, *slog.Logger, *config.Settings, string) (Components, error) {
 					return Components{}, nil
 				},
-				StartSSEServer: func(*mcp.Server, *config.Settings, ...SSEOption) error {
+				StartSSEServer: func(*slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error {
 					return errors.New("sse start error")
 				},
 			},
@@ -94,14 +100,15 @@ func TestRunWithDeps_ErrorCases(t *testing.T) {
 func TestRunWithDeps_Cleanup(t *testing.T) {
 	cleanupCalled := false
 	params := RunParams{
+		Stderr: io.Discard,
 		LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
 			return &config.Settings{Transport: "sse"}, nil
 		},
 		ValidSettings: noopValidate,
-		CreateServer: func(context.Context, *config.Settings, string) (Components, error) {
+		CreateServer: func(context.Context, *slog.Logger, *config.Settings, string) (Components, error) {
 			return Components{Cleanup: func() { cleanupCalled = true }}, nil
 		},
-		StartSSEServer: func(*mcp.Server, *config.Settings, ...SSEOption) error {
+		StartSSEServer: func(*slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error {
 			return errors.New("intentional error to trigger cleanup")
 		},
 	}
@@ -136,11 +143,12 @@ func TestRunWithDeps_StdioWithDefaultTransport(t *testing.T) {
 	// the code should create a new StdioTransport
 
 	params := RunParams{
+		Stderr: io.Discard,
 		LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
 			return &config.Settings{Transport: "stdio"}, nil
 		},
 		ValidSettings: noopValidate,
-		CreateServer: func(context.Context, *config.Settings, string) (Components, error) {
+		CreateServer: func(context.Context, *slog.Logger, *config.Settings, string) (Components, error) {
 			// Create a minimal server
 			impl := &mcp.Implementation{Name: "test", Version: "1.0"}
 			server := mcp.NewServer(impl, nil)
@@ -173,11 +181,12 @@ func TestRunWithDeps_StdioWithCustomTransport(t *testing.T) {
 	}
 
 	params := RunParams{
+		Stderr: io.Discard,
 		LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
 			return &config.Settings{Transport: "stdio"}, nil
 		},
 		ValidSettings: noopValidate,
-		CreateServer: func(context.Context, *config.Settings, string) (Components, error) {
+		CreateServer: func(context.Context, *slog.Logger, *config.Settings, string) (Components, error) {
 			impl := &mcp.Implementation{Name: "test", Version: "1.0"}
 			server := mcp.NewServer(impl, nil)
 			return Components{MCP: server}, nil
@@ -201,15 +210,16 @@ func TestRunWithDeps_PassesExactCallerContextToCreateServer(t *testing.T) {
 	ctx := context.WithValue(context.Background(), runnerContextKey{}, "request-context")
 	var createServerCtx context.Context
 	params := RunParams{
+		Stderr: io.Discard,
 		LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
 			return &config.Settings{Transport: "sse"}, nil
 		},
 		ValidSettings: noopValidate,
-		CreateServer: func(gotCtx context.Context, _ *config.Settings, _ string) (Components, error) {
+		CreateServer: func(gotCtx context.Context, _ *slog.Logger, _ *config.Settings, _ string) (Components, error) {
 			createServerCtx = gotCtx
 			return Components{}, nil
 		},
-		StartSSEServer: func(*mcp.Server, *config.Settings, ...SSEOption) error { return nil },
+		StartSSEServer: func(*slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error { return nil },
 	}
 
 	err := RunWithDeps(ctx, params, nil, "test")
@@ -225,15 +235,16 @@ func TestRunWithDeps_PassesExactCallerContextToCreateServer(t *testing.T) {
 func TestRunWithDeps_PassesVersionToCreateServer(t *testing.T) {
 	var gotVersion string
 	params := RunParams{
+		Stderr: io.Discard,
 		LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
 			return &config.Settings{Transport: "sse"}, nil
 		},
 		ValidSettings: noopValidate,
-		CreateServer: func(_ context.Context, _ *config.Settings, version string) (Components, error) {
+		CreateServer: func(_ context.Context, _ *slog.Logger, _ *config.Settings, version string) (Components, error) {
 			gotVersion = version
 			return Components{}, nil
 		},
-		StartSSEServer: func(*mcp.Server, *config.Settings, ...SSEOption) error { return nil },
+		StartSSEServer: func(*slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error { return nil },
 	}
 
 	err := RunWithDeps(context.Background(), params, nil, "9.9.9")
@@ -269,16 +280,17 @@ func TestRunWithDeps_PassesComponentsToStartSSEServer(t *testing.T) {
 	var gotSettings *config.Settings
 	var gotOpts []SSEOption
 	params := RunParams{
+		Stderr:        io.Discard,
 		LoadSettings:  func(*pflag.FlagSet) (*config.Settings, error) { return settings, nil },
 		ValidSettings: noopValidate,
-		CreateServer: func(context.Context, *config.Settings, string) (Components, error) {
+		CreateServer: func(context.Context, *slog.Logger, *config.Settings, string) (Components, error) {
 			return Components{
 				MCP:        mcpServer,
 				SSEOptions: []SSEOption{WithWebUI(backend, documents)},
 				Cleanup:    func() { cleanupCalls++ },
 			}, nil
 		},
-		StartSSEServer: func(s *mcp.Server, st *config.Settings, opts ...SSEOption) error {
+		StartSSEServer: func(_ *slog.Logger, s *mcp.Server, st *config.Settings, opts ...SSEOption) error {
 			gotServer, gotSettings, gotOpts = s, st, opts
 			require.Zero(t, cleanupCalls, "cleanup must not run before the server stops")
 			return nil
@@ -302,18 +314,19 @@ func TestRunWithDeps_StdioIgnoresSSEOptions(t *testing.T) {
 	sseStarted := false
 	cleanupCalls := 0
 	params := RunParams{
+		Stderr: io.Discard,
 		LoadSettings: func(*pflag.FlagSet) (*config.Settings, error) {
 			return &config.Settings{Transport: "stdio", UI: config.UISettings{Enabled: true, MaxResults: 20}}, nil
 		},
 		ValidSettings: noopValidate,
-		CreateServer: func(context.Context, *config.Settings, string) (Components, error) {
+		CreateServer: func(context.Context, *slog.Logger, *config.Settings, string) (Components, error) {
 			return Components{
 				MCP:        mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil),
 				SSEOptions: []SSEOption{WithWebUI(stubUIBackend{}, stubUIDocuments{})},
 				Cleanup:    func() { cleanupCalls++ },
 			}, nil
 		},
-		StartSSEServer: func(*mcp.Server, *config.Settings, ...SSEOption) error {
+		StartSSEServer: func(*slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error {
 			sseStarted = true
 			return nil
 		},
@@ -331,12 +344,13 @@ func TestRunWithDeps_StdioIgnoresSSEOptions(t *testing.T) {
 func TestRunWithDeps_CreateServerErrorSkipsStartAndCleanup(t *testing.T) {
 	sseStarted := false
 	params := RunParams{
+		Stderr:        io.Discard,
 		LoadSettings:  func(*pflag.FlagSet) (*config.Settings, error) { return &config.Settings{Transport: "sse"}, nil },
 		ValidSettings: noopValidate,
-		CreateServer: func(context.Context, *config.Settings, string) (Components, error) {
+		CreateServer: func(context.Context, *slog.Logger, *config.Settings, string) (Components, error) {
 			return Components{}, errors.New("create failed")
 		},
-		StartSSEServer: func(*mcp.Server, *config.Settings, ...SSEOption) error {
+		StartSSEServer: func(*slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error {
 			sseStarted = true
 			return nil
 		},

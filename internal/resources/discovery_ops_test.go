@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -87,7 +88,7 @@ func TestDiscoverWithOps_ConfiguredFilesystemFailures(t *testing.T) {
 			ops := successfulDiscoveryOps(root)
 			tt.configure(&ops)
 
-			_, err := discoverWithOps(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{Include: []string{"docs/*.md"}}, "acdc", ops)
+			_, err := discoverWithOps(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{Include: []string{"docs/*.md"}}, "acdc", ops)
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)
 			}
@@ -151,7 +152,7 @@ func TestDiscoverWithOps_LegacyTraversalAndCancellationFailures(t *testing.T) {
 			ops := successfulDiscoveryOps(root)
 			tt.configure(&ops, cancel)
 
-			_, err := discoverWithOps(ctx, content.NewContentProvider(root), nil, "acdc", ops)
+			_, err := discoverWithOps(ctx, slog.New(slog.DiscardHandler), content.NewContentProvider(root), nil, "acdc", ops)
 			require.ErrorIs(t, err, tt.wantErr)
 		})
 	}
@@ -173,7 +174,7 @@ func TestDiscoverWithOps_ConfiguredCancellationBeforeCatalogRead(t *testing.T) {
 		return nil, nil
 	}
 
-	_, err := discoverWithOps(ctx, content.NewContentProvider(root), &domain.IndexMetadata{Include: []string{"docs/*.md"}}, "acdc", ops)
+	_, err := discoverWithOps(ctx, slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{Include: []string{"docs/*.md"}}, "acdc", ops)
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -204,7 +205,7 @@ func TestDiscoverWithOps_ConfiguredSkipsUnreadableFileAndIndexesSibling(t *testi
 	}
 	index := &domain.IndexMetadata{Include: []string{"docs/*.md"}}
 
-	result, err := discoverWithOps(context.Background(), content.NewContentProvider(root), index, "acdc", buildOps(), WithLenientIndex())
+	result, err := discoverWithOps(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), index, "acdc", buildOps(), WithLenientIndex())
 	require.NoError(t, err)
 	require.Equal(t, []string{"acdc://docs/good"}, sourceURIs(result.Sources))
 }
@@ -231,7 +232,7 @@ func TestDiscoverWithOps_ConfiguredSkipsNonregularFileAndIndexesSibling(t *testi
 		return []byte("# Good\n\nBody.\n"), nil
 	}
 
-	result, err := discoverWithOps(context.Background(), content.NewContentProvider(root), &domain.IndexMetadata{Include: []string{"docs/*.md"}}, "acdc", ops)
+	result, err := discoverWithOps(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), &domain.IndexMetadata{Include: []string{"docs/*.md"}}, "acdc", ops)
 	require.NoError(t, err)
 	require.Equal(t, []string{"acdc://docs/good"}, sourceURIs(result.Sources))
 }
@@ -266,7 +267,7 @@ func TestDiscoverWithOps_LegacySkipsUnreadableAndNonregularEntries(t *testing.T)
 			ops := successfulDiscoveryOps(root)
 			tt.configure(&ops)
 
-			result, err := discoverWithOps(context.Background(), content.NewContentProvider(root), nil, "acdc", ops)
+			result, err := discoverWithOps(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(root), nil, "acdc", ops)
 			require.NoError(t, err)
 			require.Empty(t, result.Sources)
 			require.Empty(t, result.Chunks)

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -49,7 +50,7 @@ func bindTestEndpoint(t *testing.T) (*net.UnixListener, string) {
 
 func buildSpy(err error) (BuildFunc, *bool) {
 	built := false
-	return func(context.Context) (*mcp.Server, func(), error) {
+	return func(context.Context, *slog.Logger) (*mcp.Server, func(), error) {
 		built = true
 		if err != nil {
 			return nil, nil, err
@@ -188,7 +189,7 @@ func TestAttach_ReadyLineWriteFailureClosesTheConnectionWithoutServing(t *testin
 
 	done := make(chan struct{})
 	go func() {
-		attach(context.Background(), conn, mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil), nil, "")
+		attach(context.Background(), slog.New(slog.DiscardHandler), conn, mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil), nil, "")
 		close(done)
 	}()
 

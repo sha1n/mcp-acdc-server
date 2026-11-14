@@ -5,6 +5,7 @@ package sharedserver
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -25,7 +26,7 @@ func TestSessionAcceptor_AConnectionCancelledByTheTimeTheBuildCompletesGetsNoRea
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	acceptor := startAccepting(ctx, acceptorListener, ep, testIdentity, time.Hour)
+	acceptor := startAccepting(ctx, slog.New(slog.DiscardHandler), acceptorListener, ep, testIdentity, time.Hour)
 	cancel()
 	// Both the build and the cancellation are now observable to every
 	// session, as when a build completes just after a signal.
@@ -73,7 +74,7 @@ func TestSessionAcceptor_AnAcceptFailureDuringTheBuildCancelsTheBuildAndIsReturn
 			listener, socketPath := bindTestEndpoint(t)
 			ep, err := endpoint.OpenEndpoint(filepath.Dir(socketPath))
 			require.NoError(t, err)
-			acceptor := startAccepting(context.Background(), listener, ep, testIdentity, time.Hour)
+			acceptor := startAccepting(context.Background(), slog.New(slog.DiscardHandler), listener, ep, testIdentity, time.Hour)
 			buildCtx := acceptor.buildContext()
 
 			// An expired deadline makes AcceptUnix fail with a non-context error

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -94,7 +95,7 @@ func indexedService(t *testing.T, chunks []domain.Chunk) *search.Service {
 func searchPageURIs(t *testing.T, service search.Searcher, mode config.SearchResultMode, query string) []string {
 	t.Helper()
 
-	handler := NewSearchToolHandler(service, noopRevalidator{}, config.SearchSettings{MaxResults: 10, ResultMode: mode})
+	handler := NewSearchToolHandler(slog.New(slog.DiscardHandler), service, noopRevalidator{}, config.SearchSettings{MaxResults: 10, ResultMode: mode})
 	result, _, err := handler(context.Background(), nil, SearchToolArgument{Query: query})
 	require.NoError(t, err)
 
@@ -213,7 +214,7 @@ func TestSearchToolHandler_NonPositiveLimitRetrievesOnce(t *testing.T) {
 	for _, limit := range []int{0, -1} {
 		t.Run(fmt.Sprintf("limit=%d", limit), func(t *testing.T) {
 			counting := &countingSearcher{Searcher: indexedService(t, floodedCorpus(60, 12))}
-			handler := NewSearchToolHandler(counting, noopRevalidator{}, config.SearchSettings{
+			handler := NewSearchToolHandler(slog.New(slog.DiscardHandler), counting, noopRevalidator{}, config.SearchSettings{
 				MaxResults: limit,
 				ResultMode: config.SearchResultModeReferences,
 			})

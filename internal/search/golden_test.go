@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -70,7 +71,7 @@ func corpusChunks(t *testing.T, corpora ...string) []domain.Chunk {
 	index := &domain.IndexMetadata{Include: []string{"**/*.md"}}
 	var chunks []domain.Chunk
 	for _, corpus := range corpora {
-		result, err := resources.Discover(context.Background(), content.NewContentProvider(corpus), index, "acdc")
+		result, err := resources.Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(corpus), index, "acdc")
 		require.NoError(t, err, "discover %s", corpus)
 		require.NotEmpty(t, result.Chunks, "corpus %s produced no chunks", corpus)
 		chunks = append(chunks, result.Chunks...)
@@ -284,7 +285,7 @@ func TestGolden_CuratedRanking(t *testing.T) {
 // to, the strongest signal has no documents to match.
 func TestGolden_KeywordsAreInertInZeroConfigMode(t *testing.T) {
 	index := &domain.IndexMetadata{Include: []string{"**/*.md"}}
-	result, err := resources.Discover(context.Background(), content.NewContentProvider(zeroConfigCorpus), index, "acdc")
+	result, err := resources.Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(zeroConfigCorpus), index, "acdc")
 	require.NoError(t, err)
 	require.NotEmpty(t, result.Chunks)
 
@@ -296,7 +297,7 @@ func TestGolden_KeywordsAreInertInZeroConfigMode(t *testing.T) {
 	}
 	require.Empty(t, withKeywords, "keywords boost %v has no reachable documents without frontmatter", testSettings().KeywordsBoost)
 
-	curated, err := resources.Discover(context.Background(), content.NewContentProvider(curatedCorpus), index, "acdc")
+	curated, err := resources.Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(curatedCorpus), index, "acdc")
 	require.NoError(t, err)
 	keywordChunks := 0
 	for _, chunk := range curated.Chunks {
@@ -317,7 +318,7 @@ func TestGolden_KeywordsAreInertInZeroConfigMode(t *testing.T) {
 // in the mode the server now defaults to.
 func TestGolden_TitleNeverFiresAloneInZeroConfigMode(t *testing.T) {
 	index := &domain.IndexMetadata{Include: []string{"**/*.md"}}
-	result, err := resources.Discover(context.Background(), content.NewContentProvider(zeroConfigCorpus), index, "acdc")
+	result, err := resources.Discover(context.Background(), slog.New(slog.DiscardHandler), content.NewContentProvider(zeroConfigCorpus), index, "acdc")
 	require.NoError(t, err)
 	require.NotEmpty(t, result.Chunks)
 

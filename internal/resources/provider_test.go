@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -173,7 +174,7 @@ func TestDiscoverResources_LegacyCompatibility(t *testing.T) {
 	writeFile(t, resourcesDir, "nested/guide.md", "---\nname: Guide\ndescription: Existing resource\n---\n# Guide\n")
 	writeFile(t, resourcesDir, "invalid.md", "# No required frontmatter\n")
 
-	definitions, err := DiscoverResources(content.NewContentProvider(root), "acdc")
+	definitions, err := DiscoverResources(slog.New(slog.DiscardHandler), content.NewContentProvider(root), "acdc")
 	require.NoError(t, err)
 	require.Len(t, definitions, 1)
 	require.Equal(t, "acdc://nested/guide", definitions[0].URI)
