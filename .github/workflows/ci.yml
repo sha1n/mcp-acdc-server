@@ -102,6 +102,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.src == 'true' || github.event_name != 'pull_request'
     runs-on: macos-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - name: Set up Go
@@ -270,8 +271,8 @@ jobs:
     steps:
       - name: Verify status
         run: |
-          if [[ "${{ needs.test.result }}" == "failure" || "${{ needs.test-macos.result }}" == "failure" || "${{ needs.complexity.result }}" == "failure" || "${{ needs.docker.result }}" == "failure" ]]; then
-            echo "One or more critical jobs failed."
+          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more required jobs failed or were cancelled."
             exit 1
           fi
-          echo "All critical jobs passed or were skipped."
+          echo "All required jobs passed or were skipped."
