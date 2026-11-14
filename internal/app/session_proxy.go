@@ -16,10 +16,10 @@ import (
 
 // attemptsDiscovery gates the session proxy on a spawn seam, so that until a
 // production spawn exists every stdio launch stays a per-session server.
-func attemptsDiscovery(params RunParams, settings *config.Settings) bool {
-	return params.SpawnSharedServer != nil &&
-		settings.Transport == "stdio" &&
-		settings.ServerMode == config.ServerModeShared
+func attemptsDiscovery(logger *slog.Logger, goos string, params RunParams, settings *config.Settings) bool {
+	return settings.Transport == "stdio" &&
+		effectiveServerMode(logger, goos, settings.ServerMode) == config.ServerModeShared &&
+		params.SpawnSharedServer != nil
 }
 
 func runSessionProxy(ctx context.Context, logger *slog.Logger, params RunParams, settings *config.Settings, binary identity.Binary) error {
