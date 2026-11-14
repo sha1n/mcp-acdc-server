@@ -58,3 +58,18 @@ func TestOpenLog_UnsearchableDirectoryReportsEveryFailure(t *testing.T) {
 	assert.Contains(t, issues[0].Error(), "failed to inspect log for rotation")
 	assert.Contains(t, issues[1].Error(), "failed to open log file")
 }
+
+func TestOpenLog_MissingAncestorThatCannotBeCreatedYieldsNoFile(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "readonly")
+	require.NoError(t, os.Mkdir(parent, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o700) })
+
+	file, issues := openLog(filepath.Join(parent, "state", "acdc-mcp"), testIdentity)
+
+	assert.Nil(t, file)
+	require.Len(t, issues, 1)
+	assert.Contains(t, issues[0].Error(), "failed to create log directory")
+	entries, err := os.ReadDir(parent)
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+}
