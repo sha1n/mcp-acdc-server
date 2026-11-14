@@ -14,6 +14,11 @@ import (
 // writing anything.
 var ErrLockNotAcquired = errors.New("shared server lock not acquired")
 
+// ErrIdentityMismatch reports that the content on disk no longer matches the
+// shared server identity, or that its identity cannot be recomputed. The
+// shared server has logged it and exits before binding.
+var ErrIdentityMismatch = errors.New("shared server identity does not match its content")
+
 // BuildFunc builds the catalog, index and MCP server, logging through the
 // shared server's logger. The returned cleanup, if any, runs after the last
 // session ends.
@@ -29,7 +34,12 @@ type Config struct {
 	// LogStartup writes the shared server's startup entries once its log is
 	// open, so a candidate that loses the lock writes nothing.
 	LogStartup func(*slog.Logger)
-	Build      BuildFunc
+	// CurrentIdentity recomputes the identity from the content on disk with
+	// the settings and binary of this process. It is required: a shared
+	// server whose content changed after its spawning session computed the
+	// identity must not serve under that identity.
+	CurrentIdentity func() (string, error)
+	Build           BuildFunc
 	// Revalidate, if set, runs for every accepted connection before its ready
 	// line, so a session's first listing reflects current content. It is
 	// called only after Build has returned.
