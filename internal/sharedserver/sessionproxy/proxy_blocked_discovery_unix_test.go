@@ -4,6 +4,7 @@ package sessionproxy_test
 
 import (
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -93,5 +94,41 @@ func TestRun_EndsPromptlyWhileASpawnIsInProgress(t *testing.T) {
 			require.NoError(t, host.result())
 			assert.Less(t, time.Since(ended), 500*time.Millisecond)
 		})
+	}
+}
+
+func TestRun_EndsPromptlyWhileTheEndpointIsBeingResolved(t *testing.T) {
+	for _, attempt := range []struct {
+		name    string
+		reentry bool
+	}{{name: "first attempt"}, {name: "re-entry", reentry: true}} {
+		for _, way := range endSessionWays {
+			t.Run(attempt.name+"/"+way.name, func(t *testing.T) {
+				dir := proxyTestEndpointDir(t)
+				server := newFakeSharedServer(t, dir)
+				resolution := newBlockedCall(t)
+				var resolutions atomic.Int32
+				host := startProxy(t, sessionproxy.Config{
+					Spawn: server.spawn,
+					EndpointDir: func() (string, error) {
+						if attempt.reentry && resolutions.Add(1) == 1 {
+							return dir, nil
+						}
+						resolution.block()
+						return "", errors.New("late endpoint result")
+					},
+				})
+				if attempt.reentry {
+					_ = server.nextConn().conn.Close()
+				}
+				resolution.awaitEntered()
+
+				ended := time.Now()
+				way.end(t, host)
+
+				require.NoError(t, host.result())
+				assert.Less(t, time.Since(ended), 500*time.Millisecond)
+			})
+		}
 	}
 }
