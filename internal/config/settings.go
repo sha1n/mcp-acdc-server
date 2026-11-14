@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -96,7 +97,6 @@ const (
 	MinSharedServerLinger          = time.Second
 )
 
-// SharedServerSettings configuration for the shared server
 type SharedServerSettings struct {
 	ConnectWait time.Duration `mapstructure:"connect_wait"`
 	Linger      time.Duration `mapstructure:"linger"`
@@ -415,9 +415,19 @@ func validateBoosts(s SearchSettings) error {
 func checkDurationFormat(v *viper.Viper, keys ...string) error {
 	for _, key := range keys {
 		raw := v.GetString(key)
-		if _, err := time.ParseDuration(raw); err != nil {
+		if !isGoDuration(raw) {
 			return fmt.Errorf("%s must be a Go duration such as 500ms, 5s or 1m, got: %q", key, raw)
 		}
 	}
 	return nil
+}
+
+// isGoDuration rejects every unitless number, including the 0, +0 and -0 that
+// time.ParseDuration accepts, so a bare number never reaches range validation.
+func isGoDuration(raw string) bool {
+	if _, err := strconv.ParseFloat(raw, 64); err == nil {
+		return false
+	}
+	_, err := time.ParseDuration(raw)
+	return err == nil
 }
