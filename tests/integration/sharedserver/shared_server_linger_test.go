@@ -38,7 +38,7 @@ const (
 type lingerTestOptions struct {
 	linger      string
 	inMemory    bool
-	buildGate   <-chan struct{}
+	gateBuild   bool
 	slowStarted chan<- struct{}
 	identity    string
 	endpointDir string
@@ -54,6 +54,9 @@ type lingerTestServer struct {
 	exitedAt time.Time
 	cancel   context.CancelFunc
 	done     chan error
+	// buildGate is fresh per launch, so a retried attempt again proves that a
+	// connection made while its own build is blocked counts as attached.
+	buildGate chan struct{}
 }
 
 // t.TempDir() is not used: its macOS paths exceed the 103-byte socket path budget.
@@ -85,6 +88,9 @@ func addLingerTestSlowTool(server *mcp.Server, started chan<- struct{}) {
 func launchLingerTestServer(t *testing.T, opts lingerTestOptions) *lingerTestServer {
 	t.Helper()
 	s := &lingerTestServer{endpointDir: opts.endpointDir, identity: opts.identity, done: make(chan error, 1)}
+	if opts.gateBuild {
+		s.buildGate = make(chan struct{})
+	}
 	if s.endpointDir == "" {
 		s.endpointDir = newLingerTestEndpointDir(t)
 	}
@@ -105,9 +111,9 @@ func launchLingerTestServer(t *testing.T, opts lingerTestOptions) *lingerTestSer
 	params := app.DefaultRunParams()
 	createServer := params.CreateServer
 	params.CreateServer = func(ctx context.Context, logger *slog.Logger, settings *config.Settings, version string) (app.Components, error) {
-		if opts.buildGate != nil {
+		if s.buildGate != nil {
 			select {
-			case <-opts.buildGate:
+			case <-s.buildGate:
 			case <-ctx.Done():
 				return app.Components{}, ctx.Err()
 			}
@@ -212,7 +218,8 @@ func (s *lingerTestServer) observeSocket(t *testing.T, deadline time.Time) bool 
 
 func (s *lingerTestServer) tryDial(t *testing.T, deadline time.Time) (*lingerTestConn, bool) {
 	t.Helper()
-	conn, err := net.Dial("unix", s.socketPath())
+	dialer := net.Dialer{Deadline: deadline}
+	conn, err := dialer.Dial("unix", s.socketPath())
 	if err != nil {
 		require.True(t, isLingerExpiryDrop(err), "dial failed for a reason other than expiry: %v", err)
 		return nil, false
@@ -228,18 +235,26 @@ func (s *lingerTestServer) tryAttach(t *testing.T, deadline time.Time) (*lingerT
 		return nil, false
 	}
 	conn, ok := s.tryDial(t, deadline)
-	if !ok {
+	if !ok || !conn.tryReadReadyLine(t) {
 		return nil, false
 	}
-	line, err := conn.reader.ReadBytes('\n')
+	return conn, true
+}
+
+// A dialed connection can still sit unaccepted in the listen backlog when the
+// linger expires, so even after a successful dial the ready line can be lost
+// to expiry.
+func (c *lingerTestConn) tryReadReadyLine(t *testing.T) bool {
+	t.Helper()
+	line, err := c.reader.ReadBytes('\n')
 	if err != nil {
 		require.True(t, isLingerExpiryDrop(err), "the connection failed for a reason other than expiry: %v", err)
-		return nil, false
+		return false
 	}
 	var ready map[string]any
 	require.NoError(t, json.Unmarshal(line, &ready), "line: %s", line)
 	require.Equal(t, true, ready["ready"], "first line must be the ready line: %v", ready)
-	return conn, true
+	return true
 }
 
 func (c *lingerTestConn) assertDroppedByExpiry(t *testing.T) {
@@ -298,7 +313,9 @@ func (s *lingerTestServer) runsFor(t *testing.T, d time.Duration, deadline time.
 		s.done <- err
 		return false
 	case <-time.After(d):
-		return true
+		// A descheduled observer can find both ready; select would then pick
+		// either, so an exit that already happened must win over the timer.
+		return !s.exited()
 	}
 }
 
@@ -309,6 +326,9 @@ func (s *lingerTestServer) assertRunningFor(t *testing.T, d time.Duration) {
 		s.done <- err
 		t.Fatalf("shared server exited while a session was attached: %v", err)
 	case <-time.After(d):
+		if s.exited() {
+			t.Fatalf("shared server exited while a session was attached: %v", s.awaitExit(t))
+		}
 	}
 }
 
@@ -422,25 +442,27 @@ func TestSharedServerLinger_AnOpenConnectionKeepsItRunningUntilALingerAfterTheCl
 }
 
 func TestSharedServerLinger_AConnectionOpenDuringTheIndexBuildCountsAsAttached(t *testing.T) {
-	gate := make(chan struct{})
 	var conn *lingerTestConn
-	server := launchWinningFirstLingerWindow(t, lingerTestOptions{linger: "1s", inMemory: true, buildGate: gate},
+	server := launchWinningFirstLingerWindow(t, lingerTestOptions{linger: "1s", inMemory: true, gateBuild: true},
 		func(s *lingerTestServer, deadline time.Time) bool {
 			if !s.observeSocket(t, deadline) {
 				return false
 			}
-			var dialed bool
-			if conn, dialed = s.tryDial(t, deadline); !dialed {
+			dialed, ok := s.tryDial(t, deadline)
+			if !ok {
 				return false
 			}
-			if s.runsFor(t, 2*lingerTestLinger, deadline) {
-				return true
+			if !s.runsFor(t, 2*lingerTestLinger, deadline) {
+				dialed.assertDroppedByExpiry(t)
+				return false
 			}
-			conn.assertDroppedByExpiry(t)
-			return false
+			close(s.buildGate)
+			if !dialed.tryReadReadyLine(t) {
+				return false
+			}
+			conn = dialed
+			return true
 		})
-	close(gate)
-	conn.readReadyLine(t)
 	closedAt := conn.close(t)
 
 	require.NoError(t, server.awaitExit(t))
