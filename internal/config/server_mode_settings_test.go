@@ -318,3 +318,35 @@ func TestLogWithLogger_LogsServerModeSettings(t *testing.T) {
 		})
 	}
 }
+
+// time.ParseDuration accepts a unitless zero, so these would otherwise slip past
+// the format check and surface as a range error that does not name the format.
+func TestLoadSettingsWithFlags_SharedServerDurationRejectsUnitlessZero(t *testing.T) {
+	keys := []struct {
+		key  string
+		flag string
+		env  string
+	}{
+		{"shared_server.connect_wait", "shared-server-connect-wait", "ACDC_MCP_SHARED_SERVER_CONNECT_WAIT"},
+		{"shared_server.linger", "shared-server-linger", "ACDC_MCP_SHARED_SERVER_LINGER"},
+	}
+
+	for _, k := range keys {
+		for _, value := range []string{"0", "+0", "-0"} {
+			sources := map[string]serverModeSource{
+				"flag":       {flags: map[string]string{k.flag: value}},
+				"env var":    {noFlags: true, env: map[string]string{k.env: value}},
+				"config key": {file: k.key + "=" + value + "\n"},
+			}
+			for sourceName, src := range sources {
+				t.Run(k.key+"/"+sourceName+"/"+value, func(t *testing.T) {
+					_, err := loadServerModeSettings(t, src)
+
+					require.Error(t, err)
+					assert.Contains(t, err.Error(), k.key)
+					assert.Contains(t, err.Error(), "Go duration")
+				})
+			}
+		}
+	}
+}
