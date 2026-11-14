@@ -44,6 +44,9 @@ type SharedServerHarness struct {
 	servers sync.WaitGroup
 	exitsMu sync.Mutex
 	exits   []SharedServerExit
+	// buildGate runs in every build after it is counted; a non-nil error is
+	// returned instead of building. It is set only before the first spawn.
+	buildGate func(context.Context) error
 
 	launchesMu sync.Mutex
 	launches   []*LaunchUnderTest
@@ -231,6 +234,11 @@ func (h *SharedServerHarness) sharedServerParams(built *atomic.Bool) app.RunPara
 	params.CreateServer = func(ctx context.Context, logger *slog.Logger, settings *config.Settings, version string) (app.Components, error) {
 		built.Store(true)
 		h.builds.Add(1)
+		if h.buildGate != nil {
+			if err := h.buildGate(ctx); err != nil {
+				return app.Components{}, err
+			}
+		}
 		return createServer(ctx, logger, settings, version)
 	}
 	params.EndpointDir = h.endpointDir
