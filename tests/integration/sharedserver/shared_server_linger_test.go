@@ -48,8 +48,12 @@ type lingerTestServer struct {
 	endpointDir string
 	identity    string
 	launchedAt  time.Time
-	cancel      context.CancelFunc
-	done        chan error
+	// exitedAt is written before Run's result is sent on done, so it is safe
+	// to read after receiving from done. It is when Run returned, not when an
+	// observer that may have been descheduled noticed.
+	exitedAt time.Time
+	cancel   context.CancelFunc
+	done     chan error
 }
 
 // t.TempDir() is not used: its macOS paths exceed the 103-byte socket path budget.
@@ -121,7 +125,11 @@ func launchLingerTestServer(t *testing.T, opts lingerTestOptions) *lingerTestSer
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	s.launchedAt = time.Now()
-	go func() { s.done <- app.RunWithDeps(ctx, params, flags, "test") }()
+	go func() {
+		err := app.RunWithDeps(ctx, params, flags, "test")
+		s.exitedAt = time.Now()
+		s.done <- err
+	}()
 	t.Cleanup(func() {
 		cancel()
 		select {
@@ -140,19 +148,26 @@ func launchLingerTestServer(t *testing.T, opts lingerTestOptions) *lingerTestSer
 // descheduled. A lost attempt is a valid outcome of the system, so it is
 // verified as a clean linger exit and a fresh server is tried. act reports
 // false only for a loss shaped like expiry and fails the test on anything else.
-func launchWinningFirstLingerWindow(t *testing.T, opts lingerTestOptions, act func(*lingerTestServer) bool) *lingerTestServer {
+// Every blocking step of every attempt is bounded by the one deadline.
+func launchWinningFirstLingerWindow(t *testing.T, opts lingerTestOptions, act func(s *lingerTestServer, deadline time.Time) bool) *lingerTestServer {
 	t.Helper()
 	deadline := time.Now().Add(lingerTestDeadline)
 	for attempt := 1; ; attempt++ {
+		requireWithinLingerWindowBudget(t, deadline, attempt)
 		server := launchLingerTestServer(t, opts)
-		if act(server) {
+		if act(server, deadline) {
+			requireWithinLingerWindowBudget(t, deadline, attempt)
 			return server
 		}
-		server.assertCleanLingerExit(t)
+		server.assertCleanLingerExit(t, deadline)
 		t.Logf("attempt %d lost its first linger window to expiry; retrying with a fresh server", attempt)
-		if time.Now().After(deadline) {
-			t.Fatalf("no attempt won its first linger window within %s (%d attempts)", lingerTestDeadline, attempt)
-		}
+	}
+}
+
+func requireWithinLingerWindowBudget(t *testing.T, deadline time.Time, attempt int) {
+	t.Helper()
+	if time.Now().After(deadline) {
+		t.Fatalf("no attempt won its first linger window within %s (%d attempts)", lingerTestDeadline, attempt)
 	}
 }
 
@@ -161,10 +176,10 @@ func isLingerExpiryDrop(err error) bool {
 		errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET)
 }
 
-func (s *lingerTestServer) assertCleanLingerExit(t *testing.T) {
+func (s *lingerTestServer) assertCleanLingerExit(t *testing.T, deadline time.Time) {
 	t.Helper()
-	require.NoError(t, s.awaitExit(t), "a lost attempt must be a normal linger exit")
-	require.GreaterOrEqual(t, time.Since(s.launchedAt), lingerTestLinger, "a lost attempt exited before the linger elapsed")
+	require.NoError(t, s.awaitExitBy(t, deadline), "a lost attempt must be a normal linger exit")
+	require.GreaterOrEqual(t, s.exitedAt.Sub(s.launchedAt), lingerTestLinger, "a lost attempt exited before the linger elapsed")
 	s.assertSocketRemoved(t)
 	s.assertLockReleased(t)
 }
@@ -179,9 +194,8 @@ func (s *lingerTestServer) exited() bool {
 	}
 }
 
-func (s *lingerTestServer) observeSocket(t *testing.T) bool {
+func (s *lingerTestServer) observeSocket(t *testing.T, deadline time.Time) bool {
 	t.Helper()
-	deadline := time.Now().Add(lingerTestDeadline)
 	for {
 		if info, err := os.Lstat(s.socketPath()); err == nil && info.Mode().Type() == fs.ModeSocket {
 			return true
@@ -196,24 +210,24 @@ func (s *lingerTestServer) observeSocket(t *testing.T) bool {
 	}
 }
 
-func (s *lingerTestServer) tryDial(t *testing.T) (*lingerTestConn, bool) {
+func (s *lingerTestServer) tryDial(t *testing.T, deadline time.Time) (*lingerTestConn, bool) {
 	t.Helper()
 	conn, err := net.Dial("unix", s.socketPath())
 	if err != nil {
 		require.True(t, isLingerExpiryDrop(err), "dial failed for a reason other than expiry: %v", err)
 		return nil, false
 	}
-	require.NoError(t, conn.SetDeadline(time.Now().Add(lingerTestDeadline)))
+	require.NoError(t, conn.SetDeadline(deadline))
 	t.Cleanup(func() { _ = conn.Close() })
 	return &lingerTestConn{conn: conn, reader: bufio.NewReader(conn)}, true
 }
 
-func (s *lingerTestServer) tryAttach(t *testing.T) (*lingerTestConn, bool) {
+func (s *lingerTestServer) tryAttach(t *testing.T, deadline time.Time) (*lingerTestConn, bool) {
 	t.Helper()
-	if !s.observeSocket(t) {
+	if !s.observeSocket(t, deadline) {
 		return nil, false
 	}
-	conn, ok := s.tryDial(t)
+	conn, ok := s.tryDial(t, deadline)
 	if !ok {
 		return nil, false
 	}
@@ -259,17 +273,26 @@ func (s *lingerTestServer) awaitSocket(t *testing.T) {
 
 func (s *lingerTestServer) awaitExit(t *testing.T) error {
 	t.Helper()
+	return s.awaitExitBy(t, time.Now().Add(lingerTestDeadline))
+}
+
+func (s *lingerTestServer) awaitExitBy(t *testing.T, deadline time.Time) error {
+	t.Helper()
 	select {
 	case err := <-s.done:
 		s.done <- err
 		return err
-	case <-time.After(lingerTestDeadline):
+	case <-time.After(time.Until(deadline)):
 		t.Fatalf("shared server did not exit")
 		return nil
 	}
 }
 
-func (s *lingerTestServer) runsFor(d time.Duration) bool {
+func (s *lingerTestServer) runsFor(t *testing.T, d time.Duration, deadline time.Time) bool {
+	t.Helper()
+	if time.Until(deadline) < d {
+		t.Fatalf("the remaining first linger window budget is shorter than %s", d)
+	}
 	select {
 	case err := <-s.done:
 		s.done <- err
@@ -372,11 +395,11 @@ func (c *lingerTestConn) close(t *testing.T) time.Time {
 
 func TestSharedServerLinger_WithNoConnectionsExitsAfterTheLingerAndRemovesTheSocket(t *testing.T) {
 	server := launchWinningFirstLingerWindow(t, lingerTestOptions{linger: "1s", inMemory: true},
-		func(s *lingerTestServer) bool { return s.observeSocket(t) })
+		func(s *lingerTestServer, deadline time.Time) bool { return s.observeSocket(t, deadline) })
 
 	require.NoError(t, server.awaitExit(t))
 
-	assert.GreaterOrEqual(t, time.Since(server.launchedAt), lingerTestLinger, "exited before the linger elapsed")
+	assert.GreaterOrEqual(t, server.exitedAt.Sub(server.launchedAt), lingerTestLinger, "exited before the linger elapsed")
 	server.assertSocketRemoved(t)
 	server.assertLockReleased(t)
 }
@@ -384,8 +407,8 @@ func TestSharedServerLinger_WithNoConnectionsExitsAfterTheLingerAndRemovesTheSoc
 func TestSharedServerLinger_AnOpenConnectionKeepsItRunningUntilALingerAfterTheClose(t *testing.T) {
 	var conn *lingerTestConn
 	server := launchWinningFirstLingerWindow(t, lingerTestOptions{linger: "1s", inMemory: true},
-		func(s *lingerTestServer) (attached bool) {
-			conn, attached = s.tryAttach(t)
+		func(s *lingerTestServer, deadline time.Time) (attached bool) {
+			conn, attached = s.tryAttach(t, deadline)
 			return attached
 		})
 
@@ -393,7 +416,7 @@ func TestSharedServerLinger_AnOpenConnectionKeepsItRunningUntilALingerAfterTheCl
 	closedAt := conn.close(t)
 
 	require.NoError(t, server.awaitExit(t))
-	assert.GreaterOrEqual(t, time.Since(closedAt), lingerTestLinger, "exited before a linger after the last close")
+	assert.GreaterOrEqual(t, server.exitedAt.Sub(closedAt), lingerTestLinger, "exited before a linger after the last close")
 	server.assertSocketRemoved(t)
 	server.assertLockReleased(t)
 }
@@ -402,15 +425,15 @@ func TestSharedServerLinger_AConnectionOpenDuringTheIndexBuildCountsAsAttached(t
 	gate := make(chan struct{})
 	var conn *lingerTestConn
 	server := launchWinningFirstLingerWindow(t, lingerTestOptions{linger: "1s", inMemory: true, buildGate: gate},
-		func(s *lingerTestServer) bool {
-			if !s.observeSocket(t) {
+		func(s *lingerTestServer, deadline time.Time) bool {
+			if !s.observeSocket(t, deadline) {
 				return false
 			}
 			var dialed bool
-			if conn, dialed = s.tryDial(t); !dialed {
+			if conn, dialed = s.tryDial(t, deadline); !dialed {
 				return false
 			}
-			if s.runsFor(2 * lingerTestLinger) {
+			if s.runsFor(t, 2*lingerTestLinger, deadline) {
 				return true
 			}
 			conn.assertDroppedByExpiry(t)
@@ -421,7 +444,7 @@ func TestSharedServerLinger_AConnectionOpenDuringTheIndexBuildCountsAsAttached(t
 	closedAt := conn.close(t)
 
 	require.NoError(t, server.awaitExit(t))
-	assert.GreaterOrEqual(t, time.Since(closedAt), lingerTestLinger)
+	assert.GreaterOrEqual(t, server.exitedAt.Sub(closedAt), lingerTestLinger)
 	server.assertSocketRemoved(t)
 }
 
@@ -435,8 +458,8 @@ func TestSharedServerLinger_RemovesTheOnDiskIndexDirectory(t *testing.T) {
 	}
 	var conn *lingerTestConn
 	server := launchWinningFirstLingerWindow(t, lingerTestOptions{linger: "1s", inMemory: false},
-		func(s *lingerTestServer) (attached bool) {
-			conn, attached = s.tryAttach(t)
+		func(s *lingerTestServer, deadline time.Time) (attached bool) {
+			conn, attached = s.tryAttach(t, deadline)
 			return attached
 		})
 	require.Len(t, indexDirs(), 1, "search.in_memory=false must build the index on disk")
@@ -449,7 +472,7 @@ func TestSharedServerLinger_RemovesTheOnDiskIndexDirectory(t *testing.T) {
 
 func TestSharedServerLinger_ASuccessorHoldingTheLockKeepsItsSocket(t *testing.T) {
 	first := launchWinningFirstLingerWindow(t, lingerTestOptions{linger: "1s", inMemory: true},
-		func(s *lingerTestServer) bool { return s.observeSocket(t) })
+		func(s *lingerTestServer, deadline time.Time) bool { return s.observeSocket(t, deadline) })
 	require.NoError(t, first.awaitExit(t))
 	first.assertSocketRemoved(t)
 
