@@ -45,7 +45,16 @@ func assertSingleDebugEntry(t *testing.T, buf *bytes.Buffer) {
 
 var bothServerModes = []config.ServerMode{config.ServerModeShared, config.ServerModeSession}
 
-func TestEffectiveServerMode_WindowsBehavesAsSessionWithOneDebugEntry(t *testing.T) {
+func assertWindowsLogForConfiguredMode(t *testing.T, mode config.ServerMode, buf *bytes.Buffer) {
+	t.Helper()
+	if mode == config.ServerModeShared {
+		assertSingleDebugEntry(t, buf)
+		return
+	}
+	assert.Empty(t, platformLogEntries(t, buf))
+}
+
+func TestEffectiveServerMode_WindowsBehavesAsSessionAndLogsOnlyAnOverriddenShared(t *testing.T) {
 	for _, mode := range bothServerModes {
 		t.Run(string(mode), func(t *testing.T) {
 			logger, buf := newPlatformDebugLogger()
@@ -53,7 +62,7 @@ func TestEffectiveServerMode_WindowsBehavesAsSessionWithOneDebugEntry(t *testing
 			effective := effectiveServerMode(logger, "windows", mode)
 
 			assert.Equal(t, config.ServerModeSession, effective)
-			assertSingleDebugEntry(t, buf)
+			assertWindowsLogForConfiguredMode(t, mode, buf)
 		})
 	}
 }
@@ -90,7 +99,7 @@ func TestAttemptsDiscovery_NeverOnWindowsEvenWithASpawnSeam(t *testing.T) {
 			attempted := attemptsDiscovery(logger, "windows", platformGateParams(spawn), platformGateSettings("stdio", mode))
 
 			assert.False(t, attempted)
-			assertSingleDebugEntry(t, buf)
+			assertWindowsLogForConfiguredMode(t, mode, buf)
 		})
 	}
 }
