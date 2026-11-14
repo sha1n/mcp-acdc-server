@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -153,7 +154,7 @@ func TestCompute_Deterministic(t *testing.T) {
 func TestCompute_DoesNotModifySettings(t *testing.T) {
 	s := baseSettings(t)
 	link := filepath.Join(t.TempDir(), "link")
-	require.NoError(t, os.Symlink(s.ContentDir, link))
+	symlinkOrSkip(t, s.ContentDir, link)
 	s.ContentDir = link
 	before := *s
 	before.Auth.APIKeys = append([]string{}, s.Auth.APIKeys...)
@@ -246,7 +247,7 @@ func TestCompute_ContentDirSymlinkEqualsResolvedPath(t *testing.T) {
 	resolved := mustCompute(t, s, stampedBinary())
 
 	link := filepath.Join(t.TempDir(), "link")
-	require.NoError(t, os.Symlink(s.ContentDir, link))
+	symlinkOrSkip(t, s.ContentDir, link)
 	s.ContentDir = link
 
 	require.Equal(t, resolved, mustCompute(t, s, stampedBinary()))
@@ -263,8 +264,13 @@ func TestCompute_RelativeContentDirEqualsAbsolutePath(t *testing.T) {
 }
 
 // TestCompute_ContentDirCaseIsNotFolded holds on case-insensitive file systems
-// too, where both spellings name one directory.
+// too, where both spellings name one directory. It is skipped on Windows,
+// where filepath.EvalSymlinks rewrites each component to its on-disk case and
+// where no launch computes an identity (spec section 12).
 func TestCompute_ContentDirCaseIsNotFolded(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("filepath.EvalSymlinks normalises case on Windows")
+	}
 	parent := t.TempDir()
 	lower := filepath.Join(parent, "content")
 	upper := filepath.Join(parent, "CONTENT")
@@ -455,11 +461,27 @@ func TestCompute_StartupFixedContent(t *testing.T) {
 	}
 }
 
-func skipIfRoot(t *testing.T) {
+// skipIfPermissionBitsIgnored skips where mode 000 does not deny reading:
+// for root, and on Windows, where chmod only toggles the read-only attribute.
+func skipIfPermissionBitsIgnored(t *testing.T) {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod does not remove read access on Windows")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("permission bits do not restrict root")
 	}
+}
+
+// symlinkOrSkip skips on Windows when creating a symlink needs a privilege
+// the test process lacks; elsewhere a failure is a test failure.
+func symlinkOrSkip(t *testing.T, target, link string) {
+	t.Helper()
+	err := os.Symlink(target, link)
+	if err != nil && runtime.GOOS == "windows" {
+		t.Skipf("cannot create symlinks here: %v", err)
+	}
+	require.NoError(t, err)
 }
 
 func TestCompute_UncomputableIdentityReturnsError(t *testing.T) {
@@ -469,7 +491,7 @@ func TestCompute_UncomputableIdentityReturnsError(t *testing.T) {
 		},
 		"content dir through dangling symlink": func(t *testing.T, s *config.Settings, _ *Binary) {
 			link := filepath.Join(t.TempDir(), "link")
-			require.NoError(t, os.Symlink(filepath.Join(t.TempDir(), "missing"), link))
+			symlinkOrSkip(t, filepath.Join(t.TempDir(), "missing"), link)
 			s.ContentDir = link
 		},
 		"unstamped executable missing": func(t *testing.T, _ *config.Settings, bin *Binary) {
@@ -479,7 +501,7 @@ func TestCompute_UncomputableIdentityReturnsError(t *testing.T) {
 			*bin = Binary{Version: "dev", Build: "unknown"}
 		},
 		"unstamped executable unreadable": func(t *testing.T, _ *config.Settings, bin *Binary) {
-			skipIfRoot(t)
+			skipIfPermissionBitsIgnored(t)
 			exe := filepath.Join(t.TempDir(), "acdc-mcp")
 			writeFile(t, exe, "x")
 			require.NoError(t, os.Chmod(exe, 0o000))
@@ -489,27 +511,27 @@ func TestCompute_UncomputableIdentityReturnsError(t *testing.T) {
 			require.NoError(t, os.MkdirAll(filepath.Join(s.ContentDir, ".acdc", "config.yaml"), 0o755))
 		},
 		"manifest exists but is unreadable": func(t *testing.T, s *config.Settings, _ *Binary) {
-			skipIfRoot(t)
+			skipIfPermissionBitsIgnored(t)
 			manifest := filepath.Join(s.ContentDir, ".acdc", "config.yaml")
 			writeFile(t, manifest, "a: 1\n")
 			require.NoError(t, os.Chmod(manifest, 0o000))
 		},
 		"prompts directory unreadable": func(t *testing.T, s *config.Settings, _ *Binary) {
-			skipIfRoot(t)
+			skipIfPermissionBitsIgnored(t)
 			prompts := filepath.Join(s.ContentDir, ".acdc", "prompts")
 			writeFile(t, filepath.Join(prompts, "p.md"), "x")
 			require.NoError(t, os.Chmod(prompts, 0o000))
 			t.Cleanup(func() { _ = os.Chmod(prompts, 0o755) })
 		},
 		"prompts subdirectory unreadable": func(t *testing.T, s *config.Settings, _ *Binary) {
-			skipIfRoot(t)
+			skipIfPermissionBitsIgnored(t)
 			sub := filepath.Join(s.ContentDir, ".acdc", "prompts", "sub")
 			writeFile(t, filepath.Join(sub, "p.md"), "x")
 			require.NoError(t, os.Chmod(sub, 0o000))
 			t.Cleanup(func() { _ = os.Chmod(sub, 0o755) })
 		},
 		"prompt file unreadable": func(t *testing.T, s *config.Settings, _ *Binary) {
-			skipIfRoot(t)
+			skipIfPermissionBitsIgnored(t)
 			prompt := filepath.Join(s.ContentDir, ".acdc", "prompts", "p.md")
 			writeFile(t, prompt, "x")
 			require.NoError(t, os.Chmod(prompt, 0o000))
@@ -517,12 +539,12 @@ func TestCompute_UncomputableIdentityReturnsError(t *testing.T) {
 		"prompt is a dangling symlink": func(t *testing.T, s *config.Settings, _ *Binary) {
 			prompts := filepath.Join(s.ContentDir, ".acdc", "prompts")
 			require.NoError(t, os.MkdirAll(prompts, 0o755))
-			require.NoError(t, os.Symlink(filepath.Join(prompts, "missing"), filepath.Join(prompts, "p.md")))
+			symlinkOrSkip(t, filepath.Join(prompts, "missing"), filepath.Join(prompts, "p.md"))
 		},
 		"prompt is a symlink to a directory": func(t *testing.T, s *config.Settings, _ *Binary) {
 			prompts := filepath.Join(s.ContentDir, ".acdc", "prompts")
 			require.NoError(t, os.MkdirAll(prompts, 0o755))
-			require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(prompts, "p.md")))
+			symlinkOrSkip(t, t.TempDir(), filepath.Join(prompts, "p.md"))
 		},
 	}
 	for name, setup := range cases {
@@ -622,4 +644,20 @@ func TestAppendSettingRecords_UntaggedFieldUsesFieldName(t *testing.T) {
 	var records []record
 	require.NoError(t, appendSettingRecords(&records, reflect.ValueOf(settings{Plain: "p", Tagged: "t"}), ""))
 	require.Equal(t, []record{{"Plain", "p"}, {"tagged", "t"}}, records)
+}
+
+// A dangling manifest symlink is what the server itself reads as no manifest,
+// so the identity treats it as absent; the target appearing changes it.
+func TestCompute_DanglingManifestSymlinkEqualsAbsentManifest(t *testing.T) {
+	s := baseSettings(t)
+	absent := mustCompute(t, s, stampedBinary())
+
+	acdc := filepath.Join(s.ContentDir, ".acdc")
+	require.NoError(t, os.MkdirAll(acdc, 0o755))
+	target := filepath.Join(t.TempDir(), "config.yaml")
+	symlinkOrSkip(t, target, filepath.Join(acdc, "config.yaml"))
+	require.Equal(t, absent, mustCompute(t, s, stampedBinary()))
+
+	writeFile(t, target, "")
+	require.NotEqual(t, absent, mustCompute(t, s, stampedBinary()))
 }
