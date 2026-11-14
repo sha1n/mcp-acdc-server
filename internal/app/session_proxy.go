@@ -1,0 +1,51 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/sessionproxy"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
+)
+
+// attemptsDiscovery gates the session proxy on a spawn seam, so that until a
+// production spawn exists every stdio launch stays a per-session server.
+func attemptsDiscovery(params RunParams, settings *config.Settings) bool {
+	return params.SpawnSharedServer != nil &&
+		settings.Transport == "stdio" &&
+		settings.ServerMode == config.ServerModeShared
+}
+
+func runSessionProxy(ctx context.Context, logger *slog.Logger, params RunParams, settings *config.Settings, binary identity.Binary) error {
+	if params.EndpointDir == nil {
+		return errors.New("session proxy requires an endpoint directory")
+	}
+	if params.Stdin == nil || params.Stdout == nil {
+		return errors.New("session proxy requires host stdin and stdout")
+	}
+	endpointDir, err := params.EndpointDir()
+	if err != nil {
+		return fmt.Errorf("failed to resolve endpoint directory: %w", err)
+	}
+
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, os.Interrupt)
+	defer stop()
+
+	return sessionproxy.Run(ctx, sessionproxy.Config{
+		EndpointDir: endpointDir,
+		Identity: func() (string, error) {
+			return identity.Compute(settings, binary)
+		},
+		ConnectWait: settings.SharedServer.ConnectWait,
+		Spawn:       params.SpawnSharedServer,
+		Logger:      logger,
+		Stdin:       params.Stdin,
+		Stdout:      params.Stdout,
+	})
+}
