@@ -57,6 +57,10 @@ func runSharedServer(ctx context.Context, params RunParams, settings *config.Set
 	// their session proxies recover as from a crash.
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, os.Interrupt)
 	defer stop()
+	// Run may still wait on a handler or a build that ignores cancellation;
+	// a second signal must then terminate the process with the default
+	// disposition.
+	context.AfterFunc(ctx, stop)
 
 	var revalidate func(context.Context)
 	err = sharedserver.Run(ctx, sharedserver.Config{
