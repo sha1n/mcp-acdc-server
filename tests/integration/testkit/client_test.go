@@ -296,3 +296,36 @@ func fatalMessageOf(t *testing.T, construct func(testing.TB)) string {
 	}
 	return mockT.fatalMsg
 }
+
+func TestConnectFailure_OmitsTheMissingSide(t *testing.T) {
+	serverErr := errors.New("server exited")
+	connectErr := errors.New("connection refused")
+
+	tests := []struct {
+		name       string
+		connectErr error
+		serverErr  error
+		wantIs     error
+	}{
+		{name: "server error only", serverErr: serverErr, wantIs: serverErr},
+		{name: "connect error only", connectErr: connectErr, wantIs: connectErr},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := connectFailure(tt.connectErr, tt.serverErr)
+
+			if !errors.Is(got, tt.wantIs) {
+				t.Fatalf("Expected %q to wrap %q", got, tt.wantIs)
+			}
+			if strings.Contains(got.Error(), "nil") {
+				t.Errorf("Expected no placeholder for the missing error, got %q", got)
+			}
+		})
+	}
+}
+
+func TestConnectFailure_NoErrors(t *testing.T) {
+	if got := connectFailure(nil, nil); got != nil {
+		t.Errorf("Expected no failure when neither side failed, got %q", got)
+	}
+}
