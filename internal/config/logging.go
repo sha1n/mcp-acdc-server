@@ -36,6 +36,8 @@ type dumpLine struct {
 // exactly when the setting it reports takes part in the server identity.
 var dumpLines = []dumpLine{
 	valueLine(identityScope, "content_dir", func(s *Settings) any { return s.ContentDir }),
+	valueLine(identityScope, "uri_scheme", func(s *Settings) any { return s.Scheme }),
+	valueLine(identityScope, "cross_ref", func(s *Settings) any { return s.CrossRef }),
 	valueLine(sessionScope, "transport", func(s *Settings) any { return s.Transport }),
 	onlyIf(usesSSE, valueLine(sessionScope, "host", func(s *Settings) any { return s.Host })),
 	onlyIf(usesSSE, valueLine(sessionScope, "port", func(s *Settings) any { return s.Port })),
