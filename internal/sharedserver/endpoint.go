@@ -52,10 +52,22 @@ func resolveEndpointDir(p endpointPlatform) (string, error) {
 	}
 }
 
+var errEndpointNotOpened = errors.New("endpoint directory was not opened with OpenEndpoint")
+
+// Endpoint is a verified endpoint directory. Socket and lock paths are
+// obtained only through it, so neither can be built from an unverified
+// directory; the zero value yields none.
+type Endpoint struct {
+	dir string
+}
+
 // SocketPath returns the socket path of the shared server for identity,
 // rejecting a path longer than the platform allows.
-func SocketPath(dir, identity string) (string, error) {
-	path := filepath.Join(dir, identity+".sock")
+func (e Endpoint) SocketPath(identity string) (string, error) {
+	path, err := e.identityPath(identity, ".sock")
+	if err != nil {
+		return "", err
+	}
 	if err := checkSocketPathLength(runtime.GOOS, path); err != nil {
 		return "", err
 	}
@@ -63,8 +75,18 @@ func SocketPath(dir, identity string) (string, error) {
 }
 
 // LockPath returns the lock file path of the shared server for identity.
-func LockPath(dir, identity string) string {
-	return filepath.Join(dir, identity+".lock")
+func (e Endpoint) LockPath(identity string) (string, error) {
+	return e.identityPath(identity, ".lock")
+}
+
+func (e Endpoint) identityPath(identity, suffix string) (string, error) {
+	if e.dir == "" {
+		return "", errEndpointNotOpened
+	}
+	if !ValidIdentity(identity) {
+		return "", fmt.Errorf("invalid shared server identity %q", identity)
+	}
+	return filepath.Join(e.dir, identity+suffix), nil
 }
 
 func checkSocketPathLength(goos, path string) error {

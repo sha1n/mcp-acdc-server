@@ -26,15 +26,20 @@ func Run(ctx context.Context, cfg Config) error {
 	if !ValidIdentity(cfg.Identity) {
 		return fmt.Errorf("invalid shared server identity %q", cfg.Identity)
 	}
-	if err := EnsureEndpointDir(cfg.EndpointDir); err != nil {
+	endpoint, err := OpenEndpoint(cfg.EndpointDir)
+	if err != nil {
 		return err
 	}
-	socketPath, err := SocketPath(cfg.EndpointDir, cfg.Identity)
+	socketPath, err := endpoint.SocketPath(cfg.Identity)
+	if err != nil {
+		return err
+	}
+	lockPath, err := endpoint.LockPath(cfg.Identity)
 	if err != nil {
 		return err
 	}
 
-	lock, err := acquireLock(LockPath(cfg.EndpointDir, cfg.Identity))
+	lock, err := acquireLock(lockPath)
 	if err != nil {
 		return err
 	}

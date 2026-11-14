@@ -13,6 +13,6 @@ func Run(context.Context, Config) error {
 	return errUnsupported
 }
 
-func EnsureEndpointDir(string) error {
-	return errUnsupported
+func OpenEndpoint(string) (Endpoint, error) {
+	return Endpoint{}, errUnsupported
 }
