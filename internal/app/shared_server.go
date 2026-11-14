@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
@@ -50,6 +53,15 @@ func runSharedServer(ctx context.Context, params RunParams, settings *config.Set
 		return fmt.Errorf("failed to resolve endpoint directory: %w", err)
 	}
 
+	// Exit is immediate on a signal: attached connections simply drop and
+	// their session proxies recover as from a crash.
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, os.Interrupt)
+	defer stop()
+	// Run may still wait on a handler or a build that ignores cancellation;
+	// a second signal must then terminate the process with the default
+	// disposition.
+	context.AfterFunc(ctx, stop)
+
 	var revalidate func(context.Context)
 	err = sharedserver.Run(ctx, sharedserver.Config{
 		Identity:    identity,
@@ -58,6 +70,7 @@ func runSharedServer(ctx context.Context, params RunParams, settings *config.Set
 		LogStartup: func(logger *slog.Logger) {
 			logSharedServerStartup(logger, settings, version)
 		},
+		Linger: settings.SharedServer.Linger,
 		Build: func(ctx context.Context) (*mcp.Server, func(), error) {
 			components, err := params.CreateServer(ctx, settings, version)
 			revalidate = components.RevalidateNow

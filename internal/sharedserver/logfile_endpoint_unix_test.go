@@ -37,6 +37,7 @@ func TestRun_LogDirectoryEqualToTheEndpointDirectoryIsUnusable(t *testing.T) {
 					LogDir:      tt.logDir(dir),
 					LogStartup:  func(logger *slog.Logger) { logger.Info("startup entry") },
 					Build:       build,
+					Linger:      time.Hour,
 				})
 			}()
 			t.Cleanup(func() {

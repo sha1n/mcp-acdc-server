@@ -8,10 +8,12 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/endpoint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,8 +24,12 @@ func TestServe_AcceptFailureClosesListenerAndIdleSessions(t *testing.T) {
 	listener, socketPath := bindTestEndpoint(t)
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil)
+	ep, epErr := endpoint.OpenEndpoint(filepath.Dir(socketPath))
+	require.NoError(t, epErr)
 	done := make(chan error, 1)
-	go func() { done <- serve(context.Background(), listener, server, nil, "") }()
+	go func() {
+		done <- startAccepting(context.Background(), listener, ep, testIdentity, time.Hour).serve(server, nil, "")
+	}()
 
 	client, err := net.Dial("unix", socketPath)
 	require.NoError(t, err)
@@ -56,12 +62,14 @@ func TestServe_AcceptFailureClosesListenerAndIdleSessions(t *testing.T) {
 }
 
 func TestServe_ContextCancellationReturnsNil(t *testing.T) {
-	listener, _ := bindTestEndpoint(t)
+	listener, socketPath := bindTestEndpoint(t)
 
+	ep, epErr := endpoint.OpenEndpoint(filepath.Dir(socketPath))
+	require.NoError(t, epErr)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- serve(ctx, listener, mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil), nil, "")
+		done <- startAccepting(ctx, listener, ep, testIdentity, time.Hour).serve(mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil), nil, "")
 	}()
 	cancel()
 

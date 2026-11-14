@@ -161,7 +161,7 @@ func TestRun_BuildFailureReleasesTheLockAndClosesTheSocket(t *testing.T) {
 	errBuild := errors.New("build failed")
 	build, built := buildSpy(errBuild)
 
-	err := Run(context.Background(), Config{Identity: testIdentity, EndpointDir: dir, Build: build})
+	err := Run(context.Background(), Config{Identity: testIdentity, EndpointDir: dir, Build: build, Linger: time.Hour})
 
 	require.ErrorIs(t, err, errBuild)
 	assert.True(t, *built)
