@@ -32,4 +32,5 @@ func RegisterFlags(flags *pflag.FlagSet) {
 	flags.String("server-mode", "", "Server mode: shared or session (default: shared)")
 	flags.String("shared-server-connect-wait", "", "How long a session tries to reach or start a shared server, a Go duration > 0 (default: 5s)")
 	flags.String("shared-server-linger", "", "How long a shared server keeps running with no attached sessions, a Go duration >= 1s (default: 30s)")
+	registerSharedServerFlag(flags)
 }

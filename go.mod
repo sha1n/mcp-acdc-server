@@ -8,6 +8,7 @@ require (
 	github.com/bmatcuk/doublestar/v4 v4.10.4
 	github.com/chromedp/cdproto v0.159.3
 	github.com/chromedp/chromedp v0.23.0
+	github.com/gofrs/flock v0.13.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.1.0
@@ -114,7 +115,6 @@ require (
 	github.com/go-xmlfmt/xmlfmt v1.1.3 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/godoc-lint/godoc-lint v0.11.4 // indirect
-	github.com/gofrs/flock v0.13.1 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/golangci/asciicheck v0.5.0 // indirect
