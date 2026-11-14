@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"reflect"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -532,4 +535,57 @@ level=INFO msg="Config: ui.enabled" value=false
 			assert.Equal(t, tt.expected, got)
 		})
 	}
+}
+
+// knownUndumpedSettings lists the settings leaves the dump does not report
+// yet. Adding their lines changes the dump output and is tracked by #201;
+// no other leaf may be missing from the dump.
+var knownUndumpedSettings = []string{"uri_scheme", "cross_ref"}
+
+func TestLogWithLogger_DumpsEverySettingsLeaf(t *testing.T) {
+	everyConditionalLine := []*Settings{
+		dumpTestSettings("sse",
+			AuthSettings{Type: AuthTypeBasic, Basic: BasicAuthSettings{Username: "alice", Password: "secret"}},
+			UISettings{Enabled: true, MaxResults: 20}),
+		dumpTestSettings("stdio",
+			AuthSettings{Type: AuthTypeAPIKey, APIKeys: []string{"k1"}},
+			UISettings{Enabled: true, MaxResults: 20}),
+	}
+	dumped := map[string]bool{}
+	for _, s := range everyConditionalLine {
+		handler := &recordingHandler{}
+		LogWithLogger(s, slog.New(handler))
+		for _, r := range handler.records {
+			if key, ok := strings.CutPrefix(r.Message, "Config: "); ok {
+				dumped[key] = true
+			}
+		}
+	}
+
+	leaves := dumpTestSettingsLeaves(reflect.TypeFor[Settings](), "")
+
+	for _, leaf := range leaves {
+		if slices.Contains(knownUndumpedSettings, leaf) {
+			assert.False(t, dumped[leaf], "%s is dumped; remove it from knownUndumpedSettings", leaf)
+			continue
+		}
+		assert.True(t, dumped[leaf], "settings leaf %s has no dump line", leaf)
+	}
+	for _, leaf := range knownUndumpedSettings {
+		assert.Contains(t, leaves, leaf, "knownUndumpedSettings names %s, which is no settings leaf", leaf)
+	}
+}
+
+func dumpTestSettingsLeaves(t reflect.Type, prefix string) []string {
+	var leaves []string
+	for i := range t.NumField() {
+		field := t.Field(i)
+		key := prefix + field.Tag.Get("mapstructure")
+		if field.Type.Kind() == reflect.Struct {
+			leaves = append(leaves, dumpTestSettingsLeaves(field.Type, key+".")...)
+			continue
+		}
+		leaves = append(leaves, key)
+	}
+	return leaves
 }
