@@ -110,7 +110,7 @@ func (s *acdcService) Start() (map[string]any, error) {
 	for time.Now().Before(deadline) {
 		select {
 		case err := <-s.errChan:
-			return nil, fmt.Errorf("server exited unexpectedly: %w", err)
+			return nil, startupExitError(err)
 		default:
 			resp, err := client.Get(baseURL + "/sse")
 			if err == nil {
@@ -127,6 +127,13 @@ func (s *acdcService) Start() (map[string]any, error) {
 	}
 
 	return nil, fmt.Errorf("server failed to start after %v", s.StartTimeout)
+}
+
+func startupExitError(err error) error {
+	if err == nil {
+		return errors.New("server exited unexpectedly without an error before it started serving")
+	}
+	return fmt.Errorf("server exited unexpectedly: %w", err)
 }
 
 // closeStdioPipes hands the reason the server stopped to whoever is on the other end of
