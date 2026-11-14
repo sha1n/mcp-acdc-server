@@ -9,6 +9,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver"
@@ -86,12 +87,13 @@ func (h *SharedServerHarness) ServeReadyWithoutAnswering(id string) (received fu
 			return
 		}
 		if _, err := conn.Write(readyLine); err != nil {
-			reportUnlessClosed(h, "failed to write the ready line", err)
+			reportUnlessConnectionEnded(h, "failed to write the ready line", err)
 			return
 		}
 		reader := bufio.NewReader(conn)
 		for {
 			if _, err := reader.ReadBytes('\n'); err != nil {
+				reportUnlessConnectionEnded(h, "failed to read from a session", err)
 				return
 			}
 			count.Add(1)
@@ -118,6 +120,9 @@ func (h *SharedServerHarness) serveSocket(id string, handle func(net.Conn)) {
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
+				if !errors.Is(err, net.ErrClosed) {
+					h.t.Errorf("failed to accept at the test socket: %v", err)
+				}
 				return
 			}
 			held.add(conn)
@@ -134,8 +139,12 @@ func (h *SharedServerHarness) serveSocket(id string, handle func(net.Conn)) {
 	})
 }
 
-func reportUnlessClosed(h *SharedServerHarness, what string, err error) {
-	if !errors.Is(err, net.ErrClosed) {
+// reportUnlessConnectionEnded treats only the peer going away or the cleanup
+// closing the connection as a normal end of a session.
+func reportUnlessConnectionEnded(h *SharedServerHarness, what string, err error) {
+	ended := errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE)
+	if !ended {
 		h.t.Errorf("%s: %v", what, err)
 	}
 }
