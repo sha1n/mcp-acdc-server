@@ -10,8 +10,8 @@ import (
 	"syscall"
 
 	"github.com/sha1n/mcp-acdc-server/internal/config"
-	"github.com/sha1n/mcp-acdc-server/internal/sessionproxy"
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/sessionproxy"
 )
 
 // attemptsDiscovery gates the session proxy on a spawn seam, so that until a

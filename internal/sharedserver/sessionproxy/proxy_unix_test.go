@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sha1n/mcp-acdc-server/internal/sessionproxy"
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver"
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/endpoint"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/sessionproxy"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
