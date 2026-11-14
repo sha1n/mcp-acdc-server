@@ -78,3 +78,64 @@ func TestWithSession_IgnoresAnEmptyIdentifier(t *testing.T) {
 
 	assert.Equal(t, "level=INFO msg=\"no session\"\n", out.String())
 }
+
+func TestSessionHandler_LogsExactlyOneTopLevelSessionInEveryCombination(t *testing.T) {
+	const session = "0a1b2c3d"
+	attributed := withSession(context.Background(), session)
+	tests := []struct {
+		name string
+		log  func(*slog.Logger)
+		want string
+	}{
+		{
+			name: "derived session only",
+			log:  func(l *slog.Logger) { l.With("session", session).InfoContext(context.Background(), "probe") },
+			want: `level=INFO msg=probe session=0a1b2c3d`,
+		},
+		{
+			name: "derived and context session",
+			log:  func(l *slog.Logger) { l.With("session", session).InfoContext(attributed, "probe") },
+			want: `level=INFO msg=probe session=0a1b2c3d`,
+		},
+		{
+			name: "derived session among other attributes before a group",
+			log: func(l *slog.Logger) {
+				l.With("component", "tools").With("session", session, "tool", "search").WithGroup("request").InfoContext(attributed, "probe", "id", 7)
+			},
+			want: `level=INFO msg=probe session=0a1b2c3d component=tools tool=search request.id=7`,
+		},
+		{
+			name: "derived session under a group stays in that group",
+			log: func(l *slog.Logger) {
+				l.WithGroup("request").With("session", "nested").InfoContext(attributed, "probe")
+			},
+			want: `level=INFO msg=probe session=0a1b2c3d request.session=nested`,
+		},
+		{
+			name: "record session and context session",
+			log: func(l *slog.Logger) {
+				l.With("component", "tools").InfoContext(attributed, "probe", "session", session, "id", 7)
+			},
+			want: `level=INFO msg=probe session=0a1b2c3d component=tools id=7`,
+		},
+		{
+			name: "record session under a group stays in that group",
+			log:  func(l *slog.Logger) { l.WithGroup("request").InfoContext(attributed, "probe", "session", "nested") },
+			want: `level=INFO msg=probe session=0a1b2c3d request.session=nested`,
+		},
+		{
+			name: "context session wins over a different derived one",
+			log:  func(l *slog.Logger) { l.With("session", "ffffffff").InfoContext(attributed, "probe") },
+			want: `level=INFO msg=probe session=0a1b2c3d`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger, out := newSessionLogTestLogger(slog.LevelInfo)
+
+			tt.log(logger)
+
+			assert.Equal(t, tt.want+"\n", out.String())
+		})
+	}
+}

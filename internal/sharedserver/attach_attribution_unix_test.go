@@ -192,3 +192,24 @@ func TestAttach_SessionEndedWithAnErrorCarriesTheSession(t *testing.T) {
 	assert.Len(t, linesMatching(logs, `^time=\S+ level=WARN msg="Session ended with an error" session=`+session+` error=`), 1, logs)
 	assert.Len(t, linesMatching(logs, `^time=\S+ level=INFO msg="Session detached" session=`+session+`$`), 1, logs)
 }
+
+func TestAttach_CancellationBeforeTheReadyLineIsNotLogged(t *testing.T) {
+	a := newAttributedAttach(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	// Revalidation runs before the ready line, so cancelling there and waiting
+	// for the server side to close guarantees the write fails by cancellation.
+	cancelBeforeReady := func(context.Context) {
+		cancel()
+		_, err := io.ReadAll(a.client)
+		assert.NoError(t, err)
+	}
+	go func() {
+		defer close(a.done)
+		attach(ctx, a.logger, a.serverConn, a.server, cancelBeforeReady, "/var/log/acdc.log")
+	}()
+
+	logs := a.awaitLogs(t)
+
+	assert.Empty(t, logs)
+}
