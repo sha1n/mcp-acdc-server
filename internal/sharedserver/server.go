@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -32,4 +33,5 @@ type Config struct {
 	// line, so a session's first listing reflects current content. It is
 	// called only after Build has returned.
 	Revalidate func(context.Context)
+	Linger     time.Duration
 }
