@@ -35,6 +35,7 @@ type Config struct {
 // return, since neither can be interrupted.
 func Run(ctx context.Context, cfg Config) error {
 	input := readHostInput(cfg.Stdin)
+	defer input.stop()
 	conn, err := discover(ctx, cfg, input.ended)
 	if err != nil {
 		return sessionResult(ctx, err)
@@ -121,6 +122,11 @@ func awaitReady(ctx context.Context, fromServer *bufio.Reader, abort <-chan stru
 	}
 }
 
+// relay ends at host stdin EOF without waiting for the write in progress: a
+// shared server that stopped reading would block it forever, and the caller
+// closing the connection unblocks it. A line still being written at EOF may
+// therefore not reach the shared server; its response could not reach the
+// host anyway.
 func relay(ctx context.Context, conn net.Conn, fromServer *bufio.Reader, input *hostInput, stdout io.Writer) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -135,6 +141,8 @@ func relay(ctx context.Context, conn net.Conn, fromServer *bufio.Reader, input *
 		return err
 	case err := <-toHost:
 		return err
+	case <-input.ended:
+		return input.endErr()
 	}
 }
 

@@ -9,29 +9,46 @@ import (
 	"sync"
 )
 
-// hostInput reads host stdin from the start of discovery and holds every
-// complete line, in order, until it is relayed. Holding instead of leaving the
-// bytes in the pipe keeps a host that writes ahead from blocking while the
-// shared server starts.
+// hostInput reads host stdin from the start of discovery. Until the session
+// attaches it holds every complete line, in order, so a host that writes ahead
+// does not block while the shared server starts. Once attached it hands each
+// line over directly, so a shared server that stops reading pushes back on the
+// host instead of growing the held lines.
 type hostInput struct {
-	mu      sync.Mutex
-	lines   [][]byte
-	readErr error
-	pending chan struct{}
-	ended   chan struct{}
+	mu       sync.Mutex
+	held     [][]byte
+	attached bool
+	readErr  error
+	live     chan []byte
+	ended    chan struct{}
+	stopOnce sync.Once
+	stopped  chan struct{}
 }
 
 func readHostInput(stdin io.Reader) *hostInput {
-	in := &hostInput{pending: make(chan struct{}, 1), ended: make(chan struct{})}
+	in := &hostInput{live: make(chan []byte), ended: make(chan struct{}), stopped: make(chan struct{})}
 	go in.read(stdin)
 	return in
+}
+
+// stop releases the held lines and makes the reader drop every line it gets
+// from now on. A read already blocked inside stdin cannot be interrupted
+// without closing stdin, which belongs to the caller, so the reader may
+// outlive the session until that read returns; it then reads no further.
+func (in *hostInput) stop() {
+	in.stopOnce.Do(func() {
+		in.mu.Lock()
+		defer in.mu.Unlock()
+		close(in.stopped)
+		in.held = nil
+	})
 }
 
 // read discards an incomplete trailing line: only complete lines are
 // forwarded.
 func (in *hostInput) read(stdin io.Reader) {
 	reader := bufio.NewReader(stdin)
-	for {
+	for !in.isStopped() {
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
 			in.mu.Lock()
@@ -40,40 +57,67 @@ func (in *hostInput) read(stdin io.Reader) {
 			close(in.ended)
 			return
 		}
-		in.mu.Lock()
-		in.lines = append(in.lines, line)
-		in.mu.Unlock()
-		select {
-		case in.pending <- struct{}{}:
-		default:
+		if !in.deliver(line) {
+			return
 		}
 	}
 }
 
-func (in *hostInput) take() [][]byte {
+func (in *hostInput) isStopped() bool {
+	select {
+	case <-in.stopped:
+		return true
+	default:
+		return false
+	}
+}
+
+func (in *hostInput) deliver(line []byte) bool {
+	in.mu.Lock()
+	if in.isStopped() {
+		in.mu.Unlock()
+		return false
+	}
+	if !in.attached {
+		in.held = append(in.held, line)
+		in.mu.Unlock()
+		return true
+	}
+	in.mu.Unlock()
+	select {
+	case in.live <- line:
+		return true
+	case <-in.stopped:
+		return false
+	}
+}
+
+// attach ends holding: the lines held so far are returned, in order, and every
+// later line goes through live.
+func (in *hostInput) attach() [][]byte {
 	in.mu.Lock()
 	defer in.mu.Unlock()
-	lines := in.lines
-	in.lines = nil
-	return lines
+	in.attached = true
+	held := in.held
+	in.held = nil
+	return held
 }
 
 // forwardTo writes the held lines, then live ones, until host stdin ends,
 // which is a normal end of the session.
 func (in *hostInput) forwardTo(ctx context.Context, w io.Writer) error {
+	if err := writeLines(w, in.attach()); err != nil {
+		return err
+	}
 	for {
-		ended := false
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-in.pending:
+		case line := <-in.live:
+			if err := writeLines(w, [][]byte{line}); err != nil {
+				return err
+			}
 		case <-in.ended:
-			ended = true
-		}
-		if err := writeLines(w, in.take()); err != nil {
-			return err
-		}
-		if ended {
 			return in.endErr()
 		}
 	}
