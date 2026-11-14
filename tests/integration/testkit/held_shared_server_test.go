@@ -3,8 +3,11 @@
 package testkit
 
 import (
+	"io"
+	"net"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -76,4 +79,105 @@ func TestHoldSharedServer_LingersBeyondItsDeadlineWithoutChangingTheIdentity(t *
 
 	assert.Greater(t, heldLinger, SharedServerDeadline)
 	assert.Equal(t, h.Identity(args), h.Identity(append(args, "--shared-server-linger", heldLinger.String())))
+}
+
+func TestHoldSharedServer_IgnoresTheExitOfAnotherCandidate(t *testing.T) {
+	h := NewSharedServerHarness(t)
+	args := SharedLaunchArgs(CreateTestContentDir(t, nil))
+	releaseLog := withholdLog(t, h, h.Identity(args))
+	result := holdInBackground(h, args, time.Now().Add(SharedServerDeadline))
+	h.Eventually(func() bool { return h.Spawns() == 1 }, "the held candidate is not spawned")
+
+	otherArgs := SharedLaunchArgs(CreateTestContentDir(t, nil))
+	otherID := h.Identity(otherArgs)
+	h.HoldLock(otherID)
+	require.NoError(t, h.SpawnSharedServer(otherArgs)(otherID))
+	h.Eventually(func() bool { return len(h.SharedServerExits()) == 1 }, "the other candidate's exit is not recorded")
+	releaseLog()
+
+	got := awaitHoldResult(t, result)
+	require.NoError(t, got.err)
+	require.NotNil(t, got.held)
+	assert.True(t, got.held.Ready.Ready)
+	assert.Equal(t, 1, h.Builds())
+	assert.Equal(t, []SharedServerExit{{Built: false, Err: nil}}, h.SharedServerExits())
+}
+
+func TestHoldSharedServer_ReportsAnExitDuringABlockedAttachWithoutAwaitingTheDeadline(t *testing.T) {
+	h := NewSharedServerHarness(t)
+	args := SharedLaunchArgs(CreateTestContentDir(t, nil))
+	id := h.Identity(args)
+	socketPath, err := h.Endpoint().SocketPath(id)
+	require.NoError(t, err)
+	releaseLog := withholdLog(t, h, id)
+	// It accepts the helper's attach and never writes a ready line.
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	// The helper's deadline outlasts the watchdog below, so only the
+	// candidate's exit can end its attach before the watchdog fires.
+	result := holdInBackground(h, args, time.Now().Add(2*SharedServerDeadline))
+	require.NoError(t, listener.SetDeadline(time.Now().Add(SharedServerDeadline)))
+	conn, err := listener.AcceptUnix()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	// A non-empty directory at the socket path fails the bind the candidate
+	// reaches once its log opens.
+	require.NoError(t, os.Remove(socketPath))
+	require.NoError(t, os.MkdirAll(socketPath, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(socketPath, "occupied"), nil, 0o600))
+	releaseLog()
+
+	got := awaitHoldResult(t, result)
+	require.Error(t, got.err)
+	assert.Nil(t, got.held)
+	assert.Contains(t, got.err.Error(), "ended before a session held it")
+	assert.Contains(t, got.err.Error(), "stale socket")
+	assert.Equal(t, 1, h.Spawns())
+}
+
+type holdResult struct {
+	held *RawSession
+	err  error
+}
+
+func holdInBackground(h *SharedServerHarness, args []string, deadline time.Time) <-chan holdResult {
+	result := make(chan holdResult, 1)
+	go func() {
+		_, held, err := h.holdSharedServer(args, deadline)
+		result <- holdResult{held: held, err: err}
+	}()
+	return result
+}
+
+func awaitHoldResult(t *testing.T, result <-chan holdResult) holdResult {
+	t.Helper()
+	select {
+	case got := <-result:
+		return got
+	case <-time.After(SharedServerDeadline):
+		t.Fatalf("the helper did not return within %s", SharedServerDeadline)
+		return holdResult{}
+	}
+}
+
+// withholdLog puts a FIFO at the log path of id, so a candidate for id blocks
+// opening its log, after it takes its lock and before it binds its socket,
+// until release opens the FIFO for reading. The log is then drained until the
+// candidate closes it.
+func withholdLog(t *testing.T, h *SharedServerHarness, id string) (release func()) {
+	t.Helper()
+	logPath := filepath.Join(h.LogDir, id+".log")
+	require.NoError(t, syscall.Mkfifo(logPath, 0o600))
+	return func() {
+		go func() {
+			log, err := os.Open(logPath)
+			if err != nil {
+				return
+			}
+			defer func() { _ = log.Close() }()
+			_, _ = io.Copy(io.Discard, log)
+		}()
+	}
 }

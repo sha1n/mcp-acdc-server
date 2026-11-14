@@ -4,6 +4,7 @@ package testkit
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -43,40 +44,76 @@ func (h *SharedServerHarness) holdSharedServer(args []string, deadline time.Time
 	if err != nil {
 		return "", nil, err
 	}
-	exited := len(h.SharedServerExits())
-	if err := h.SpawnSharedServer(heldArgs)(id); err != nil {
+	end, err := h.spawnCandidate(heldArgs)(id)
+	if err != nil {
 		return "", nil, fmt.Errorf("failed to spawn the held shared server: %w", err)
 	}
-	for time.Now().Before(deadline) {
-		if exits := h.SharedServerExits(); len(exits) > exited {
-			return "", nil, fmt.Errorf("the held shared server ended before a session held it: %+v", exits[exited])
-		}
-		if held := h.tryAttach(socketPath, deadline); held != nil {
-			return id, held, nil
-		}
-		time.Sleep(pollInterval)
+	held, err := h.awaitHold(socketPath, end, deadline)
+	if err != nil {
+		return "", nil, err
 	}
-	return "", nil, fmt.Errorf("no session held the shared server within %s", SharedServerDeadline)
+	return id, held, nil
 }
 
-func (h *SharedServerHarness) tryAttach(socketPath string, deadline time.Time) *RawSession {
-	conn, err := net.DialTimeout("unix", socketPath, time.Until(deadline))
+// awaitHold cancels the attach attempt in flight when the candidate ends, so
+// its exit is reported as itself and promptly rather than as a timeout.
+func (h *SharedServerHarness) awaitHold(socketPath string, end *candidateEnd, deadline time.Time) (*RawSession, error) {
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	go func() {
+		select {
+		case <-end.ended:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	poll := time.NewTicker(pollInterval)
+	defer poll.Stop()
+	for {
+		if held := h.tryAttach(ctx, socketPath); held != nil {
+			return held, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, holdFailure(end)
+		case <-poll.C:
+		}
+	}
+}
+
+// holdFailure checks the candidate again because its end and the deadline can
+// both have passed, and a recorded exit is the more useful reason.
+func holdFailure(end *candidateEnd) error {
+	select {
+	case <-end.ended:
+		return fmt.Errorf("the held shared server ended before a session held it: %+v", end.exit)
+	default:
+		return fmt.Errorf("no session held the shared server within %s", SharedServerDeadline)
+	}
+}
+
+// tryAttach closes its connection when ctx ends, which also ends a read of a
+// ready line that is never written.
+func (h *SharedServerHarness) tryAttach(ctx context.Context, socketPath string) *RawSession {
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(ctx, "unix", socketPath)
 	if err != nil {
 		return nil
 	}
+	closeOnEnd := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	s := &RawSession{h: h, conn: conn, reader: bufio.NewReader(conn)}
-	if err := conn.SetReadDeadline(deadline); err == nil {
-		if line, err := s.reader.ReadBytes('\n'); err == nil {
-			if s.Ready, err = sharedserver.DecodeReadyLine(line); err == nil && conn.SetReadDeadline(time.Time{}) == nil {
-				h.t.Cleanup(func() {
-					if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-						h.t.Errorf("failed to close the held shared server session: %v", err)
-					}
-				})
-				return s
-			}
-		}
+	line, err := s.reader.ReadBytes('\n')
+	if err == nil {
+		s.Ready, err = sharedserver.DecodeReadyLine(line)
 	}
-	_ = conn.Close()
-	return nil
+	if err != nil || !closeOnEnd() {
+		_ = conn.Close()
+		return nil
+	}
+	h.t.Cleanup(func() {
+		if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			h.t.Errorf("failed to close the held shared server session: %v", err)
+		}
+	})
+	return s
 }
