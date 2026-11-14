@@ -152,6 +152,24 @@ func TestACDCService_StopWithoutStartIsBoundedByTheStopDelay(t *testing.T) {
 	require.Error(t, stopWithin(t, service, 2*time.Second))
 }
 
+func TestACDCService_StopThatTimesOutReleasesTheWatcherAndSharesTheTimeout(t *testing.T) {
+	service := NewACDCService("stop-timeout-shared", NewTestFlags(t, CreateTestContentDir(t, nil), nil))
+	acdc := service.(*acdcService)
+	acdc.StopDelay = 50 * time.Millisecond
+
+	firstErr := stopWithin(t, service, 2*time.Second)
+	require.Error(t, firstErr)
+
+	select {
+	case <-acdc.watcherDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the runner watcher is still running after Stop gave up waiting")
+	}
+
+	acdc.StopDelay = time.Hour
+	require.Equal(t, firstErr, stopWithin(t, service, 2*time.Second), "a later Stop must return the shared timeout without waiting again")
+}
+
 func stopWithin(t *testing.T, service Service, bound time.Duration) error {
 	t.Helper()
 	stopped := make(chan error, 1)
