@@ -187,10 +187,10 @@ func TestSharedServer_IdentityMismatchIsLoggedAndExitsWithoutBinding(t *testing.
 }
 
 func TestSessionProxy_LaunchesDifferingInSearchInMemoryDoNotShare(t *testing.T) {
-	args := testkit.SharedLaunchArgs(newStartupFixedContentDir(t))
 	var spawnsBeforeSecond int
 
 	h := runWinningColdStarts(t, 2, func(t *testing.T, h *testkit.SharedServerHarness) {
+		args := testkit.SharedLaunchArgs(newStartupFixedContentDir(t))
 		t.Setenv("ACDC_MCP_SEARCH_IN_MEMORY", "true")
 		connectAndListTools(t, h.Launch(args...))
 		spawnsBeforeSecond = h.Spawns()
@@ -213,12 +213,12 @@ func TestSessionProxy_LaunchesDifferingOnlyInAuthOrUISettingsShare(t *testing.T)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			contentDir := newStartupFixedContentDir(t)
-			base := testkit.SharedLaunchArgs(contentDir)
-			other := testkit.SharedLaunchArgs(contentDir, tt.extra...)
 			var spawnsBeforeSecond int
 
 			h := runWinningColdStart(t, func(t *testing.T, h *testkit.SharedServerHarness) {
+				contentDir := newStartupFixedContentDir(t)
+				base := testkit.SharedLaunchArgs(contentDir)
+				other := testkit.SharedLaunchArgs(contentDir, tt.extra...)
 				connectAndListTools(t, h.Launch(base...))
 				spawnsBeforeSecond = h.Spawns()
 				connectAndListTools(t, h.Launch(other...))
