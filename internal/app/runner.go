@@ -79,6 +79,15 @@ func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, bi
 		return runSessionProxy(ctx, logger, params, settings, binary)
 	}
 
+	if settings.Transport == "stdio" {
+		// Use custom transport if provided (for testing), otherwise use stdio
+		transport := params.CustomIOTransport
+		if transport == nil {
+			transport = &mcp.StdioTransport{}
+		}
+		return runPerSession(ctx, logger, params, settings, binary.Version, transport)
+	}
+
 	components, err := params.CreateServer(ctx, logger, settings, binary.Version)
 	if err != nil {
 		return err
@@ -86,17 +95,6 @@ func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, bi
 	if components.Cleanup != nil {
 		defer components.Cleanup()
 	}
-
-	// Start server
-	if settings.Transport == "stdio" {
-		// Use custom transport if provided (for testing), otherwise use stdio
-		transport := params.CustomIOTransport
-		if transport == nil {
-			transport = &mcp.StdioTransport{}
-		}
-		return components.MCP.Run(ctx, transport)
-	} else {
-		logger.Info("Starting SSE server", "host", settings.Host, "port", settings.Port)
-		return params.StartSSEServer(logger, components.MCP, settings, components.SSEOptions...)
-	}
+	logger.Info("Starting SSE server", "host", settings.Host, "port", settings.Port)
+	return params.StartSSEServer(logger, components.MCP, settings, components.SSEOptions...)
 }

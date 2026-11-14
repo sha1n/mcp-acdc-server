@@ -19,6 +19,7 @@ type hostInput struct {
 	held     [][]byte
 	attached bool
 	readErr  error
+	tail     []byte
 	live     chan []byte
 	ended    chan struct{}
 	stopOnce sync.Once
@@ -53,6 +54,7 @@ func (in *hostInput) read(stdin io.Reader) {
 		if err != nil {
 			in.mu.Lock()
 			in.readErr = err
+			in.tail = line
 			in.mu.Unlock()
 			close(in.ended)
 			return
@@ -138,5 +140,73 @@ func writeLines(w io.Writer, lines [][]byte) error {
 			return fmt.Errorf("failed to relay to the shared server: %w", err)
 		}
 	}
+	return nil
+}
+
+// remainder yields the incomplete line read before host stdin ended, once,
+// and then the read's result.
+func (in *hostInput) remainder() ([]byte, error) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	tail := in.tail
+	in.tail = nil
+	if len(tail) > 0 {
+		return tail, nil
+	}
+	return nil, in.readErr
+}
+
+// handOver gives the host input to a per-session server as a stream: the
+// held lines, then live lines, then the incomplete last line and the read's
+// result, as a per-session server reading stdin itself would see them.
+// Holding continues until the first Read, so host EOF and cancellation stay
+// observable while the per-session server starts; from then on the host is
+// back-pressured. Close stops the reader and ends a pending Read.
+func (in *hostInput) handOver() io.ReadCloser {
+	return &handedOverInput{in: in}
+}
+
+type handedOverInput struct {
+	in      *hostInput
+	started bool
+	queued  [][]byte
+	pending []byte
+}
+
+func (h *handedOverInput) Read(p []byte) (int, error) {
+	if !h.started {
+		h.started = true
+		h.queued = h.in.attach()
+	}
+	for len(h.pending) == 0 {
+		line, err := h.next()
+		if err != nil {
+			return 0, err
+		}
+		h.pending = line
+	}
+	n := copy(p, h.pending)
+	h.pending = h.pending[n:]
+	return n, nil
+}
+
+func (h *handedOverInput) next() ([]byte, error) {
+	if len(h.queued) > 0 {
+		line := h.queued[0]
+		h.queued = h.queued[1:]
+		return line, nil
+	}
+	select {
+	case line := <-h.in.live:
+		return line, nil
+	case <-h.in.ended:
+		return h.in.remainder()
+	case <-h.in.stopped:
+		return nil, io.ErrClosedPipe
+	}
+}
+
+func (h *handedOverInput) Close() error {
+	h.in.stop()
 	return nil
 }
