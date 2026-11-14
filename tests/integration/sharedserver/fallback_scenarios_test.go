@@ -103,26 +103,38 @@ func TestSessionProxyFallback_SingleBreakAttachesToASharedServerWithoutFallback(
 	for name, brk := range breaks {
 		t.Run(name, func(t *testing.T) {
 			args := testkit.SharedLaunchArgs(newSessionProxyContentDir(t))
-			deadline := time.Now().Add(testkit.SharedServerDeadline)
-			for attempts := 1; ; attempts++ {
-				h := testkit.NewSharedServerHarness(t)
-				accepted := h.BreakBeforeReady(h.Identity(args), 1, brk)
+			var accepted func() int
+			h, l := attachWithoutLingerLoss(t, func(h *testkit.SharedServerHarness) *testkit.LaunchUnderTest {
+				accepted = h.BreakBeforeReady(h.Identity(args), 1, brk)
 				l, gate := testkit.StartHeldLaunch(t, h.SessionProxyParams(args), h.Binary, args...)
 				writeHeldRequests(l)
 				require.Empty(t, l.FallbackWarnings(), "discovery is still held")
 
 				gate.Open()
 				requireHeldRequestsAnswered(t, l)
+				return l
+			})
 
-				if !lostToTheInitialLinger(t, h, l) {
-					assert.Empty(t, l.FallbackWarnings())
-					assert.Equal(t, 1, accepted())
-					assert.Equal(t, 1, h.Builds())
-					return
-				}
-				require.True(t, time.Now().Before(deadline), "no attempt attached without lingering out in %d attempts", attempts)
-			}
+			assert.Empty(t, l.FallbackWarnings())
+			assert.Equal(t, 1, accepted())
+			assert.Equal(t, 1, h.Builds())
 		})
+	}
+}
+
+// attachWithoutLingerLoss repeats attempt, each on a fresh harness, until one
+// does not lose to the initial linger, and returns that attempt's harness and
+// launch.
+func attachWithoutLingerLoss(t *testing.T, attempt func(h *testkit.SharedServerHarness) *testkit.LaunchUnderTest) (*testkit.SharedServerHarness, *testkit.LaunchUnderTest) {
+	t.Helper()
+	deadline := time.Now().Add(testkit.SharedServerDeadline)
+	for attempts := 1; ; attempts++ {
+		h := testkit.NewSharedServerHarness(t)
+		l := attempt(h)
+		if !lostToTheInitialLinger(t, h, l) {
+			return h, l
+		}
+		require.True(t, time.Now().Before(deadline), "no attempt attached without lingering out in %d attempts", attempts)
 	}
 }
 
