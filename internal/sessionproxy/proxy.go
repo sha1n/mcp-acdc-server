@@ -1,0 +1,133 @@
+// Package sessionproxy relays one stdio session to the shared server for its
+// server identity, discovering or starting that shared server first.
+package sessionproxy
+
+import (
+	"bufio"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"time"
+
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/endpoint"
+)
+
+type Config struct {
+	EndpointDir string
+	// Identity is computed only after host stdin is being held.
+	Identity    func() (string, error)
+	ConnectWait time.Duration
+	// Spawn starts a candidate shared server for the identity. It must not
+	// wait for the candidate: dialing is the only way to learn it is ready.
+	Spawn  func(identity string) error
+	Logger *slog.Logger
+	Stdin  io.Reader
+	Stdout io.Writer
+}
+
+// Run returns nil when the session ends normally, on host stdin EOF or on
+// cancellation of ctx, and an error when discovery fails or the shared server
+// connection breaks. It never waits on the shared server or on host stdio to
+// return, since neither can be interrupted.
+func Run(ctx context.Context, cfg Config) error {
+	input := readHostInput(cfg.Stdin)
+	conn, err := discover(ctx, cfg, input.ended)
+	if err != nil {
+		return sessionResult(ctx, err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	fromServer := bufio.NewReader(conn)
+	if err := awaitReady(ctx, fromServer, input.ended); err != nil {
+		return sessionResult(ctx, err)
+	}
+	return sessionResult(ctx, relay(ctx, conn, fromServer, input, cfg.Stdout))
+}
+
+func sessionResult(ctx context.Context, err error) error {
+	if ctx.Err() != nil || errors.Is(err, errSessionEnded) {
+		return nil
+	}
+	return err
+}
+
+func discover(ctx context.Context, cfg Config, abort <-chan struct{}) (net.Conn, error) {
+	identity, err := cfg.Identity()
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute the server identity: %w", err)
+	}
+	ep, err := endpoint.OpenEndpoint(cfg.EndpointDir)
+	if err != nil {
+		return nil, err
+	}
+	socketPath, err := ep.SocketPath(identity)
+	if err != nil {
+		return nil, err
+	}
+	var dialer net.Dialer
+	return discovery{
+		dial:        func(ctx context.Context) (net.Conn, error) { return dialer.DialContext(ctx, "unix", socketPath) },
+		spawn:       func() error { return cfg.Spawn(identity) },
+		clock:       realClock{},
+		connectWait: cfg.ConnectWait,
+		logger:      cfg.Logger,
+	}.connect(ctx, abort)
+}
+
+// awaitReady has no limit of its own: the shared server may still be building
+// its index, and the host's initialize timeout governs that wait.
+func awaitReady(ctx context.Context, fromServer *bufio.Reader, abort <-chan struct{}) error {
+	result := make(chan error, 1)
+	go func() {
+		line, err := fromServer.ReadBytes('\n')
+		if err != nil {
+			result <- fmt.Errorf("shared server connection dropped before the ready line: %w", err)
+			return
+		}
+		_, err = sharedserver.DecodeReadyLine(line)
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-abort:
+		return errSessionEnded
+	}
+}
+
+func relay(ctx context.Context, conn net.Conn, fromServer *bufio.Reader, input *hostInput, stdout io.Writer) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	toServer := make(chan error, 1)
+	toHost := make(chan error, 1)
+	go func() { toServer <- input.forwardTo(ctx, conn) }()
+	go func() { toHost <- copyLines(stdout, fromServer) }()
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-toServer:
+		return err
+	case err := <-toHost:
+		return err
+	}
+}
+
+// copyLines drops an incomplete trailing line: only complete lines are
+// forwarded.
+func copyLines(dst io.Writer, src *bufio.Reader) error {
+	for {
+		line, err := src.ReadBytes('\n')
+		if err != nil {
+			return fmt.Errorf("shared server connection lost: %w", err)
+		}
+		if _, err := dst.Write(line); err != nil {
+			return fmt.Errorf("failed to relay to the host: %w", err)
+		}
+	}
+}
