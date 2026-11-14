@@ -49,13 +49,16 @@ func runSharedServer(ctx context.Context, params RunParams, settings *config.Set
 		return fmt.Errorf("failed to resolve endpoint directory: %w", err)
 	}
 
+	var revalidate func(context.Context)
 	err = sharedserver.Run(ctx, sharedserver.Config{
 		Identity:    identity,
 		EndpointDir: endpointDir,
 		Build: func(ctx context.Context) (*mcp.Server, func(), error) {
 			components, err := params.CreateServer(ctx, settings, version)
+			revalidate = components.RevalidateNow
 			return components.MCP, components.Cleanup, err
 		},
+		Revalidate: func(ctx context.Context) { revalidate(ctx) },
 	})
 	// Another process owns this identity: exit silently, since anything
 	// written here would reach the spawning session's terminal or log.

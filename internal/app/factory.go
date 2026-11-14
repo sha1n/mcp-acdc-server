@@ -42,6 +42,9 @@ type Components struct {
 	MCP        *mcpsdk.Server
 	SSEOptions []SSEOption
 	Cleanup    func()
+	// RevalidateNow re-checks content without the refresh debounce, for a
+	// caller that must observe current content before proceeding.
+	RevalidateNow func(context.Context)
 }
 
 // CreateServer initializes the core server components.
@@ -150,7 +153,8 @@ func createServer(ctx context.Context, settings *config.Settings, version string
 			newRevalidatingSearchBackend(searchService, refresher),
 			newRevalidatingDocuments(newCatalogDocuments(holder), refresher),
 		)},
-		Cleanup: searchService.Close,
+		Cleanup:       searchService.Close,
+		RevalidateNow: refresher.revalidateNow,
 	}, nil
 }
 
