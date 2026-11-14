@@ -106,7 +106,7 @@ func TestRun_EndpointDirCheckFailureStopsBeforeTheLock(t *testing.T) {
 			tt.prepare(t, dir)
 			build, built := buildSpy(nil)
 
-			err := Run(context.Background(), Config{Identity: testIdentity, EndpointDir: dir, Build: build})
+			err := Run(context.Background(), Config{Identity: testIdentity, EndpointDir: dir, Build: build, Linger: time.Hour})
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), strings.ReplaceAll(tt.wantErr, "{dir}", dir))
@@ -120,7 +120,7 @@ func TestRun_RejectsAnOverLongSocketPathBeforeTheLock(t *testing.T) {
 	dir := filepath.Join(shortTempDir(t), strings.Repeat("d", 120))
 	build, built := buildSpy(nil)
 
-	err := Run(context.Background(), Config{Identity: testIdentity, EndpointDir: dir, Build: build})
+	err := Run(context.Background(), Config{Identity: testIdentity, EndpointDir: dir, Build: build, Linger: time.Hour})
 
 	require.ErrorIs(t, err, endpoint.ErrSocketPathTooLong)
 	assert.NoFileExists(t, lockFileIn(dir), "the lock must not be taken for an unusable socket path")
@@ -132,7 +132,7 @@ func TestRun_LockIOErrorIsReportedAsLockNotAcquired(t *testing.T) {
 	require.NoError(t, os.Symlink(filepath.Join(dir, "missing", "lock"), lockFileIn(dir)))
 	build, built := buildSpy(nil)
 
-	err := Run(context.Background(), Config{Identity: testIdentity, EndpointDir: dir, Build: build})
+	err := Run(context.Background(), Config{Identity: testIdentity, EndpointDir: dir, Build: build, Linger: time.Hour})
 
 	require.ErrorIs(t, err, ErrLockNotAcquired)
 	assert.ErrorIs(t, err, fs.ErrNotExist, "the lock I/O error must be preserved")
@@ -147,7 +147,7 @@ func TestRun_StaleSocketRemovalFailureReleasesTheLock(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(socketPath, "keep"), nil, 0o600))
 	build, built := buildSpy(nil)
 
-	err := Run(context.Background(), Config{Identity: testIdentity, EndpointDir: dir, Build: build})
+	err := Run(context.Background(), Config{Identity: testIdentity, EndpointDir: dir, Build: build, Linger: time.Hour})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to remove stale socket")
