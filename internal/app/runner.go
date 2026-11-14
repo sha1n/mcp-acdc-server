@@ -46,7 +46,7 @@ func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, ve
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	if identity := sharedServerIdentity(flags); identity != "" {
+	if identity, supplied := sharedServerIdentity(flags); supplied {
 		return runSharedServer(ctx, params, settings, identity, version)
 	}
 

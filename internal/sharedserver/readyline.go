@@ -16,7 +16,6 @@ type ReadyLine struct {
 	Log     string `json:"log"`
 }
 
-// EncodeReadyLine renders the ready line, newline included.
 func EncodeReadyLine(session, logPath string) ([]byte, error) {
 	line, err := json.Marshal(ReadyLine{Ready: true, Session: session, Log: logPath})
 	if err != nil {
@@ -25,7 +24,6 @@ func EncodeReadyLine(session, logPath string) ([]byte, error) {
 	return append(line, '\n'), nil
 }
 
-// DecodeReadyLine parses a ready line and rejects anything that is not one.
 func DecodeReadyLine(line []byte) (ReadyLine, error) {
 	var ready ReadyLine
 	if err := json.Unmarshal(line, &ready); err != nil {

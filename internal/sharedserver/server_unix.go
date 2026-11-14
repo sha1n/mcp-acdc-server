@@ -18,10 +18,10 @@ import (
 
 // Run serves the shared server for cfg.Identity until ctx is cancelled.
 //
-// The order is fixed: lock, bind, build, then accept. Nothing is written
-// before the lock is held, and no catalog or index is built before bind, so a
-// dialable socket means "one is alive" while the ready line means "it is
-// ready".
+// The order is fixed: lock, bind, build, then accept. Only the endpoint
+// directory is created or verified before the lock is held, and no catalog or
+// index is built before bind, so a dialable socket means "one is alive" while
+// the ready line means "it is ready".
 func Run(ctx context.Context, cfg Config) error {
 	if !ValidIdentity(cfg.Identity) {
 		return fmt.Errorf("invalid shared server identity %q", cfg.Identity)
@@ -88,8 +88,17 @@ func serve(ctx context.Context, listener *net.UnixListener, server *mcp.Server) 
 	stopAccepting := context.AfterFunc(ctx, func() { _ = listener.Close() })
 	defer stopAccepting()
 
+	// Sessions end only on client close or cancellation, so whatever stops the
+	// accept loop must close the listener and cancel the sessions before
+	// waiting; otherwise the caller keeps the lock and a dialable socket that
+	// nobody serves.
+	sessionCtx, cancelSessions := context.WithCancel(ctx)
 	var sessions sync.WaitGroup
-	defer sessions.Wait()
+	defer func() {
+		_ = listener.Close()
+		cancelSessions()
+		sessions.Wait()
+	}()
 
 	for {
 		conn, err := listener.AcceptUnix()
@@ -99,7 +108,7 @@ func serve(ctx context.Context, listener *net.UnixListener, server *mcp.Server) 
 			}
 			return fmt.Errorf("failed to accept shared server connection: %w", err)
 		}
-		sessions.Go(func() { attach(ctx, conn, server) })
+		sessions.Go(func() { attach(sessionCtx, conn, server) })
 	}
 }
 

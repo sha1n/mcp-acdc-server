@@ -22,18 +22,24 @@ func registerSharedServerFlag(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(sharedServerIdentityFlag)
 }
 
-func sharedServerIdentity(flags *pflag.FlagSet) string {
+// sharedServerIdentity reports whether the marker was supplied at all, so an
+// explicit empty or malformed value is rejected instead of falling through to
+// an ordinary launch.
+func sharedServerIdentity(flags *pflag.FlagSet) (identity string, supplied bool) {
 	if flags == nil {
-		return ""
+		return "", false
 	}
-	identity, err := flags.GetString(sharedServerIdentityFlag)
-	if err != nil {
-		return ""
+	flag := flags.Lookup(sharedServerIdentityFlag)
+	if flag == nil || !flag.Changed {
+		return "", false
 	}
-	return identity
+	return flag.Value.String(), true
 }
 
 func runSharedServer(ctx context.Context, params RunParams, settings *config.Settings, identity, version string) error {
+	if !sharedserver.ValidIdentity(identity) {
+		return fmt.Errorf("invalid shared server identity %q", identity)
+	}
 	if params.EndpointDir == nil {
 		return errors.New("shared server requires an endpoint directory")
 	}
