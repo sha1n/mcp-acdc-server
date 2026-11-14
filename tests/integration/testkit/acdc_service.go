@@ -31,8 +31,11 @@ type acdcService struct {
 	StartTimeout time.Duration
 	runner       RunnerFunc
 	watchRunner  sync.Once
-	runnerDone   chan struct{}
+	watcherDone  chan struct{}
+	abandonOnce  sync.Once
+	abandon      chan struct{}
 	runnerErr    error
+	waitErr      error
 	startErr     error
 
 	// Stdio pipes
@@ -48,7 +51,8 @@ func NewACDCService(name string, flags *pflag.FlagSet) Service {
 		name:         name,
 		flags:        flags,
 		errChan:      make(chan error, 1),
-		runnerDone:   make(chan struct{}),
+		watcherDone:  make(chan struct{}),
+		abandon:      make(chan struct{}),
 		StopDelay:    5 * time.Second,
 		StartTimeout: 10 * time.Second,
 		runner:       app.RunWithDeps,
@@ -227,7 +231,11 @@ func (s *acdcService) awaitRunner() error {
 	select {
 	case <-s.runnerExit():
 	case <-time.After(s.StopDelay):
-		return fmt.Errorf("timed out waiting for server to stop")
+		s.abandonOnce.Do(func() { close(s.abandon) })
+		<-s.watcherDone
+	}
+	if s.waitErr != nil {
+		return s.waitErr
 	}
 	if s.startErr != nil {
 		return s.startErr
@@ -238,15 +246,20 @@ func (s *acdcService) awaitRunner() error {
 	return nil
 }
 
-// runnerExit is closed once the runner's single result has been received from
-// errChan and stored in runnerErr, so Start and any number of Stop calls,
-// concurrent or repeated, observe the same result.
+// runnerExit is closed once a single watcher has either received the runner's
+// result from errChan or been abandoned by a Stop that gave up waiting, so Start
+// and any number of Stop calls, concurrent or repeated, observe the same outcome
+// and no watcher outlives a runner that never reports.
 func (s *acdcService) runnerExit() <-chan struct{} {
 	s.watchRunner.Do(func() {
 		go func() {
-			s.runnerErr = <-s.errChan
-			close(s.runnerDone)
+			defer close(s.watcherDone)
+			select {
+			case s.runnerErr = <-s.errChan:
+			case <-s.abandon:
+				s.waitErr = fmt.Errorf("timed out waiting for %s to stop", s.name)
+			}
 		}()
 	})
-	return s.runnerDone
+	return s.watcherDone
 }
