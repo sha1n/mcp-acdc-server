@@ -48,32 +48,65 @@ func (r Record) has(match Record) bool {
 	return true
 }
 
+// parseLine accepts exactly the grammar slog.TextHandler writes: attributes
+// separated by a single space, each key=value, where a key or value is either
+// bare (no space, quote, or '=') or a strconv.Quote literal, which is how the
+// handler escapes anything else. A duplicate key is rejected rather than
+// overwritten, so conflicting evidence in one record cannot go unnoticed.
 func parseLine(line string) (Record, error) {
 	record := Record{}
-	for rest := line; rest != ""; {
-		key, valueAndRest, ok := strings.Cut(rest, "=")
-		if !ok {
-			return nil, fmt.Errorf("attribute without a value in log line %q", line)
-		}
-		value, remainder, err := parseValue(valueAndRest)
+	for rest := line; ; {
+		key, value, remainder, err := parseAttr(rest)
 		if err != nil {
 			return nil, fmt.Errorf("log line %q: %w", line, err)
 		}
+		if _, dup := record[key]; dup {
+			return nil, fmt.Errorf("log line %q: duplicate key %q", line, key)
+		}
 		record[key] = value
-		rest = strings.TrimPrefix(remainder, " ")
+		if remainder == "" {
+			return record, nil
+		}
+		if remainder[0] != ' ' {
+			return nil, fmt.Errorf("log line %q: missing separator before %q", line, remainder)
+		}
+		rest = remainder[1:]
 	}
-	return record, nil
 }
 
-func parseValue(s string) (value, rest string, err error) {
-	if !strings.HasPrefix(s, `"`) {
-		value, rest, _ = strings.Cut(s, " ")
-		return value, rest, nil
-	}
-	quoted, err := strconv.QuotedPrefix(s)
+func parseAttr(s string) (key, value, rest string, err error) {
+	key, rest, err = parseToken(s, '=')
 	if err != nil {
-		return "", "", err
+		return "", "", "", fmt.Errorf("key: %w", err)
 	}
-	value, err = strconv.Unquote(quoted)
-	return value, s[len(quoted):], err
+	if !strings.HasPrefix(rest, "=") {
+		return "", "", "", fmt.Errorf("key %q is not followed by '='", key)
+	}
+	value, rest, err = parseToken(rest[1:], ' ')
+	if err != nil {
+		return "", "", "", fmt.Errorf("value of key %q: %w", key, err)
+	}
+	return key, value, rest, nil
+}
+
+// parseToken leaves the terminator in rest so the caller validates what follows.
+func parseToken(s string, terminator byte) (token, rest string, err error) {
+	if strings.HasPrefix(s, `"`) {
+		quoted, err := strconv.QuotedPrefix(s)
+		if err != nil {
+			return "", "", fmt.Errorf("malformed quoted token at %q: %w", s, err)
+		}
+		token, err = strconv.Unquote(quoted)
+		return token, s[len(quoted):], err
+	}
+	end := strings.IndexAny(s, ` "=`)
+	if end < 0 {
+		end = len(s)
+	} else if s[end] != terminator {
+		return "", "", fmt.Errorf("unexpected %q in bare token at %q", s[end], s)
+	}
+	if end == 0 {
+		return "", "", fmt.Errorf("empty bare token at %q", s)
+	}
+	return s[:end], s[end:], nil
 }
