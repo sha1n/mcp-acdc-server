@@ -19,6 +19,12 @@ type steppingClock struct {
 
 func (c *steppingClock) Now() time.Time { return c.now }
 
+// AfterFunc never fires: stepping time moves only through After, so the
+// connect wait is reached only at a back-off.
+func (c *steppingClock) AfterFunc(time.Duration, func()) func() bool {
+	return func() bool { return true }
+}
+
 func (c *steppingClock) After(d time.Duration) <-chan time.Time {
 	c.waits = append(c.waits, d)
 	c.now = c.now.Add(d)
@@ -32,6 +38,10 @@ type stalledClock struct{ now time.Time }
 func (c *stalledClock) Now() time.Time { return c.now }
 
 func (c *stalledClock) After(time.Duration) <-chan time.Time { return nil }
+
+func (c *stalledClock) AfterFunc(time.Duration, func()) func() bool {
+	return func() bool { return true }
+}
 
 type dialScript struct {
 	failures int
@@ -72,7 +82,7 @@ func TestDiscoveryConnect_SpawnsOnEveryFailedDialAndStopsAtTheConnectWait(t *tes
 
 	require.ErrorIs(t, err, ErrConnectWaitExpired)
 	assert.Nil(t, conn)
-	assert.Equal(t, 7, script.dials)
+	assert.Equal(t, 6, script.dials)
 	assert.Equal(t, script.dials, script.spawns, "a candidate is spawned on every failed dial")
 	assert.Equal(t, []time.Duration{
 		20 * time.Millisecond,
