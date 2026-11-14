@@ -47,6 +47,11 @@ func (h *SharedServerHarness) Launch(args ...string) *LaunchUnderTest {
 // the launch must return within SharedServerDeadline.
 func StartLaunch(t testing.TB, params app.RunParams, binary identity.Binary, args ...string) *LaunchUnderTest {
 	t.Helper()
+	return startLaunch(t, params, binary, nil, args...)
+}
+
+func startLaunch(t testing.TB, params app.RunParams, binary identity.Binary, gate *LaunchGate, args ...string) *LaunchUnderTest {
+	t.Helper()
 	flags := LaunchFlags(t, args)
 	hostIn, launchIn := io.Pipe()
 	launchOut, hostOut := io.Pipe()
@@ -62,14 +67,19 @@ func StartLaunch(t testing.TB, params app.RunParams, binary identity.Binary, arg
 	params.CustomIOTransport = &mcp.IOTransport{Reader: hostIn, Writer: hostOut}
 	params.Stderr = l.stderr
 
+	gate.join()
 	go func() {
 		defer close(l.done)
+		gate.await()
 		l.err = app.RunWithDeps(context.Background(), params, flags, binary)
 		// Unblocks host reads and writes still pending on the ended launch.
 		hostIn.CloseWithError(io.ErrClosedPipe)
 		hostOut.CloseWithError(io.EOF)
 	}()
 	t.Cleanup(func() {
+		// A test that fails before releasing its gate would otherwise leave
+		// the launch parked forever and fail the return deadline below.
+		gate.Release()
 		l.CloseStdin()
 		if ended, _ := l.waitWithin(SharedServerDeadline); !ended {
 			t.Errorf("launch did not return within %s of host stdin EOF", SharedServerDeadline)

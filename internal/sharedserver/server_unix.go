@@ -25,7 +25,7 @@ import (
 // Only the endpoint directory is created or verified before the lock is held,
 // and no catalog or index is built before bind, so a dialable socket means
 // "one is alive" while the ready line means "it is ready".
-func Run(ctx context.Context, cfg Config) error {
+func Run(ctx context.Context, cfg Config) (err error) {
 	if !endpoint.ValidIdentity(cfg.Identity) {
 		return fmt.Errorf("invalid shared server identity %q", cfg.Identity)
 	}
@@ -53,6 +53,8 @@ func Run(ctx context.Context, cfg Config) error {
 
 	logger, logPath, stopLog := startLog(separateLogDir(cfg.LogDir, cfg.EndpointDir), cfg.Identity)
 	defer stopLog()
+	logger = slog.New(newSessionHandler(logger.Handler()))
+	defer logStoppedOnNormalReturn(logger, &err)
 	if cfg.LogStartup != nil {
 		cfg.LogStartup(logger)
 	}
@@ -76,6 +78,12 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	return sessions.serve(server, cfg.Revalidate, logPath)
+}
+
+func logStoppedOnNormalReturn(logger *slog.Logger, err *error) {
+	if *err == nil {
+		logger.Info("Shared server stopped")
+	}
 }
 
 func checkIdentity(logger *slog.Logger, identity string, current func() (string, error)) error {
@@ -132,30 +140,33 @@ func attach(ctx context.Context, logger *slog.Logger, conn *net.UnixConn, server
 	defer stopOnCancel()
 
 	session := NewSessionID()
+	sessionCtx := withSession(ctx, session)
 	if revalidate != nil {
 		revalidate(ctx)
 	}
 	readyLine, err := EncodeReadyLine(session, logPath)
 	if err != nil {
-		logger.Error("Failed to attach session", "session", session, "error", err)
+		logger.ErrorContext(sessionCtx, "Failed to attach session", "error", err)
 		return
 	}
 	if _, err := conn.Write(readyLine); err != nil {
 		if peerDisconnected(err) || ctx.Err() != nil {
 			return
 		}
-		logger.Error("Failed to send ready line", "session", session, "error", err)
+		logger.ErrorContext(sessionCtx, "Failed to send ready line", "error", err)
 		return
 	}
+	logger.InfoContext(sessionCtx, "Session attached")
+	defer logger.InfoContext(sessionCtx, "Session detached")
 
 	// The SDK closes both halves; closing conn twice would end every clean
 	// session with a "use of closed network connection" error.
-	serverSession, err := server.Connect(ctx, &mcp.IOTransport{Reader: io.NopCloser(conn), Writer: conn}, nil)
+	serverSession, err := server.Connect(sessionCtx, &mcp.IOTransport{Reader: io.NopCloser(conn), Writer: conn}, nil)
 	if err != nil {
-		logger.Error("Failed to connect session", "session", session, "error", err)
+		logger.ErrorContext(sessionCtx, "Failed to connect session", "error", err)
 		return
 	}
 	if err := serverSession.Wait(); err != nil && !peerDisconnected(err) && ctx.Err() == nil {
-		logger.Warn("Session ended with an error", "error", err)
+		logger.WarnContext(sessionCtx, "Session ended with an error", "error", err)
 	}
 }

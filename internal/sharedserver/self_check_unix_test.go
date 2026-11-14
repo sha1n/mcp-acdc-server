@@ -170,3 +170,27 @@ func TestRun_LostLockSkipsTheSelfCheck(t *testing.T) {
 	require.ErrorIs(t, err, ErrLockNotAcquired)
 	assert.False(t, checked, "a candidate that loses the lock must not read the content")
 }
+
+func TestRun_FailedSelfCheckLogsItsFailureWithoutASessionAndNoStoppedEntry(t *testing.T) {
+	logDir := t.TempDir()
+	build, _ := buildSpy(nil)
+
+	err := Run(context.Background(), Config{
+		Identity:        testIdentity,
+		EndpointDir:     shortTempDir(t),
+		LogDir:          logDir,
+		CurrentIdentity: func() (string, error) { return otherTestIdentity, nil },
+		Build:           build,
+		Linger:          time.Hour,
+	})
+
+	require.ErrorIs(t, err, ErrIdentityMismatch)
+	failure := requireOneSelfCheckFailure(t, logDir)
+	assert.NotContains(t, failure, "session", "the self-check failure is the server's own entry")
+	data, err := os.ReadFile(filepath.Join(logDir, testIdentity+".log"))
+	require.NoError(t, err)
+	records, err := slogtext.Parse(data)
+	require.NoError(t, err)
+	assert.Empty(t, slogtext.Filter(records, slogtext.Record{"msg": "Shared server stopped"}), "an error return logs no stopped entry")
+	assert.Empty(t, slogtext.Filter(records, slogtext.Record{"msg": "Shared server linger expired with no session attached"}))
+}
