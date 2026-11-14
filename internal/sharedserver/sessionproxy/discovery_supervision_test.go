@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -57,6 +58,38 @@ func (op *heldOperation) awaitEntered(t *testing.T) {
 	case <-time.After(supervisionTestDeadline):
 		t.Fatal("the operation was never started")
 	}
+}
+
+// expiringClock stands still until the test expires the connect wait, so
+// expiry can be driven only once the operation it must bound has started.
+type expiringClock struct {
+	mu     sync.Mutex
+	now    time.Time
+	expiry func()
+}
+
+func (c *expiringClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *expiringClock) After(time.Duration) <-chan time.Time { return nil }
+
+func (c *expiringClock) AfterFunc(d time.Duration, f func()) func() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.expiry = func() {
+		c.now = c.now.Add(d)
+		go f()
+	}
+	return func() bool { return true }
+}
+
+func (c *expiringClock) expire() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.expiry()
 }
 
 func connectAsync(t *testing.T, d discovery, ctx context.Context, abort <-chan struct{}) <-chan error {
@@ -113,22 +146,29 @@ func TestDiscoveryConnect_AbortEndsASpawnInProgress(t *testing.T) {
 
 func TestDiscoveryConnect_ConnectWaitBoundsASpawnInProgress(t *testing.T) {
 	spawn := newHeldOperation(t)
-	result := connectAsync(t, failingDialDiscovery(spawn.spawn, realClock{}, 20*time.Millisecond), context.Background(), nil)
+	c := &expiringClock{now: time.Unix(0, 0)}
+	result := connectAsync(t, failingDialDiscovery(spawn.spawn, c, time.Second), context.Background(), nil)
+	spawn.awaitEntered(t)
+
+	c.expire()
 
 	require.ErrorIs(t, awaitConnect(t, result), ErrConnectWaitExpired)
-	spawn.awaitEntered(t)
 	assert.Equal(t, 1, spawn.calls)
 }
 
 func TestDiscoveryConnect_ConnectWaitBoundsADialInProgress(t *testing.T) {
 	dial := newHeldOperation(t)
 	script := &dialScript{}
-	d := discoveryFor(script, realClock{}, 20*time.Millisecond)
+	c := &expiringClock{now: time.Unix(0, 0)}
+	d := discoveryFor(script, c, time.Second)
 	d.dial = dial.dial
+	result := connectAsync(t, d, context.Background(), nil)
+	dial.awaitEntered(t)
 
-	err := awaitConnect(t, connectAsync(t, d, context.Background(), nil))
+	c.expire()
 
-	require.ErrorIs(t, err, ErrConnectWaitExpired)
+	require.ErrorIs(t, awaitConnect(t, result), ErrConnectWaitExpired)
+	assert.Equal(t, 1, dial.calls)
 	assert.Zero(t, script.spawns, "no candidate is spawned once the connect wait has expired")
 }
 

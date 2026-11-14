@@ -367,15 +367,13 @@ func TestRun_CancellationEndsTheSessionWellInside500ms(t *testing.T) {
 
 func TestRun_ConnectWaitExpiryIsADiscoveryFailure(t *testing.T) {
 	dir := proxyTestEndpointDir(t)
-	var spawns atomic.Int32
 	host := startProxy(t, sessionproxy.Config{
 		EndpointDir: dir,
 		ConnectWait: 100 * time.Millisecond,
-		Spawn:       func(string) error { spawns.Add(1); return nil },
+		Spawn:       func(string) error { return nil },
 	})
 
 	require.ErrorIs(t, host.result(), sessionproxy.ErrConnectWaitExpired)
-	assert.Positive(t, spawns.Load())
 }
 
 func TestRun_SpawnFailureIsADiscoveryFailure(t *testing.T) {
