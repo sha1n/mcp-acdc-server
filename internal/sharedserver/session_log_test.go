@@ -214,7 +214,7 @@ type countingValuer struct{ calls *atomic.Int32 }
 
 func (v countingValuer) LogValue() slog.Value {
 	v.calls.Add(1)
-	return slog.GroupValue(slog.Any("inner", countingInner{v.calls}))
+	return slog.GroupValue(slog.Any("inner", countingInner(v)))
 }
 
 type countingInner struct{ calls *atomic.Int32 }
