@@ -81,10 +81,12 @@ func TestSessionAttribution_StartupRaceInitialisesEveryProxyWithOneStartupAndDis
 	args := testkit.SharedLaunchArgs(newSessionProxyContentDir(t), "--shared-server-linger", "1h")
 	h := testkit.NewSharedServerHarness(t)
 	id := h.Identity(args)
+	gate := testkit.NewLaunchGate()
 	launches := make([]*testkit.LaunchUnderTest, proxies)
 	for i := range launches {
-		launches[i] = h.Launch(args...)
+		launches[i] = h.LaunchBehind(gate, args...)
 	}
+	gate.Release()
 
 	ctx, cancel := context.WithTimeout(context.Background(), testkit.SharedServerDeadline)
 	defer cancel()
