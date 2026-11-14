@@ -89,6 +89,62 @@ func TestACDCService_StopIsIdempotentAfterASuccessfulStart(t *testing.T) {
 	}
 }
 
+func TestACDCService_ConcurrentStopsShareTheRunnerResult(t *testing.T) {
+	runnerErr := errors.New("runner failed")
+	flags := NewTestFlags(t, CreateTestContentDir(t, nil), &FlagOptions{Transport: "stdio"})
+	service := NewACDCService("concurrent-stop", flags)
+	acdc := service.(*acdcService)
+	acdc.StopDelay = time.Minute
+	release := make(chan struct{})
+	acdc.runner = func(context.Context, app.RunParams, *pflag.FlagSet, string) error {
+		<-release
+		return runnerErr
+	}
+
+	_, err := service.Start()
+	require.NoError(t, err)
+
+	const stoppers = 2
+	entered := make(chan struct{}, stoppers)
+	results := make(chan error, stoppers)
+	for range stoppers {
+		go func() {
+			entered <- struct{}{}
+			results <- service.Stop()
+		}()
+	}
+	for range stoppers {
+		<-entered
+	}
+	close(release)
+
+	for i := range stoppers {
+		select {
+		case err := <-results:
+			require.ErrorIs(t, err, runnerErr, "Stop #%d", i+1)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Stop #%d did not return after the runner exited", i+1)
+		}
+	}
+}
+
+func TestACDCService_StopAfterACleanExitBeforeReadinessReturnsTheStartupError(t *testing.T) {
+	flags := NewTestFlags(t, CreateTestContentDir(t, nil), nil)
+	service := NewACDCService("clean-exit-before-ready", flags)
+	acdc := service.(*acdcService)
+	acdc.StopDelay = time.Minute
+	acdc.runner = func(context.Context, app.RunParams, *pflag.FlagSet, string) error {
+		return nil
+	}
+
+	_, startErr := service.Start()
+	require.Error(t, startErr)
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		require.EqualError(t, stopWithin(t, service, 2*time.Second), startErr.Error(), "Stop #%d", attempt)
+	}
+}
+
 func TestACDCService_StopWithoutStartIsBoundedByTheStopDelay(t *testing.T) {
 	service := NewACDCService("stop-without-start", NewTestFlags(t, CreateTestContentDir(t, nil), nil))
 	service.(*acdcService).StopDelay = 50 * time.Millisecond
