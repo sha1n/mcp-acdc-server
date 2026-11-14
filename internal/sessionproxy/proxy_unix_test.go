@@ -306,6 +306,7 @@ func TestRun_StdinEOFEndsTheSession(t *testing.T) {
 		{name: "after attach", reach: func(s *fakeSharedServer) *fakeSharedConn {
 			conn := s.nextConn()
 			conn.sendReady()
+			conn.write("{\"id\":1,\"result\":{}}\n")
 			return conn
 		}},
 	}
@@ -319,6 +320,11 @@ func TestRun_StdinEOFEndsTheSession(t *testing.T) {
 			}
 			host := startProxy(t, sessionproxy.Config{EndpointDir: dir, Spawn: spawn})
 			conn := tt.reach(server)
+			if tt.name == "after attach" {
+				// Linux resets a socket closed with unread data, so the proxy
+				// must have consumed the ready line before stdin ends.
+				require.Equal(t, "{\"id\":1,\"result\":{}}\n", host.readLine(), "the session is relaying")
+			}
 
 			require.NoError(t, host.stdin.Close())
 
