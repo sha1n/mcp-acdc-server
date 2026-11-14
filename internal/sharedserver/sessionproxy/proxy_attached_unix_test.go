@@ -5,8 +5,10 @@ package sessionproxy_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +36,30 @@ func TestRun_StdinEOFOnARelayingSessionClosesTheConnection(t *testing.T) {
 
 	require.NoError(t, host.result())
 	conn.requireClosedByProxy()
+}
+
+func TestRun_StdinEOFAfterAttachDeliversEveryLineAlreadyReadInOrder(t *testing.T) {
+	host, conn := attachedProxy(t)
+	var sent strings.Builder
+	for id := 2; id <= 5; id++ {
+		line := fmt.Sprintf("{\"id\":%d}\n", id)
+		host.write(line)
+		sent.WriteString(line)
+	}
+	// Larger than any socket buffer, so its write is still in progress when
+	// stdin ends: the shared server reads nothing until then.
+	last := fmt.Sprintf("{\"id\":6,\"pad\":%q}\n", strings.Repeat("x", 1<<20))
+	host.write(last)
+	sent.WriteString(last)
+
+	require.NoError(t, host.stdin.Close())
+
+	require.NoError(t, conn.conn.SetReadDeadline(time.Now().Add(proxyTestDeadline)))
+	received, err := io.ReadAll(conn.lines)
+	require.NoError(t, err, "the session proxy closed the connection after the last line")
+	assert.True(t, sent.String() == string(received),
+		"every line read before EOF reaches the shared server, in order: received %d of %d bytes", len(received), sent.Len())
+	require.NoError(t, host.result())
 }
 
 func TestRun_CancellationOfARelayingSessionEndsItWellInside500ms(t *testing.T) {
