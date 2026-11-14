@@ -27,6 +27,7 @@ type attachUnderTest struct {
 	cancel context.CancelFunc
 	logs   *bytes.Buffer
 	done   chan struct{}
+	ready  ReadyLine
 }
 
 func startAttach(t *testing.T) *attachUnderTest {
@@ -61,7 +62,7 @@ func startAttach(t *testing.T) *attachUnderTest {
 	}()
 
 	require.NoError(t, client.SetDeadline(time.Now().Add(serveTestDeadline)))
-	_, err = DecodeReadyLine(a.readLine(t))
+	a.ready, err = DecodeReadyLine(a.readLine(t))
 	require.NoError(t, err)
 	return a
 }
@@ -109,7 +110,7 @@ func TestAttach_LogsTheSessionErrorOfAnInvalidLine(t *testing.T) {
 	warns := warnRecords(a.awaitLogs(t))
 	require.Len(t, warns, 1)
 	assert.Contains(t, warns[0], "invalid character")
-	assert.NotContains(t, warns[0], "session=")
+	assert.Contains(t, warns[0], " session="+a.ready.Session+" ")
 }
 
 func TestAttach_CleanClientCloseIsNotLogged(t *testing.T) {
