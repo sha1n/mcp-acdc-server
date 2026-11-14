@@ -462,3 +462,74 @@ func TestDumpLines_EveryLineIsClassified(t *testing.T) {
 		assert.Contains(t, []dumpScope{identityScope, sessionScope}, line.scope, "dump line %d has no scope", i)
 	}
 }
+
+const dumpTestZeroSessionLines = `level=INFO msg="Config: server_mode" value=""
+level=INFO msg="Config: shared_server.connect_wait" value=0s
+level=INFO msg="Config: shared_server.linger" value=0s
+level=INFO msg="Config: search.max_results" value=0
+level=INFO msg="Config: search.in_memory" value=false
+level=INFO msg="Config: search.keywords_boost" value=0
+level=INFO msg="Config: search.heading_boost" value=0
+level=INFO msg="Config: search.path_boost" value=0
+level=INFO msg="Config: search.title_boost" value=0
+level=INFO msg="Config: search.content_boost" value=0
+level=INFO msg="Config: search.result_mode" value=""
+`
+
+func TestLogWithLogger_EdgeValueDumpIsByteIdentical(t *testing.T) {
+	tests := []struct {
+		name     string
+		settings *Settings
+		expected string
+	}{
+		{
+			name:     "sse with web UI disabled, zero values and no api keys",
+			settings: &Settings{Transport: "sse", Auth: AuthSettings{Type: AuthTypeAPIKey}},
+			expected: `level=INFO msg="Config: content_dir" value=""
+level=INFO msg="Config: transport" value=sse
+level=INFO msg="Config: host" value=""
+level=INFO msg="Config: port" value=0
+` + dumpTestZeroSessionLines + `level=INFO msg="Config: auth.type" value=apikey
+level=INFO msg="Config: auth.api_keys" count=0
+level=INFO msg="Config: ui.enabled" value=false
+`,
+		},
+		{
+			name:     "stdio with ignored web UI, zero values and empty basic credentials",
+			settings: &Settings{Transport: "stdio", Auth: AuthSettings{Type: AuthTypeBasic}, UI: UISettings{Enabled: true}},
+			expected: `level=INFO msg="Config: content_dir" value=""
+level=INFO msg="Config: transport" value=stdio
+` + dumpTestZeroSessionLines + `level=INFO msg="Config: auth.type" value=basic
+level=INFO msg="Config: auth.basic.username" value=""
+level=INFO msg="Config: auth.basic.password" value=****
+level=INFO msg="Config: ui.enabled" value=true
+level=INFO msg="Config: ui.max_results" value=0
+level=WARN msg="Web UI requires the sse transport; ui.enabled is ignored"
+`,
+		},
+		{
+			name: "sse with web UI disabled",
+			settings: dumpTestSettings("sse",
+				AuthSettings{Type: AuthTypeNone},
+				UISettings{Enabled: false, MaxResults: 20}),
+			expected: `level=INFO msg="Config: content_dir" value="/content dir"
+level=INFO msg="Config: transport" value=sse
+level=INFO msg="Config: host" value=0.0.0.0
+level=INFO msg="Config: port" value=8080
+level=INFO msg="Config: server_mode" value=shared
+level=INFO msg="Config: shared_server.connect_wait" value=5s
+level=INFO msg="Config: shared_server.linger" value=1m0s
+` + dumpTestIdentityLines + `level=INFO msg="Config: auth.type" value=none
+level=INFO msg="Config: ui.enabled" value=false
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := dumpTestOutput(func(logger *slog.Logger) { LogWithLogger(tt.settings, logger) })
+
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
