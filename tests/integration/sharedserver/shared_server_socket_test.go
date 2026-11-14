@@ -97,7 +97,10 @@ func (s *sharedServerUnderTest) launch(t *testing.T) {
 	t.Cleanup(func() {
 		cancel()
 		select {
-		case <-s.done:
+		case err := <-s.done:
+			if err != nil {
+				t.Logf("shared server stopped with: %v", err)
+			}
 		case <-time.After(sharedServerSocketTestDeadline):
 			t.Errorf("shared server did not stop")
 		}
