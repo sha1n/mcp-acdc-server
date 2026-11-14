@@ -47,6 +47,9 @@ func (w *acceptWake) consume() bool {
 type sessionAcceptor struct {
 	ctx            context.Context
 	abandonCtx     context.CancelFunc
+	buildCtx       context.Context
+	cancelBuild    context.CancelFunc
+	lingeredOut    bool
 	listener       *net.UnixListener
 	socketPath     string
 	linger         *sessionLinger
@@ -71,6 +74,7 @@ func startAccepting(ctx context.Context, listener *net.UnixListener, socketPath 
 		stopped:    make(chan struct{}),
 	}
 	a.ctx, a.abandonCtx = context.WithCancel(ctx)
+	a.buildCtx, a.cancelBuild = context.WithCancel(ctx)
 	a.sessionCtx, a.cancelSessions = context.WithCancel(a.ctx)
 	a.linger = newSessionLinger(linger, realLingerClock{}, a.wake.wake)
 	go func() {
@@ -88,14 +92,22 @@ func (a *sessionAcceptor) serve(server *mcp.Server, revalidate func(context.Cont
 	a.logPath = logPath
 	close(a.built)
 	<-a.stopped
+	a.cancelBuild()
 	return a.err
 }
 
-// abandon drops every connection after a failed build.
-func (a *sessionAcceptor) abandon() {
+// abandon drops every connection after a failed build and returns buildErr,
+// unless the build failed because the linger expired first: that is a
+// normal exit.
+func (a *sessionAcceptor) abandon(buildErr error) error {
 	close(a.built)
 	a.abandonCtx()
 	<-a.stopped
+	a.cancelBuild()
+	if a.lingeredOut {
+		return nil
+	}
+	return buildErr
 }
 
 func (a *sessionAcceptor) acceptLoop() error {
@@ -140,6 +152,8 @@ func (a *sessionAcceptor) closeAndUnlink() {
 	// A socket that cannot be removed is stale and is replaced by the next
 	// lock holder at bind.
 	_ = os.Remove(a.socketPath)
+	a.lingeredOut = true
+	a.cancelBuild()
 }
 
 func (a *sessionAcceptor) handle(conn *net.UnixConn) {
@@ -147,8 +161,10 @@ func (a *sessionAcceptor) handle(conn *net.UnixConn) {
 	select {
 	case <-a.built:
 	case <-a.sessionCtx.Done():
+		_ = conn.Close()
+		return
 	}
-	if a.server == nil || a.sessionCtx.Err() != nil {
+	if a.server == nil {
 		_ = conn.Close()
 		return
 	}

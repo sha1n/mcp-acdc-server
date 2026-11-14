@@ -56,10 +56,9 @@ func Run(ctx context.Context, cfg Config) error {
 	defer func() { _ = listener.Close() }()
 
 	sessions := startAccepting(ctx, listener, socketPath, cfg.Linger)
-	server, cleanup, err := cfg.Build(ctx)
+	server, cleanup, err := cfg.Build(sessions.buildCtx)
 	if err != nil {
-		sessions.abandon()
-		return err
+		return sessions.abandon(err)
 	}
 	if cleanup != nil {
 		defer cleanup()
