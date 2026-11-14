@@ -10,13 +10,13 @@ import (
 	"github.com/sha1n/mcp-acdc-server/internal/resources"
 )
 
-func makeResourceHandler(catalog resources.Catalog, revalidator Revalidator, uri string) mcp.ResourceHandler {
+func makeResourceHandler(logger *slog.Logger, catalog resources.Catalog, revalidator Revalidator, uri string) mcp.ResourceHandler {
 	return func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 		revalidator.Revalidate(ctx)
-		slog.Info("Resource request", "uri", uri)
+		logger.Info("Resource request", "uri", uri)
 		content, err := catalog.ReadResource(uri)
 		if err != nil {
-			slog.Error("Resource read failed", "uri", uri, "error", err)
+			logger.Error("Resource read failed", "uri", uri, "error", err)
 			return nil, err
 		}
 		return &mcp.ReadResourceResult{
@@ -29,12 +29,12 @@ func makeResourceHandler(catalog resources.Catalog, revalidator Revalidator, uri
 	}
 }
 
-func makePromptHandler(promptProvider *prompts.PromptProvider, name string) mcp.PromptHandler {
+func makePromptHandler(logger *slog.Logger, promptProvider *prompts.PromptProvider, name string) mcp.PromptHandler {
 	return func(ctx context.Context, req *mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-		slog.Info("Prompt request", "name", name)
+		logger.Info("Prompt request", "name", name)
 		messages, err := promptProvider.GetPrompt(name, req.Params.Arguments)
 		if err != nil {
-			slog.Error("Prompt retrieval failed", "name", name, "error", err)
+			logger.Error("Prompt retrieval failed", "name", name, "error", err)
 			return nil, err
 		}
 		return &mcp.GetPromptResult{

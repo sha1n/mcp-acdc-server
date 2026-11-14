@@ -14,6 +14,7 @@ import (
 //
 // It is not safe for concurrent use; its caller serializes Sync calls.
 type ResourceRegistrar struct {
+	logger      *slog.Logger
 	server      *mcp.Server
 	catalog     resources.Catalog
 	revalidator Revalidator
@@ -31,8 +32,9 @@ type ResourceRegistrar struct {
 // is the only caller with a legitimate reason to pass one in, and it
 // normalizes nil to a no-op Revalidator before reaching here; any other
 // caller must supply a real Revalidator (or a no-op of its own) up front.
-func NewResourceRegistrar(s *mcp.Server, catalog resources.Catalog, revalidator Revalidator) *ResourceRegistrar {
+func NewResourceRegistrar(logger *slog.Logger, s *mcp.Server, catalog resources.Catalog, revalidator Revalidator) *ResourceRegistrar {
 	return &ResourceRegistrar{
+		logger:      logger,
 		server:      s,
 		catalog:     catalog,
 		revalidator: revalidator,
@@ -56,7 +58,7 @@ func (r *ResourceRegistrar) Sync(catalog resources.Catalog) {
 	next := make(map[string]mcp.Resource, len(listing))
 	for _, res := range listing {
 		if _, err := url.Parse(res.URI); err != nil {
-			slog.Warn("Skipping resource with unparseable URI", "uri", res.URI, "error", err)
+			r.logger.Warn("Skipping resource with unparseable URI", "uri", res.URI, "error", err)
 			continue
 		}
 		next[res.URI] = res
@@ -79,7 +81,7 @@ func (r *ResourceRegistrar) Sync(catalog resources.Catalog) {
 		if prev, existed := r.registered[res.URI]; existed && resourceMetadataEqual(prev, res) {
 			continue
 		}
-		r.server.AddResource(&res, makeResourceHandler(r.catalog, r.revalidator, res.URI))
+		r.server.AddResource(&res, makeResourceHandler(r.logger, r.catalog, r.revalidator, res.URI))
 	}
 
 	r.registered = next

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"sync"
@@ -51,6 +52,7 @@ type sessionAcceptor struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	runCtx      context.Context
+	logger      *slog.Logger
 	lingeredOut bool
 	listener    *net.UnixListener
 	endpoint    endpoint.Endpoint
@@ -66,8 +68,9 @@ type sessionAcceptor struct {
 	err         error
 }
 
-func startAccepting(ctx context.Context, listener *net.UnixListener, ep endpoint.Endpoint, identity string, linger time.Duration) *sessionAcceptor {
+func startAccepting(ctx context.Context, logger *slog.Logger, listener *net.UnixListener, ep endpoint.Endpoint, identity string, linger time.Duration) *sessionAcceptor {
 	a := &sessionAcceptor{
+		logger:   logger,
 		listener: listener,
 		endpoint: ep,
 		identity: identity,
@@ -178,5 +181,5 @@ func (a *sessionAcceptor) handle(conn *net.UnixConn) {
 		_ = conn.Close()
 		return
 	}
-	attach(a.ctx, conn, a.server, a.revalidate, a.logPath)
+	attach(a.ctx, a.logger, conn, a.server, a.revalidate, a.logPath)
 }

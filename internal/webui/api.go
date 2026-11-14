@@ -34,6 +34,7 @@ var (
 )
 
 type apiHandler struct {
+	logger    *slog.Logger
 	backend   SearchBackend
 	documents DocumentReader
 	settings  config.UISettings
@@ -99,20 +100,20 @@ type documentResponse struct {
 func (h *apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	handle, ok := endpoints[strings.TrimPrefix(r.URL.Path, apiPrefix)]
 	if !ok {
-		writeAPIError(w, errNotFound)
+		h.writeAPIError(w, errNotFound)
 		return
 	}
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
-		writeAPIError(w, errMethodNotAllowed)
+		h.writeAPIError(w, errMethodNotAllowed)
 		return
 	}
 	body, err := handle(h, r)
 	if err != nil {
-		writeAPIError(w, toAPIError(r, err))
+		h.writeAPIError(w, h.toAPIError(r, err))
 		return
 	}
-	writeJSON(w, http.StatusOK, body)
+	h.writeJSON(w, http.StatusOK, body)
 }
 
 func (h *apiHandler) config(*http.Request) (any, error) {
@@ -255,7 +256,7 @@ func parseLimit(raw string, fallback int) (int, error) {
 	return limit, nil
 }
 
-func toAPIError(r *http.Request, err error) apiError {
+func (h *apiHandler) toAPIError(r *http.Request, err error) apiError {
 	var known apiError
 	if errors.As(err, &known) {
 		return known
@@ -263,7 +264,7 @@ func toAPIError(r *http.Request, err error) apiError {
 	if errors.Is(err, ErrDocumentNotFound) {
 		return errDocumentNotFound
 	}
-	slog.Error("Web UI API request failed", "path", r.URL.Path, "error", err)
+	h.logger.Error("Web UI API request failed", "path", r.URL.Path, "error", err)
 	return errInternal
 }
 
@@ -271,18 +272,18 @@ func (e apiError) Error() string {
 	return e.message
 }
 
-func writeAPIError(w http.ResponseWriter, e apiError) {
-	writeJSON(w, e.status, map[string]string{"error": e.Error()})
+func (h *apiHandler) writeAPIError(w http.ResponseWriter, e apiError) {
+	h.writeJSON(w, e.status, map[string]string{"error": e.Error()})
 }
 
-func writeJSON(w http.ResponseWriter, status int, body any) {
+func (h *apiHandler) writeJSON(w http.ResponseWriter, status int, body any) {
 	header := w.Header()
 	header.Set("Content-Type", "application/json; charset=utf-8")
 	header.Set("Cache-Control", "no-store")
 	header.Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(body); err != nil {
-		slog.Warn("Failed to write web UI API response", "error", err)
+		h.logger.Warn("Failed to write web UI API response", "error", err)
 	}
 }
 

@@ -26,6 +26,7 @@ const (
 // A nil revalidator is normalized to a no-op, so callers that never refresh
 // the catalog (e.g. tests) can omit it.
 func CreateServer(
+	logger *slog.Logger,
 	metadata domain.McpMetadata,
 	catalog resources.Catalog,
 	promptProvider *prompts.PromptProvider,
@@ -43,7 +44,7 @@ func CreateServer(
 		Version: metadata.Server.Version,
 	}, &mcp.ServerOptions{Instructions: metadata.Server.Instructions})
 
-	registrar := NewResourceRegistrar(s, catalog, revalidator)
+	registrar := NewResourceRegistrar(logger, s, catalog, revalidator)
 	registrar.Sync(catalog)
 
 	// Register Prompts
@@ -55,17 +56,17 @@ func CreateServer(
 			Name:        name,
 			Description: p.Description,
 			Arguments:   p.Arguments,
-		}, makePromptHandler(promptProvider, name))
+		}, makePromptHandler(logger, promptProvider, name))
 
-		slog.Info("Registered prompt", "name", name)
+		logger.Info("Registered prompt", "name", name)
 	}
 
 	// Register Tools
-	RegisterSearchTool(s, searchService, revalidator, searchSettings, metadata.GetToolMetadata(ToolNameSearch))
-	slog.Info("Registered tool", "name", ToolNameSearch)
+	RegisterSearchTool(logger, s, searchService, revalidator, searchSettings, metadata.GetToolMetadata(ToolNameSearch))
+	logger.Info("Registered tool", "name", ToolNameSearch)
 
-	RegisterReadTool(s, catalog, revalidator, metadata.GetToolMetadata(ToolNameRead))
-	slog.Info("Registered tool", "name", ToolNameRead)
+	RegisterReadTool(logger, s, catalog, revalidator, metadata.GetToolMetadata(ToolNameRead))
+	logger.Info("Registered tool", "name", ToolNameRead)
 
 	return s, registrar
 }

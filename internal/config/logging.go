@@ -5,11 +5,6 @@ import (
 	"log/slog"
 )
 
-// Log logs the resolved settings in a granular way, skipping irrelevant ones
-func Log(s *Settings) {
-	LogWithLogger(s, slog.Default())
-}
-
 // LogWithLogger logs the resolved settings using the provided logger
 func LogWithLogger(s *Settings, logger *slog.Logger) {
 	writeDumpLines(s, logger, func(dumpScope) bool { return true })

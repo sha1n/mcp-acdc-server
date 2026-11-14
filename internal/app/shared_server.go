@@ -71,8 +71,8 @@ func runSharedServer(ctx context.Context, params RunParams, settings *config.Set
 			logSharedServerStartup(logger, settings, version)
 		},
 		Linger: settings.SharedServer.Linger,
-		Build: func(ctx context.Context) (*mcp.Server, func(), error) {
-			components, err := params.CreateServer(ctx, settings, version)
+		Build: func(ctx context.Context, logger *slog.Logger) (*mcp.Server, func(), error) {
+			components, err := params.CreateServer(ctx, logger, settings, version)
 			revalidate = components.RevalidateNow
 			return components.MCP, components.Cleanup, err
 		},

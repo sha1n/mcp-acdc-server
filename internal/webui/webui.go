@@ -4,6 +4,7 @@ package webui
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/sha1n/mcp-acdc-server/internal/config"
@@ -44,7 +45,7 @@ type DocumentReader interface {
 
 // Mount registers the web UI pages under /ui and the JSON API under /api/v1/ on mux.
 // It panics when backend or documents is nil, as both are wiring defects.
-func Mount(mux *http.ServeMux, backend SearchBackend, documents DocumentReader, settings config.UISettings) {
+func Mount(logger *slog.Logger, mux *http.ServeMux, backend SearchBackend, documents DocumentReader, settings config.UISettings) {
 	if backend == nil {
 		panic("webui: nil search backend")
 	}
@@ -54,5 +55,5 @@ func Mount(mux *http.ServeMux, backend SearchBackend, documents DocumentReader, 
 	pages := &pageHandler{}
 	mux.HandleFunc("/ui", pages.redirectToRoot)
 	mux.Handle("/ui/", pages)
-	mux.Handle("/api/v1/", &apiHandler{backend: backend, documents: documents, settings: settings})
+	mux.Handle("/api/v1/", &apiHandler{logger: logger, backend: backend, documents: documents, settings: settings})
 }

@@ -58,8 +58,8 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer func() { _ = listener.Close() }()
 
-	sessions := startAccepting(ctx, listener, ep, cfg.Identity, cfg.Linger)
-	server, cleanup, err := cfg.Build(sessions.buildContext())
+	sessions := startAccepting(ctx, logger, listener, ep, cfg.Identity, cfg.Linger)
+	server, cleanup, err := cfg.Build(sessions.buildContext(), logger)
 	if err != nil {
 		return sessions.abandon(err)
 	}
@@ -105,7 +105,7 @@ func bind(ep endpoint.Endpoint, identity string) (*net.UnixListener, error) {
 	return listener, nil
 }
 
-func attach(ctx context.Context, conn *net.UnixConn, server *mcp.Server, revalidate func(context.Context), logPath string) {
+func attach(ctx context.Context, logger *slog.Logger, conn *net.UnixConn, server *mcp.Server, revalidate func(context.Context), logPath string) {
 	defer func() { _ = conn.Close() }()
 	stopOnCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stopOnCancel()
@@ -116,17 +116,17 @@ func attach(ctx context.Context, conn *net.UnixConn, server *mcp.Server, revalid
 	}
 	readyLine, err := EncodeReadyLine(session, logPath)
 	if err != nil {
-		slog.Error("Failed to attach session", "session", session, "error", err)
+		logger.Error("Failed to attach session", "session", session, "error", err)
 		return
 	}
 	if _, err := conn.Write(readyLine); err != nil {
-		slog.Error("Failed to send ready line", "session", session, "error", err)
+		logger.Error("Failed to send ready line", "session", session, "error", err)
 		return
 	}
 
 	serverSession, err := server.Connect(ctx, &mcp.IOTransport{Reader: conn, Writer: conn}, nil)
 	if err != nil {
-		slog.Error("Failed to connect session", "session", session, "error", err)
+		logger.Error("Failed to connect session", "session", session, "error", err)
 		return
 	}
 	_ = serverSession.Wait()
