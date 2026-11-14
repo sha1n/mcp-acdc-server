@@ -29,6 +29,8 @@ type acdcService struct {
 	StopDelay    time.Duration
 	StartTimeout time.Duration
 	runner       RunnerFunc
+	runnerExited bool
+	runnerErr    error
 
 	// Stdio pipes
 	stdinReader  *io.PipeReader
@@ -120,6 +122,7 @@ func (s *acdcService) awaitSSEReady(readinessMarker string) (map[string]any, err
 	for !answersWithMarker(client, baseURL, readinessMarker) {
 		select {
 		case err := <-s.errChan:
+			s.recordRunnerExit(err)
 			return nil, startupExitError(err)
 		case <-deadline.C:
 			return nil, fmt.Errorf("server failed to start after %v", s.StartTimeout)
@@ -217,13 +220,23 @@ func (s *acdcService) shutdownHTTPServer() error {
 }
 
 func (s *acdcService) awaitRunner() error {
-	select {
-	case err := <-s.errChan:
-		if err != nil && err != http.ErrServerClosed && err != context.Canceled {
-			return err
+	if !s.runnerExited {
+		select {
+		case err := <-s.errChan:
+			s.recordRunnerExit(err)
+		case <-time.After(s.StopDelay):
+			return fmt.Errorf("timed out waiting for server to stop")
 		}
-		return nil
-	case <-time.After(s.StopDelay):
-		return fmt.Errorf("timed out waiting for server to stop")
 	}
+	if s.runnerErr != nil && s.runnerErr != http.ErrServerClosed && s.runnerErr != context.Canceled {
+		return s.runnerErr
+	}
+	return nil
+}
+
+// recordRunnerExit keeps the runner's single result for every later Stop, since
+// errChan delivers it only once and Start may already have received it.
+func (s *acdcService) recordRunnerExit(err error) {
+	s.runnerExited = true
+	s.runnerErr = err
 }
