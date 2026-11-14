@@ -245,8 +245,11 @@ func (c *lingerTestConn) initialize(t *testing.T) {
 
 func (c *lingerTestConn) close(t *testing.T) time.Time {
 	t.Helper()
+	// Taken before the close: the server may see the close, and start its
+	// linger, before Close returns here.
+	closedAt := time.Now()
 	require.NoError(t, c.conn.Close())
-	return time.Now()
+	return closedAt
 }
 
 func TestSharedServerLinger_WithNoConnectionsExitsAfterTheLingerAndRemovesTheSocket(t *testing.T) {
