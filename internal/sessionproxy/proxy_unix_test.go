@@ -172,7 +172,10 @@ func startProxy(t *testing.T, cfg sessionproxy.Config) *proxyHost {
 	t.Cleanup(func() {
 		cancel()
 		select {
-		case <-host.done:
+		case err := <-host.done:
+			if err != nil {
+				t.Logf("session proxy ended: %v", err)
+			}
 		case <-time.After(proxyTestDeadline):
 			t.Error("the session proxy did not return after cancellation")
 		}
