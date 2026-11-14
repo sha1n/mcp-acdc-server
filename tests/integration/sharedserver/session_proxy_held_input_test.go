@@ -39,6 +39,7 @@ func TestSessionProxy_AnswersInputHeldBeforeTheReadyLineThroughTheSharedServer(t
 	}
 	assert.Equal(t, "1", ids[0], "the held initialize is answered first")
 	assert.ElementsMatch(t, []string{"2", "3"}, ids[1:])
+	assert.Zero(t, h.FallbackWarnings(), "the held input was answered by the shared server")
 }
 
 // The shared server answers calls concurrently, so arrival order is observed

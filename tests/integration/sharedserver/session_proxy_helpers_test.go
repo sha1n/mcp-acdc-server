@@ -52,14 +52,16 @@ type coldStartAttempt func(t *testing.T, h *testkit.SharedServerHarness)
 // runWinningColdStart repeats attempt while its first built candidate
 // lingered out before any session reached it: the initial linger starts at
 // bind, so a session proxy descheduled for the first second after bind makes
-// it build again (#196). Every lost attempt must show exactly that.
+// it build again (#196), or falls back to a per-session server once it has
+// lost twice. Every lost attempt must show exactly that, and a winning
+// attempt must have served every session through a shared server.
 func runWinningColdStart(t *testing.T, attempt coldStartAttempt) *testkit.SharedServerHarness {
 	t.Helper()
 	deadline := time.Now().Add(testkit.SharedServerDeadline)
 	for attempts := 1; ; attempts++ {
 		h := testkit.NewSharedServerHarness(t)
 		attempt(t, h)
-		if h.Builds() <= 1 {
+		if h.Builds() <= 1 && h.FallbackWarnings() == 0 {
 			return h
 		}
 		requireLostToTheInitialLinger(t, h)
@@ -69,6 +71,14 @@ func runWinningColdStart(t *testing.T, attempt coldStartAttempt) *testkit.Shared
 
 func requireLostToTheInitialLinger(t *testing.T, h *testkit.SharedServerHarness) {
 	t.Helper()
+	builds := h.Builds()
+	wantLingeredOut := []int{builds - 1}
+	if h.FallbackWarnings() > 0 {
+		require.GreaterOrEqual(t, builds, 2, "a fallback-served attempt is lost only after its first candidate lingered out")
+		// No shared server holds a fallback-served session, so the last
+		// candidate may have lingered out as well.
+		wantLingeredOut = append(wantLingeredOut, builds)
+	}
 	lingeredOut := 0
 	for _, exit := range h.SharedServerExits() {
 		if !exit.Built {
@@ -79,5 +89,5 @@ func requireLostToTheInitialLinger(t *testing.T, h *testkit.SharedServerHarness)
 			"a lost attempt's candidate exited before the linger elapsed")
 		lingeredOut++
 	}
-	require.Equal(t, h.Builds()-1, lingeredOut, "every extra build follows a candidate that lingered out")
+	require.Contains(t, wantLingeredOut, lingeredOut, "every extra build follows a candidate that lingered out")
 }

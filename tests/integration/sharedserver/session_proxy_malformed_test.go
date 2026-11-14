@@ -73,4 +73,5 @@ func TestSessionProxy_InvalidLineEndsOnlyItsSessionAndIsLoggedByTheSharedServer(
 	defer cancel()
 	_, err := first.ListTools(ctx, nil)
 	require.NoError(t, err, "the shared server keeps serving other sessions")
+	assert.Zero(t, h.FallbackWarnings(), "both sessions were attached to the shared server")
 }

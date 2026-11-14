@@ -44,6 +44,9 @@ type SharedServerHarness struct {
 	servers sync.WaitGroup
 	exitsMu sync.Mutex
 	exits   []SharedServerExit
+
+	launchesMu sync.Mutex
+	launches   []*LaunchUnderTest
 }
 
 // SharedServerExit is how one spawned candidate ended.

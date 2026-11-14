@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,6 +26,7 @@ func TestSessionProxy_StdinEOFDuringDiscoveryEndsTheSessionPromptly(t *testing.T
 	l.CloseStdin()
 
 	require.NoError(t, l.Wait(prompterExit))
+	assert.Zero(t, h.FallbackWarnings(), "the session ended in discovery, not as a fallback per-session server")
 }
 
 func TestSessionProxy_StdinEOFAfterAttachEndsTheSessionCleanly(t *testing.T) {
@@ -35,6 +37,7 @@ func TestSessionProxy_StdinEOFAfterAttachEndsTheSessionCleanly(t *testing.T) {
 	require.NoError(t, session.Close())
 
 	require.NoError(t, l.Wait(testkit.SharedServerDeadline))
+	assert.Zero(t, h.FallbackWarnings(), "the session was attached to a shared server")
 }
 
 func TestSessionProxy_SignalEndsTheSessionPromptlyInEveryPhase(t *testing.T) {

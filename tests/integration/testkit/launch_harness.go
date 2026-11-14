@@ -38,7 +38,25 @@ type lineResult struct {
 // servers.
 func (h *SharedServerHarness) Launch(args ...string) *LaunchUnderTest {
 	h.t.Helper()
-	return StartLaunch(h.t, h.SessionProxyParams(args), h.Binary, args...)
+	l := StartLaunch(h.t, h.SessionProxyParams(args), h.Binary, args...)
+	h.launchesMu.Lock()
+	defer h.launchesMu.Unlock()
+	h.launches = append(h.launches, l)
+	return l
+}
+
+// FallbackWarnings counts the fallback warnings written so far by every
+// launch started with Launch. A session answers only after its warning is
+// written, so once a session has been answered a zero count means no launch
+// that has answered was served by a fallback per-session server.
+func (h *SharedServerHarness) FallbackWarnings() int {
+	h.launchesMu.Lock()
+	defer h.launchesMu.Unlock()
+	count := 0
+	for _, l := range h.launches {
+		count += len(l.FallbackWarnings())
+	}
+	return count
 }
 
 // StartLaunch runs the runner with params and args. It owns the host streams
