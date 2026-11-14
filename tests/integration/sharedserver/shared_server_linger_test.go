@@ -5,8 +5,6 @@ package sharedserver
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,7 +22,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/app"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
-	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -43,10 +40,12 @@ type lingerTestOptions struct {
 	slowStarted chan<- struct{}
 	identity    string
 	endpointDir string
+	contentDir  string
 }
 
 type lingerTestServer struct {
 	endpointDir string
+	contentDir  string
 	identity    string
 	launchedAt  time.Time
 	// exitedAt is written before Run's result is sent on done, so it is safe
@@ -69,14 +68,6 @@ func newLingerTestEndpointDir(t *testing.T) string {
 	return dir
 }
 
-func newLingerTestIdentity(t *testing.T) string {
-	t.Helper()
-	b := make([]byte, 16)
-	_, err := rand.Read(b)
-	require.NoError(t, err)
-	return hex.EncodeToString(b)
-}
-
 func addLingerTestSlowTool(server *mcp.Server, started chan<- struct{}) {
 	mcp.AddTool(server, &mcp.Tool{Name: lingerTestSlowTool, Description: "blocks until its request is cancelled"},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, struct{}, error) {
@@ -95,19 +86,22 @@ func launchLingerTestServer(t *testing.T, opts lingerTestOptions) *lingerTestSer
 	if s.endpointDir == "" {
 		s.endpointDir = newLingerTestEndpointDir(t)
 	}
-	if s.identity == "" {
-		s.identity = newLingerTestIdentity(t)
+	s.contentDir = opts.contentDir
+	if s.contentDir == "" {
+		s.contentDir = testkit.CreateTestContentDir(t, &testkit.ContentDirOptions{
+			Resources: map[string]string{
+				"linger.md": "---\nname: Linger Guide\ndescription: Guide for lingering\n---\nThis document covers lingering.",
+			},
+		})
 	}
 
-	contentDir := testkit.CreateTestContentDir(t, &testkit.ContentDirOptions{
-		Resources: map[string]string{
-			"linger.md": "---\nname: Linger Guide\ndescription: Guide for lingering\n---\nThis document covers lingering.",
-		},
-	})
-	flags := testkit.NewTestFlags(t, contentDir, &testkit.FlagOptions{Transport: "stdio"})
-	require.NoError(t, flags.Set("shared-server-identity", s.identity))
+	flags := testkit.NewTestFlags(t, s.contentDir, &testkit.FlagOptions{Transport: "stdio"})
 	require.NoError(t, flags.Set("shared-server-linger", opts.linger))
 	require.NoError(t, flags.Set("search-in-memory", fmt.Sprintf("%t", opts.inMemory)))
+	if s.identity == "" {
+		s.identity = launchFlagsIdentity(t, flags)
+	}
+	require.NoError(t, flags.Set("shared-server-identity", s.identity))
 
 	params := app.DefaultRunParams()
 	createServer := params.CreateServer
@@ -133,7 +127,7 @@ func launchLingerTestServer(t *testing.T, opts lingerTestOptions) *lingerTestSer
 	s.cancel = cancel
 	s.launchedAt = time.Now()
 	go func() {
-		err := app.RunWithDeps(ctx, params, flags, identity.Binary{Version: "test"})
+		err := app.RunWithDeps(ctx, params, flags, sharedServerTestBinary)
 		s.exitedAt = time.Now()
 		s.done <- err
 	}()
@@ -500,7 +494,7 @@ func TestSharedServerLinger_ASuccessorHoldingTheLockKeepsItsSocket(t *testing.T)
 	first.assertSocketRemoved(t)
 
 	successor := launchLingerTestServer(t, lingerTestOptions{
-		linger: "1h", inMemory: true, endpointDir: first.endpointDir, identity: first.identity,
+		linger: "1h", inMemory: true, endpointDir: first.endpointDir, identity: first.identity, contentDir: first.contentDir,
 	})
 	successor.awaitSocket(t)
 	conn := successor.dial(t)

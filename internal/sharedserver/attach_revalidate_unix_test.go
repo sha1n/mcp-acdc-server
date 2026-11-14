@@ -43,10 +43,11 @@ func TestRun_EveryAttachRevalidatesBeforeTheReadyLine(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- Run(ctx, Config{
-			Identity:    testIdentity,
-			EndpointDir: dir,
-			Build:       build,
-			Linger:      time.Hour,
+			Identity:        testIdentity,
+			CurrentIdentity: currentIsTestIdentity,
+			EndpointDir:     dir,
+			Build:           build,
+			Linger:          time.Hour,
 			Revalidate: func(context.Context) {
 				revalidating <- struct{}{}
 				<-release
@@ -90,7 +91,7 @@ func TestRun_AttachWithoutARevalidateHookSendsTheReadyLine(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, Config{Identity: testIdentity, EndpointDir: dir, Build: build, Linger: time.Hour})
+		done <- Run(ctx, Config{Identity: testIdentity, CurrentIdentity: currentIsTestIdentity, EndpointDir: dir, Build: build, Linger: time.Hour})
 	}()
 	t.Cleanup(func() {
 		cancel()

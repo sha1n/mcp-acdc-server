@@ -5,7 +5,6 @@ package sharedserver
 import (
 	"context"
 	"errors"
-	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -25,12 +24,7 @@ import (
 // test and the flag set open to extra settings.
 func (s *sharedServerUnderTest) launchWithLogFileTestDir(t *testing.T, logDir func() (string, error), configure func(*pflag.FlagSet)) {
 	t.Helper()
-	contentDir := testkit.CreateTestContentDir(t, &testkit.ContentDirOptions{
-		Resources: map[string]string{
-			"auth-guide.md": "---\nname: Authentication Guide\ndescription: Guide for authentication\n---\nThis document covers authentication.",
-		},
-	})
-	flags := testkit.NewTestFlags(t, contentDir, &testkit.FlagOptions{Transport: "stdio"})
+	flags := testkit.NewTestFlags(t, s.contentDir, &testkit.FlagOptions{Transport: "stdio"})
 	require.NoError(t, flags.Set("shared-server-identity", s.identity))
 	if configure != nil {
 		configure(flags)
@@ -42,7 +36,7 @@ func (s *sharedServerUnderTest) launchWithLogFileTestDir(t *testing.T, logDir fu
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
-	go func() { s.done <- app.RunWithDeps(ctx, params, flags, identity.Binary{Version: "test"}) }()
+	go func() { s.done <- app.RunWithDeps(ctx, params, flags, sharedServerTestBinary) }()
 	t.Cleanup(func() {
 		cancel()
 		select {
@@ -210,6 +204,7 @@ func TestSharedServerLogFile_StartupEntryCarriesThePIDAndARestartAppends(t *test
 
 	second := newSharedServerUnderTest(t, endpointDir)
 	second.identity = first.identity
+	second.contentDir = first.contentDir
 	second.launchWithLogFileTestDir(t, logFileTestDir(logDir), nil)
 	second.dial(t).readLine(t)
 	require.NoError(t, second.stop(t))

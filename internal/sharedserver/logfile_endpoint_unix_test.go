@@ -32,12 +32,13 @@ func TestRun_LogDirectoryEqualToTheEndpointDirectoryIsUnusable(t *testing.T) {
 			done := make(chan error, 1)
 			go func() {
 				done <- Run(ctx, Config{
-					Identity:    testIdentity,
-					EndpointDir: dir,
-					LogDir:      tt.logDir(dir),
-					LogStartup:  func(logger *slog.Logger) { logger.Info("startup entry") },
-					Build:       build,
-					Linger:      time.Hour,
+					Identity:        testIdentity,
+					CurrentIdentity: currentIsTestIdentity,
+					EndpointDir:     dir,
+					LogDir:          tt.logDir(dir),
+					LogStartup:      func(logger *slog.Logger) { logger.Info("startup entry") },
+					Build:           build,
+					Linger:          time.Hour,
 				})
 			}()
 			t.Cleanup(func() {

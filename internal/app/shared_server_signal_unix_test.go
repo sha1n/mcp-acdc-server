@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,14 +36,17 @@ func TestRunSharedServer_SIGTERMAndSIGINTEndItImmediately(t *testing.T) {
 				EndpointDir:  func() (string, error) { return endpointDir, nil },
 			}
 			settings := &config.Settings{SharedServer: config.SharedServerSettings{Linger: time.Hour}}
+			binary := identity.Binary{Version: "test"}
+			id, err := identity.Compute(settings, binary)
+			require.NoError(t, err)
 
 			ctx, cancel := context.WithCancel(context.Background())
 			t.Cleanup(cancel)
 			done := make(chan error, 1)
 			go func() {
-				done <- runSharedServer(ctx, params, settings, sharedServerFlagTestIdentity, "test")
+				done <- runSharedServer(ctx, params, settings, id, binary)
 			}()
-			awaitSharedServerSocket(t, filepath.Join(endpointDir, sharedServerFlagTestIdentity+".sock"))
+			awaitSharedServerSocket(t, filepath.Join(endpointDir, id+".sock"))
 
 			require.NoError(t, syscall.Kill(os.Getpid(), sig))
 

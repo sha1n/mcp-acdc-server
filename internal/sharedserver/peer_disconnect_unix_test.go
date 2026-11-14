@@ -131,11 +131,12 @@ func startPeerBeforeReadyAttempt(t *testing.T) *peerBeforeReadyAttempt {
 	a.startedAt = time.Now()
 	go func() {
 		err := Run(ctx, Config{
-			Identity:    testIdentity,
-			EndpointDir: a.dir,
-			LogDir:      a.logDir,
-			Build:       build,
-			Linger:      config.MinSharedServerLinger,
+			Identity:        testIdentity,
+			CurrentIdentity: currentIsTestIdentity,
+			EndpointDir:     a.dir,
+			LogDir:          a.logDir,
+			Build:           build,
+			Linger:          config.MinSharedServerLinger,
 		})
 		a.done <- peerBeforeReadyExit{err: err, at: time.Now()}
 	}()

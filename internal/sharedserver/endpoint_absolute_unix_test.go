@@ -36,7 +36,7 @@ func assertRejectsNonAbsoluteEndpointDir(t *testing.T, endpointDir string) {
 	cwd := chdirToEmptyDir(t)
 	build, built := buildSpy(errors.New("build must not run"))
 
-	err := Run(context.Background(), Config{Identity: testIdentity, EndpointDir: endpointDir, Build: build, Linger: time.Hour})
+	err := Run(context.Background(), Config{Identity: testIdentity, CurrentIdentity: currentIsTestIdentity, EndpointDir: endpointDir, Build: build, Linger: time.Hour})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), fmt.Sprintf("endpoint directory %q is not an absolute path", endpointDir))

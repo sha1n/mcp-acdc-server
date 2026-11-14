@@ -80,7 +80,7 @@ func TestRun_LingerExpiryDuringTheBuildCancelsTheBuildAndReturnsNil(t *testing.T
 			startedAt := time.Now()
 			done := make(chan error, 1)
 			go func() {
-				done <- Run(context.Background(), Config{Identity: testIdentity, EndpointDir: dir, Build: build, Linger: time.Second})
+				done <- Run(context.Background(), Config{Identity: testIdentity, CurrentIdentity: currentIsTestIdentity, EndpointDir: dir, Build: build, Linger: time.Second})
 			}()
 
 			err := awaitRunResult(t, done)
@@ -109,7 +109,7 @@ func TestRun_CancellationRacingTheBuildCompletionDropsWaitingConnections(t *test
 			ctx, cancel := context.WithCancel(context.Background())
 			done := make(chan error, 1)
 			go func() {
-				done <- Run(ctx, Config{Identity: testIdentity, EndpointDir: dir, Build: build, Linger: time.Hour})
+				done <- Run(ctx, Config{Identity: testIdentity, CurrentIdentity: currentIsTestIdentity, EndpointDir: dir, Build: build, Linger: time.Hour})
 			}()
 			var conns []io.Reader
 			for range 4 {
@@ -168,7 +168,7 @@ func TestRun_CancellationDropsTheConnectionBeforeAContextIgnoringHandlerReturns(
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, Config{Identity: testIdentity, EndpointDir: dir, Build: build, Linger: time.Hour})
+		done <- Run(ctx, Config{Identity: testIdentity, CurrentIdentity: currentIsTestIdentity, EndpointDir: dir, Build: build, Linger: time.Hour})
 	}()
 
 	conn, reader := dialAcceptorTestSocket(t, socketPath)

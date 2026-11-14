@@ -36,12 +36,13 @@ func TestRun_RejectsALingerBelowTheMinimumBeforeCreatingAnything(t *testing.T) {
 			startupLogged := false
 
 			err := Run(context.Background(), Config{
-				Identity:    testIdentity,
-				EndpointDir: endpointDir,
-				LogDir:      logDir,
-				LogStartup:  func(*slog.Logger) { startupLogged = true },
-				Build:       build,
-				Linger:      tt.linger,
+				Identity:        testIdentity,
+				CurrentIdentity: currentIsTestIdentity,
+				EndpointDir:     endpointDir,
+				LogDir:          logDir,
+				LogStartup:      func(*slog.Logger) { startupLogged = true },
+				Build:           build,
+				Linger:          tt.linger,
 			})
 
 			require.Error(t, err)
@@ -67,11 +68,12 @@ func TestRun_AcceptsTheMinimumLinger(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- Run(context.Background(), Config{
-			Identity:    testIdentity,
-			EndpointDir: endpointDir,
-			LogDir:      logDir,
-			Build:       build,
-			Linger:      config.MinSharedServerLinger,
+			Identity:        testIdentity,
+			CurrentIdentity: currentIsTestIdentity,
+			EndpointDir:     endpointDir,
+			LogDir:          logDir,
+			Build:           build,
+			Linger:          config.MinSharedServerLinger,
 		})
 	}()
 

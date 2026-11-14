@@ -21,7 +21,7 @@ func TestRun_CancellingTheRunContextDuringTheBuildIsANormalStop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, Config{Identity: testIdentity, EndpointDir: dir, Build: build, Linger: time.Hour})
+		done <- Run(ctx, Config{Identity: testIdentity, CurrentIdentity: currentIsTestIdentity, EndpointDir: dir, Build: build, Linger: time.Hour})
 	}()
 	_, _ = dialAcceptorTestSocket(t, socketPath)
 
