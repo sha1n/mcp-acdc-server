@@ -8,6 +8,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver"
 	"github.com/spf13/pflag"
 )
 
@@ -18,6 +19,7 @@ type RunParams struct {
 	StartSSEServer    func(*mcp.Server, *config.Settings, ...SSEOption) error
 	CreateServer      func(context.Context, *config.Settings, string) (Components, error)
 	CustomIOTransport mcp.Transport // Optional: for testing with custom IO
+	EndpointDir       func() (string, error)
 }
 
 // DefaultRunParams returns production dependencies
@@ -27,6 +29,7 @@ func DefaultRunParams() RunParams {
 		ValidSettings:  config.ValidateSettings,
 		StartSSEServer: StartSSEServer,
 		CreateServer:   CreateServer,
+		EndpointDir:    sharedserver.DefaultEndpointDir,
 	}
 }
 
@@ -41,6 +44,10 @@ func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, ve
 	// Validate settings for conflicting configurations
 	if err := params.ValidSettings(settings); err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	if identity, supplied := sharedServerIdentity(flags); supplied {
+		return runSharedServer(ctx, params, settings, identity, version)
 	}
 
 	// Configure logging - always use stderr to avoid buffering issues
