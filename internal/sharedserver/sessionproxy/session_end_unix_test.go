@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -251,13 +252,10 @@ func failingPhaseCases() []sessionEndCase {
 
 func TestSessionWithoutAttach_NeverFallsBackWhenTheHostEndedBeforeAPhaseFailed(t *testing.T) {
 	for _, tt := range failingPhaseCases() {
-		for _, way := range []string{"cancellation", "stdin EOF"} {
+		for _, way := range sessionEndWays {
 			t.Run(tt.name+"/"+way, func(t *testing.T) {
 				s := newEndedSession(t)
-				end := s.endByCancellation
-				if way == "stdin EOF" {
-					end = s.endByEOF
-				}
+				end := s.end(way)
 				dir := sessionEndTestDir(t)
 				cfg := s.config(dir)
 				tt.configure(t, dir, end, &cfg)
@@ -286,13 +284,10 @@ func TestEstablish_DoesNotClassifyACancellationReportedByTheEndpointResolver(t *
 
 func TestEstablish_ReportsTheSessionEndInsteadOfAPhaseFailureThatFollowedIt(t *testing.T) {
 	for _, tt := range failingPhaseCases() {
-		for _, way := range []string{"cancellation", "stdin EOF"} {
+		for _, way := range sessionEndWays {
 			t.Run(tt.name+"/"+way, func(t *testing.T) {
 				s := newEndedSession(t)
-				end := s.endByCancellation
-				if way == "stdin EOF" {
-					end = s.endByEOF
-				}
+				end := s.end(way)
 				dir := sessionEndTestDir(t)
 				cfg := s.config(dir)
 				tt.configure(t, dir, end, &cfg)
@@ -310,4 +305,89 @@ func TestEstablish_ReportsTheSessionEndInsteadOfAPhaseFailureThatFollowedIt(t *t
 			})
 		}
 	}
+}
+
+func (s *endedSession) end(way string) func() {
+	if way == "stdin EOF" {
+		return s.endByEOF
+	}
+	return s.endByCancellation
+}
+
+var sessionEndWays = []string{"cancellation", "stdin EOF"}
+
+func TestEndWithoutAttach_NeverFallsBackOnceTheHostEndedAfterDiscoveryFailed(t *testing.T) {
+	causes := []failureCause{causeIdentity, causeEndpoint, causeSocketPath, causeSpawn, causeConnectWait, causeDroppedTwice}
+	for _, cause := range causes {
+		for _, way := range sessionEndWays {
+			t.Run(string(cause)+"/"+way, func(t *testing.T) {
+				s := newEndedSession(t)
+				cfg := s.config(sessionEndTestDir(t))
+				failure := &discoveryError{cause: cause, err: errors.New("discovery failed")}
+				s.end(way)()
+
+				err := endWithoutAttach(s.ctx, cfg, failure, s.input)
+
+				require.NoError(t, err)
+				assert.Zero(t, s.fallbacks.Load(), "a session whose host ended never falls back")
+				assert.Zero(t, s.warnings.Load(), "a session whose host ended never warns")
+			})
+		}
+	}
+}
+
+// endingError ends the session while discovery formats the spawn failure, so
+// the session ends after that failure was classified but before establish
+// returns it.
+type endingError struct {
+	once sync.Once
+	end  func()
+}
+
+func (e *endingError) Error() string {
+	e.once.Do(e.end)
+	return "exec failed"
+}
+
+func TestEstablish_ReportsASessionEndObservedWhileTheSpawnFailureWasClassified(t *testing.T) {
+	for _, reentry := range []bool{false, true} {
+		for _, way := range sessionEndWays {
+			name := "first attempt/" + way
+			if reentry {
+				name = "re-entry/" + way
+			}
+			t.Run(name, func(t *testing.T) {
+				s := newEndedSession(t)
+				dir := sessionEndTestDir(t)
+				if reentry {
+					dropFirstConnection(t, dir)
+				}
+				cfg := s.config(dir)
+				cfg.Spawn = func(string) error { return &endingError{end: s.end(way)} }
+
+				att, err := establish(s.ctx, cfg, s.input.ended)
+
+				require.Nil(t, att)
+				var failure *discoveryError
+				require.False(t, errors.As(err, &failure), "a session end classified as a %v failure", err)
+				if way == "stdin EOF" {
+					require.ErrorIs(t, err, errSessionEnded)
+				} else {
+					require.ErrorIs(t, err, context.Canceled)
+				}
+			})
+		}
+	}
+}
+
+func TestEndWithoutAttach_ReturnsAnUnclassifiedFailureWithoutFallingBack(t *testing.T) {
+	s := newEndedSession(t)
+	cfg := s.config(sessionEndTestDir(t))
+	failure := errors.New("not a discovery failure")
+
+	err := endWithoutAttach(s.ctx, cfg, failure, s.input)
+
+	require.ErrorIs(t, err, failure)
+	assert.Zero(t, s.fallbacks.Load())
+	assert.Zero(t, s.warnings.Load())
 }
