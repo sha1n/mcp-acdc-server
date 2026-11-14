@@ -63,7 +63,7 @@ func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, bi
 	}
 
 	if serverIdentity, supplied := sharedServerIdentity(flags); supplied {
-		return runSharedServer(ctx, params, settings, serverIdentity, binary.Version)
+		return runSharedServer(ctx, params, settings, serverIdentity, binary)
 	}
 
 	if params.Stderr == nil {

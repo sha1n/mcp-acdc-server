@@ -8,6 +8,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +24,7 @@ func TestRunSharedServer_RequiresAnEndpointDirectory(t *testing.T) {
 	created := false
 	params := RunParams{CreateServer: sharedServerCreateSpy(&created)}
 
-	err := runSharedServer(context.Background(), params, &config.Settings{}, sharedServerFlagTestIdentity, "test")
+	err := runSharedServer(context.Background(), params, &config.Settings{}, sharedServerFlagTestIdentity, identity.Binary{Version: "test"})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "shared server requires an endpoint directory")
@@ -38,7 +39,7 @@ func TestRunSharedServer_EndpointDirectoryResolutionFailureIsReturned(t *testing
 		EndpointDir:  func() (string, error) { return "", errResolve },
 	}
 
-	err := runSharedServer(context.Background(), params, &config.Settings{}, sharedServerFlagTestIdentity, "test")
+	err := runSharedServer(context.Background(), params, &config.Settings{}, sharedServerFlagTestIdentity, identity.Binary{Version: "test"})
 
 	require.ErrorIs(t, err, errResolve)
 	assert.Contains(t, err.Error(), "failed to resolve endpoint directory")

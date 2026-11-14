@@ -45,6 +45,7 @@ type explicitLoggerRun struct {
 
 func startExplicitLoggerRun(t *testing.T, cfg Config) *explicitLoggerRun {
 	t.Helper()
+	cfg.CurrentIdentity = func() (string, error) { return cfg.Identity, nil }
 	ctx, cancel := context.WithCancel(context.Background())
 	run := &explicitLoggerRun{cancel: cancel, done: make(chan error, 1)}
 	go func() { run.done <- Run(ctx, cfg) }()

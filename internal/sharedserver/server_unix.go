@@ -20,7 +20,8 @@ import (
 
 // Run serves the shared server for cfg.Identity until ctx is cancelled.
 //
-// The order is fixed: lock, log, bind, then build while already accepting.
+// The order is fixed: lock, log, identity self-check, bind, then build while
+// already accepting.
 // Only the endpoint directory is created or verified before the lock is held,
 // and no catalog or index is built before bind, so a dialable socket means
 // "one is alive" while the ready line means "it is ready".
@@ -30,6 +31,9 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	if cfg.Linger < config.MinSharedServerLinger {
 		return fmt.Errorf("shared server linger must be at least %s, got: %s", config.MinSharedServerLinger, cfg.Linger)
+	}
+	if cfg.CurrentIdentity == nil {
+		return errors.New("shared server requires a current identity function")
 	}
 	ep, err := endpoint.OpenEndpoint(cfg.EndpointDir)
 	if err != nil {
@@ -52,6 +56,9 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.LogStartup != nil {
 		cfg.LogStartup(logger)
 	}
+	if err := checkIdentity(logger, cfg.Identity, cfg.CurrentIdentity); err != nil {
+		return err
+	}
 
 	listener, err := bind(ep, cfg.Identity)
 	if err != nil {
@@ -69,6 +76,19 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	return sessions.serve(server, cfg.Revalidate, logPath)
+}
+
+func checkIdentity(logger *slog.Logger, identity string, current func() (string, error)) error {
+	actual, err := current()
+	if err != nil {
+		logger.Error("Identity self-check failed", "identity", identity, "error", err)
+		return fmt.Errorf("%w: %w", ErrIdentityMismatch, err)
+	}
+	if actual != identity {
+		logger.Error("Identity self-check failed", "identity", identity, "content_identity", actual)
+		return fmt.Errorf("%w: content identity is %s", ErrIdentityMismatch, actual)
+	}
+	return nil
 }
 
 func acquireLock(ep endpoint.Endpoint, identity string) (*flock.Flock, error) {

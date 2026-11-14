@@ -31,9 +31,20 @@ func shortEndpointDir(t *testing.T) string {
 func sharedServerLoggingFlags(t *testing.T, contentDir string) *pflag.FlagSet {
 	t.Helper()
 	flags := loggingDestinationFlags(t, contentDir)
-	require.NoError(t, flags.Set("shared-server-identity", sharedServerFlagTestIdentity))
 	require.NoError(t, flags.Set("shared-server-linger", "1h"))
 	return flags
+}
+
+// setLaunchIdentity marks the launch as the shared server of the identity its
+// own settings and binary compute, so it passes the identity self-check.
+func setLaunchIdentity(t *testing.T, params RunParams, flags *pflag.FlagSet, binary identity.Binary) string {
+	t.Helper()
+	settings, err := params.LoadSettings(flags)
+	require.NoError(t, err)
+	id, err := identity.Compute(settings, binary)
+	require.NoError(t, err)
+	require.NoError(t, flags.Set("shared-server-identity", id))
+	return id
 }
 
 type loggingSharedServer struct {
@@ -49,14 +60,16 @@ func startLoggingSharedServer(t *testing.T, params RunParams, flags *pflag.FlagS
 	logDir := t.TempDir()
 	params.EndpointDir = func() (string, error) { return endpointDir, nil }
 	params.LogDir = func() (string, error) { return logDir, nil }
+	binary := identity.Binary{Version: "9.8.7"}
+	id := setLaunchIdentity(t, params, flags, binary)
 	ctx, cancel := context.WithCancel(context.Background())
 	server := &loggingSharedServer{
-		socketPath: filepath.Join(endpointDir, sharedServerFlagTestIdentity+".sock"),
-		logPath:    filepath.Join(logDir, sharedServerFlagTestIdentity+".log"),
+		socketPath: filepath.Join(endpointDir, id+".sock"),
+		logPath:    filepath.Join(logDir, id+".log"),
 		cancel:     cancel,
 		done:       make(chan error, 1),
 	}
-	go func() { server.done <- RunWithDeps(ctx, params, flags, identity.Binary{Version: "9.8.7"}) }()
+	go func() { server.done <- RunWithDeps(ctx, params, flags, binary) }()
 	t.Cleanup(func() {
 		cancel()
 		select {

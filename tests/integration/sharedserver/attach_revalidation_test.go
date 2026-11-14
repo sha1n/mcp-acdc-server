@@ -4,7 +4,6 @@ package sharedserver
 
 import (
 	"context"
-	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,7 +33,7 @@ func newAttachRevalidationContentDir(t *testing.T) (contentDir, resourcesDir str
 
 func launchAttachRevalidationServer(t *testing.T, contentDir string) (server *sharedServerUnderTest, logDir string) {
 	t.Helper()
-	server = newSharedServerUnderTest(t, newSharedServerSocketTestEndpointDir(t))
+	server = newSharedServerUnderTestFor(t, newSharedServerSocketTestEndpointDir(t), contentDir)
 	flags := testkit.NewTestFlags(t, contentDir, &testkit.FlagOptions{Transport: "stdio"})
 	require.NoError(t, flags.Set("shared-server-identity", server.identity))
 
@@ -45,7 +44,7 @@ func launchAttachRevalidationServer(t *testing.T, contentDir string) (server *sh
 
 	ctx, cancel := context.WithCancel(context.Background())
 	server.cancel = cancel
-	go func() { server.done <- app.RunWithDeps(ctx, params, flags, identity.Binary{Version: "test"}) }()
+	go func() { server.done <- app.RunWithDeps(ctx, params, flags, sharedServerTestBinary) }()
 	t.Cleanup(func() {
 		cancel()
 		select {

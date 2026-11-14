@@ -5,8 +5,6 @@ package sharedserver
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +22,7 @@ import (
 	"github.com/sha1n/mcp-acdc-server/internal/app"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,6 +31,7 @@ const sharedServerSocketTestDeadline = 30 * time.Second
 
 type sharedServerUnderTest struct {
 	endpointDir string
+	contentDir  string
 	identity    string
 	builds      *atomic.Int32
 	cancel      context.CancelFunc
@@ -55,19 +55,45 @@ func newSharedServerSocketTestEndpointDir(t *testing.T) string {
 	return dir
 }
 
-func newSharedServerSocketTestIdentity(t *testing.T) string {
+var sharedServerTestBinary = identity.Binary{Version: "test"}
+
+func newSharedServerSocketTestContentDir(t *testing.T) string {
 	t.Helper()
-	b := make([]byte, 16)
-	_, err := rand.Read(b)
+	return testkit.CreateTestContentDir(t, &testkit.ContentDirOptions{
+		Resources: map[string]string{
+			"auth-guide.md": "---\nname: Authentication Guide\ndescription: Guide for authentication\n---\nThis document covers authentication and security best practices.",
+		},
+	})
+}
+
+// sharedServerTestIdentity is the identity a stdio launch on contentDir
+// computes, so a shared server started with it passes the identity
+// self-check; the content directory path keeps it unique per test.
+func sharedServerTestIdentity(t *testing.T, contentDir string) string {
+	t.Helper()
+	return launchFlagsIdentity(t, testkit.NewTestFlags(t, contentDir, &testkit.FlagOptions{Transport: "stdio"}))
+}
+
+func launchFlagsIdentity(t *testing.T, flags *pflag.FlagSet) string {
+	t.Helper()
+	settings, err := config.LoadSettingsWithFlags(flags)
 	require.NoError(t, err)
-	return hex.EncodeToString(b)
+	id, err := identity.Compute(settings, sharedServerTestBinary)
+	require.NoError(t, err)
+	return id
 }
 
 func newSharedServerUnderTest(t *testing.T, endpointDir string) *sharedServerUnderTest {
 	t.Helper()
+	return newSharedServerUnderTestFor(t, endpointDir, newSharedServerSocketTestContentDir(t))
+}
+
+func newSharedServerUnderTestFor(t *testing.T, endpointDir, contentDir string) *sharedServerUnderTest {
+	t.Helper()
 	return &sharedServerUnderTest{
 		endpointDir: endpointDir,
-		identity:    newSharedServerSocketTestIdentity(t),
+		contentDir:  contentDir,
+		identity:    sharedServerTestIdentity(t, contentDir),
 		builds:      &atomic.Int32{},
 		done:        make(chan error, 1),
 	}
@@ -77,12 +103,7 @@ func newSharedServerUnderTest(t *testing.T, endpointDir string) *sharedServerUnd
 // in-process tier of the test strategy prescribes.
 func (s *sharedServerUnderTest) launch(t *testing.T) {
 	t.Helper()
-	contentDir := testkit.CreateTestContentDir(t, &testkit.ContentDirOptions{
-		Resources: map[string]string{
-			"auth-guide.md": "---\nname: Authentication Guide\ndescription: Guide for authentication\n---\nThis document covers authentication and security best practices.",
-		},
-	})
-	flags := testkit.NewTestFlags(t, contentDir, &testkit.FlagOptions{Transport: "stdio"})
+	flags := testkit.NewTestFlags(t, s.contentDir, &testkit.FlagOptions{Transport: "stdio"})
 	require.NoError(t, flags.Set("shared-server-identity", s.identity))
 
 	params := app.DefaultRunParams()
@@ -97,7 +118,7 @@ func (s *sharedServerUnderTest) launch(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
-	go func() { s.done <- app.RunWithDeps(ctx, params, flags, identity.Binary{Version: "test"}) }()
+	go func() { s.done <- app.RunWithDeps(ctx, params, flags, sharedServerTestBinary) }()
 	t.Cleanup(func() {
 		cancel()
 		select {

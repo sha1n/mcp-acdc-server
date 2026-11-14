@@ -79,7 +79,7 @@ func TestRun_BuildFailureDropsAConnectionWaitingForTheReadyLine(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(context.Background(), Config{Identity: testIdentity, EndpointDir: dir, Build: build, Linger: time.Hour})
+		done <- Run(context.Background(), Config{Identity: testIdentity, CurrentIdentity: currentIsTestIdentity, EndpointDir: dir, Build: build, Linger: time.Hour})
 	}()
 
 	conn, _ := dialAcceptorTestSocket(t, socketPath)
@@ -116,7 +116,7 @@ func TestRun_AConnectionAcceptedDuringTheBuildRevalidatesAfterItBeforeTheReadyLi
 	done := make(chan error, 1)
 	go func() {
 		done <- Run(ctx, Config{
-			Identity: testIdentity, EndpointDir: dir, Build: build, Linger: time.Hour,
+			Identity: testIdentity, CurrentIdentity: currentIsTestIdentity, EndpointDir: dir, Build: build, Linger: time.Hour,
 			Revalidate: func(context.Context) { revalidatedAfterBuild <- buildReturned.Load() },
 		})
 	}()

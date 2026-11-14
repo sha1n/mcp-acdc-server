@@ -12,7 +12,7 @@
 - `make test` runs all unit and integration tests.
 - `make test-sharedserver` runs only the shared server integration tests.
 - `make test-race-sharedserver` runs the shared server integration tests and production packages under the race detector.
-- `make coverage` writes `coverage.out` and prints package/function coverage of production packages; everything under `tests/` still runs but is not measured.
+- `make coverage` writes `coverage.out` and prints package/function coverage of production packages; everything under `tests/` and `internal/testutil/` still runs but is not measured.
 - `make lint` runs `go vet`, golangci-lint, and the formatting check.
 - `make complexity` runs the function-level complexity analysis on its own; `make lint` already includes it.
 - `make format` applies simplified `gofmt` formatting.

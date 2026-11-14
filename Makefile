@@ -28,11 +28,14 @@ MODFLAGS=-mod=readonly
 # make bench BENCHFLAGS="-corpus=$HOME/docs -corpus-dup=2"
 BENCHFLAGS ?=
 
-# Coverage measures production packages only. Whether a fixture's failure branches
-# under tests/ run depends on timing (e.g. a server shutdown that hits its timeout),
-# so instrumenting them makes the total differ between runs of identical code.
+# Coverage measures production packages only: tests/ and internal/testutil still
+# run, lint and pass the complexity gates, but are not instrumented. Whether a
+# fixture's failure branches under tests/ run depends on timing (e.g. a server
+# shutdown that hits its timeout), so instrumenting them makes the total differ
+# between runs of identical code; internal/testutil is test infrastructure and
+# would inflate the production denominator.
 # Recursively expanded so that only the coverage target pays for `go list`.
-COVERPKG = $(shell go list $(MODFLAGS) ./... | grep -v "/tests/" | sed "s,^$$(go list -m),.," | paste -sd, -)
+COVERPKG = $(shell go list $(MODFLAGS) ./... | grep -Ev '/tests/|/internal/testutil(/|$$)' | sed "s,^$$(go list -m),.," | paste -sd, -)
 
 # Use linker flags to provide version/build settings
 LDFLAGS=-ldflags "-w -s -X=main.Version=$(VERSION) -X=main.Build=$(BUILD) -X=main.ProgramName=$(PROGRAMNAME)"

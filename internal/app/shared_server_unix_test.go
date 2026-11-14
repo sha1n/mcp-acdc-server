@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -39,7 +40,7 @@ func TestRunSharedServer_RejectsANonAbsoluteInjectedEndpointDirectory(t *testing
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
 
-			err := runSharedServer(ctx, params, &config.Settings{SharedServer: config.SharedServerSettings{Linger: time.Hour}}, sharedServerFlagTestIdentity, "test")
+			err := runSharedServer(ctx, params, &config.Settings{SharedServer: config.SharedServerSettings{Linger: time.Hour}}, sharedServerFlagTestIdentity, identity.Binary{Version: "test"})
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), fmt.Sprintf("endpoint directory %q is not an absolute path", tt.dir))

@@ -13,6 +13,7 @@ import (
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver"
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/endpoint"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"github.com/spf13/pflag"
 )
 
@@ -41,9 +42,9 @@ func sharedServerIdentity(flags *pflag.FlagSet) (identity string, supplied bool)
 	return flag.Value.String(), true
 }
 
-func runSharedServer(ctx context.Context, params RunParams, settings *config.Settings, identity, version string) error {
-	if !endpoint.ValidIdentity(identity) {
-		return fmt.Errorf("invalid shared server identity %q", identity)
+func runSharedServer(ctx context.Context, params RunParams, settings *config.Settings, serverIdentity string, binary identity.Binary) error {
+	if !endpoint.ValidIdentity(serverIdentity) {
+		return fmt.Errorf("invalid shared server identity %q", serverIdentity)
 	}
 	if params.EndpointDir == nil {
 		return errors.New("shared server requires an endpoint directory")
@@ -64,15 +65,16 @@ func runSharedServer(ctx context.Context, params RunParams, settings *config.Set
 
 	var revalidate func(context.Context)
 	err = sharedserver.Run(ctx, sharedserver.Config{
-		Identity:    identity,
+		Identity:    serverIdentity,
 		EndpointDir: endpointDir,
 		LogDir:      sharedServerLogDir(params),
 		LogStartup: func(logger *slog.Logger) {
-			logSharedServerStartup(logger, settings, version)
+			logSharedServerStartup(logger, settings, binary.Version)
 		},
-		Linger: settings.SharedServer.Linger,
+		CurrentIdentity: func() (string, error) { return identity.Compute(settings, binary) },
+		Linger:          settings.SharedServer.Linger,
 		Build: func(ctx context.Context, logger *slog.Logger) (*mcp.Server, func(), error) {
-			components, err := params.CreateServer(ctx, logger, settings, version)
+			components, err := params.CreateServer(ctx, logger, settings, binary.Version)
 			revalidate = components.RevalidateNow
 			return components.MCP, components.Cleanup, err
 		},
