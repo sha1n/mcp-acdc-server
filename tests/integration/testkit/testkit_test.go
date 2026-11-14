@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -279,6 +281,40 @@ func TestACDCService_StartTimeout(t *testing.T) {
 	if err == nil {
 		t.Error("Expected timeout error")
 	}
+}
+
+func TestACDCService_StartReportsTheBindErrorWhenAForeignListenerHoldsThePort(t *testing.T) {
+	foreign, err := net.Listen("tcp", "localhost:0")
+	require.NoError(t, err)
+	probed := make(chan struct{})
+	var probedOnce sync.Once
+	foreignServer := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		probedOnce.Do(func() { close(probed) })
+		w.WriteHeader(http.StatusOK)
+	})}
+	go func() { _ = foreignServer.Serve(foreign) }()
+	t.Cleanup(func() { _ = foreignServer.Close() })
+
+	port := foreign.Addr().(*net.TCPAddr).Port
+	flags := NewTestFlags(t, CreateTestContentDir(t, nil), &FlagOptions{Port: port})
+	service := NewACDCService("foreign-listener", flags)
+	acdc := service.(*acdcService)
+	acdc.StopDelay = 2 * time.Second
+	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error {
+		select {
+		case <-probed:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		return app.RunWithDeps(ctx, params, flags, version)
+	}
+
+	props, startErr := service.Start()
+	stopErr := service.Stop()
+
+	require.Nil(t, props, "the service reported ready against a listener it does not own")
+	require.ErrorIs(t, startErr, syscall.EADDRINUSE)
+	require.ErrorIs(t, stopErr, syscall.EADDRINUSE)
 }
 
 func TestACDCService_StopTimeout(t *testing.T) {

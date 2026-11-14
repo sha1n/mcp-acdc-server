@@ -2,11 +2,14 @@ package testkit
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -15,16 +18,34 @@ import (
 	"github.com/spf13/pflag"
 )
 
+const readinessPath = "/.testkit/readiness"
+
 type RunnerFunc func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error
 
 type acdcService struct {
 	name         string
 	flags        *pflag.FlagSet
-	srv          *http.Server
+	srv          atomic.Pointer[http.Server]
 	errChan      chan error
 	StopDelay    time.Duration
 	StartTimeout time.Duration
 	runner       RunnerFunc
+	watchRunner  sync.Once
+	watcherDone  chan struct{}
+	abandonOnce  sync.Once
+	abandon      chan struct{}
+	runnerErr    error
+	waitErr      error
+
+	// mu orders Start's setup against Stop, so a Stop that overlaps Start sees
+	// the context and pipes it must release, and a Start after Stop runs nothing.
+	mu        sync.Mutex
+	started   bool
+	stopped   bool
+	startDone chan struct{}
+	startErr  error
+	stopOnce  sync.Once
+	stopErr   error
 
 	// Stdio pipes
 	stdinReader  *io.PipeReader
@@ -39,6 +60,9 @@ func NewACDCService(name string, flags *pflag.FlagSet) Service {
 		name:         name,
 		flags:        flags,
 		errChan:      make(chan error, 1),
+		watcherDone:  make(chan struct{}),
+		abandon:      make(chan struct{}),
+		startDone:    make(chan struct{}),
 		StopDelay:    5 * time.Second,
 		StartTimeout: 10 * time.Second,
 		runner:       app.RunWithDeps,
@@ -49,32 +73,39 @@ func (s *acdcService) GetName() string {
 	return s.name
 }
 
-func (s *acdcService) Start() (map[string]any, error) {
-	params := app.DefaultRunParams()
+func (s *acdcService) Start() (props map[string]any, err error) {
 	transport, _ := s.flags.GetString("transport")
+	ctx, err := s.claimStart(transport)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		s.startErr = err
+		close(s.startDone)
+	}()
 
-	var ctx context.Context
-	ctx, s.ctxCancel = context.WithCancel(context.Background())
-
+	params := app.DefaultRunParams()
+	readinessMarker := rand.Text()
 	if transport == "stdio" {
-		// Create pipes for stdio testing
-		s.stdinReader, s.stdinWriter = io.Pipe()
-		s.stdoutReader, s.stdoutWriter = io.Pipe()
-
-		// Create custom IO transport for testing
 		params.CustomIOTransport = &mcp.IOTransport{
 			Reader: s.stdinReader,
 			Writer: s.stdoutWriter,
 		}
 	} else {
-		// For SSE, use custom handler that captures server instance
 		params.StartSSEServer = func(logger *slog.Logger, mcpSrv *mcp.Server, settings *config.Settings, opts ...app.SSEOption) error {
-			var err error
-			s.srv, err = app.NewSSEServer(logger, mcpSrv, settings, opts...)
+			srv, err := app.NewSSEServer(logger, mcpSrv, settings, opts...)
 			if err != nil {
 				return err
 			}
-			return s.srv.ListenAndServe()
+			srv.Handler = withReadinessMarker(srv.Handler, readinessMarker)
+			s.srv.Store(srv)
+			// The app does not watch ctx on this transport. Stop cancels ctx before
+			// it loads srv, so either it shuts this server down or this check sees
+			// the cancellation; a server published late cannot outlive Stop.
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return srv.ListenAndServe()
 		}
 	}
 
@@ -92,7 +123,29 @@ func (s *acdcService) Start() (map[string]any, error) {
 		}, nil
 	}
 
-	// Wait for server to start by polling /sse
+	return s.awaitSSEReady(readinessMarker)
+}
+
+func (s *acdcService) claimStart(transport string) (context.Context, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.started {
+		return nil, fmt.Errorf("%s was already started", s.name)
+	}
+	if s.stopped {
+		return nil, fmt.Errorf("%s was stopped before it started", s.name)
+	}
+	s.started = true
+	var ctx context.Context
+	ctx, s.ctxCancel = context.WithCancel(context.Background())
+	if transport == "stdio" {
+		s.stdinReader, s.stdinWriter = io.Pipe()
+		s.stdoutReader, s.stdoutWriter = io.Pipe()
+	}
+	return ctx, nil
+}
+
+func (s *acdcService) awaitSSEReady(readinessMarker string) (map[string]any, error) {
 	port, _ := s.flags.GetInt("port")
 	host, _ := s.flags.GetString("host")
 	if host == "" || host == "0.0.0.0" {
@@ -100,7 +153,8 @@ func (s *acdcService) Start() (map[string]any, error) {
 	}
 	baseURL := fmt.Sprintf("http://%s:%d", host, port)
 
-	deadline := time.Now().Add(s.StartTimeout)
+	deadline := time.NewTimer(s.StartTimeout)
+	defer deadline.Stop()
 	// The probe closes its responses unread, and the transport hands such a
 	// connection back to its pool in the background. On the shared default pool
 	// that races the test's first request into dialling a connection it never uses.
@@ -108,33 +162,54 @@ func (s *acdcService) Start() (map[string]any, error) {
 		Timeout:   100 * time.Millisecond,
 		Transport: &http.Transport{DisableKeepAlives: true},
 	}
-	for time.Now().Before(deadline) {
+	for !answersWithMarker(client, baseURL, readinessMarker) {
 		select {
-		case err := <-s.errChan:
-			return nil, startupExitError(err)
-		default:
-			resp, err := client.Get(baseURL + "/sse")
-			if err == nil {
-				_ = resp.Body.Close()
-				return map[string]any{
-					"acdc.transport": "sse",
-					"acdc.port":      port,
-					"acdc.host":      host,
-					"acdc.baseURL":   baseURL,
-				}, nil
-			}
-			time.Sleep(100 * time.Millisecond)
+		case <-s.runnerExit():
+			return nil, s.startupExitError()
+		case <-deadline.C:
+			return nil, fmt.Errorf("server failed to start after %v", s.StartTimeout)
+		case <-time.After(100 * time.Millisecond):
 		}
 	}
-
-	return nil, fmt.Errorf("server failed to start after %v", s.StartTimeout)
+	return map[string]any{
+		"acdc.transport": "sse",
+		"acdc.port":      port,
+		"acdc.host":      host,
+		"acdc.baseURL":   baseURL,
+	}, nil
 }
 
-func startupExitError(err error) error {
-	if err == nil {
+// answersWithMarker tells this start's server apart from any other listener on the
+// same address: the port is chosen by closing a probe listener, so another process
+// can bind it before the server does.
+func answersWithMarker(client *http.Client, baseURL, marker string) bool {
+	resp, err := client.Get(baseURL + readinessPath)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(len(marker))+1))
+	return err == nil && resp.StatusCode == http.StatusOK && string(body) == marker
+}
+
+func withReadinessMarker(next http.Handler, marker string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == readinessPath {
+			_, _ = io.WriteString(w, marker)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *acdcService) startupExitError() error {
+	if s.waitErr != nil {
+		return s.waitErr
+	}
+	if s.runnerErr == nil {
 		return errors.New("server exited unexpectedly without an error before it started serving")
 	}
-	return fmt.Errorf("server exited unexpectedly: %w", err)
+	return fmt.Errorf("server exited unexpectedly: %w", s.runnerErr)
 }
 
 // closeStdioPipes hands the reason the server stopped to whoever is on the other end of
@@ -150,24 +225,56 @@ func (s *acdcService) closeStdioPipes(cause error) {
 	}
 }
 
+// Stop runs the shutdown once; every call, repeated or concurrent, returns its result.
 func (s *acdcService) Stop() error {
-	shutdownErr := s.shutdownHTTPServer()
+	s.stopOnce.Do(func() { s.stopErr = s.stop() })
+	return s.stopErr
+}
+
+func (s *acdcService) stop() error {
+	s.mu.Lock()
+	s.stopped = true
+	started := s.started
+	s.mu.Unlock()
 
 	if s.ctxCancel != nil {
 		s.ctxCancel()
 	}
+	shutdownErr := s.shutdownHTTPServer()
 	if s.stdinWriter != nil {
 		_ = s.stdinWriter.Close()
 	}
 	if s.stdoutWriter != nil {
 		_ = s.stdoutWriter.Close()
 	}
+	runnerErr := s.awaitRunner()
 
-	return errors.Join(shutdownErr, s.awaitRunner())
+	if !started {
+		return errors.Join(shutdownErr, runnerErr)
+	}
+	// Start settles promptly once the runner has reported or been abandoned.
+	<-s.startDone
+	if s.startErr == nil {
+		return errors.Join(shutdownErr, runnerErr)
+	}
+	return joinStartupFailure(s.startErr, shutdownErr, runnerErr)
+}
+
+// joinStartupFailure leaves out results the startup error already carries, such as
+// the runner error that ended the start.
+func joinStartupFailure(startErr error, errs ...error) error {
+	joined := []error{startErr}
+	for _, err := range errs {
+		if err != nil && !errors.Is(startErr, err) {
+			joined = append(joined, err)
+		}
+	}
+	return errors.Join(joined...)
 }
 
 func (s *acdcService) shutdownHTTPServer() error {
-	if s.srv == nil {
+	srv := s.srv.Load()
+	if srv == nil {
 		return nil
 	}
 
@@ -179,10 +286,10 @@ func (s *acdcService) shutdownHTTPServer() error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), s.StopDelay)
 	defer cancel()
-	if err := s.srv.Shutdown(ctx); err != nil {
+	if err := srv.Shutdown(ctx); err != nil {
 		// Shutdown only stops accepting; without this the connections it gave up
 		// on, and the goroutines serving them, would outlive the test.
-		_ = s.srv.Close()
+		_ = srv.Close()
 		return fmt.Errorf("graceful shutdown of %s failed, connections were closed forcibly: %w", s.name, err)
 	}
 	return nil
@@ -190,12 +297,34 @@ func (s *acdcService) shutdownHTTPServer() error {
 
 func (s *acdcService) awaitRunner() error {
 	select {
-	case err := <-s.errChan:
-		if err != nil && err != http.ErrServerClosed && err != context.Canceled {
-			return err
-		}
-		return nil
+	case <-s.runnerExit():
 	case <-time.After(s.StopDelay):
-		return fmt.Errorf("timed out waiting for server to stop")
+		s.abandonOnce.Do(func() { close(s.abandon) })
+		<-s.watcherDone
 	}
+	if s.waitErr != nil {
+		return s.waitErr
+	}
+	if s.runnerErr != nil && s.runnerErr != http.ErrServerClosed && s.runnerErr != context.Canceled {
+		return s.runnerErr
+	}
+	return nil
+}
+
+// runnerExit is closed once a single watcher has either received the runner's
+// result from errChan or been abandoned by a Stop that gave up waiting, so Start
+// and any number of Stop calls, concurrent or repeated, observe the same outcome
+// and no watcher outlives a runner that never reports.
+func (s *acdcService) runnerExit() <-chan struct{} {
+	s.watchRunner.Do(func() {
+		go func() {
+			defer close(s.watcherDone)
+			select {
+			case s.runnerErr = <-s.errChan:
+			case <-s.abandon:
+				s.waitErr = fmt.Errorf("timed out waiting for %s to stop", s.name)
+			}
+		}()
+	})
+	return s.watcherDone
 }
