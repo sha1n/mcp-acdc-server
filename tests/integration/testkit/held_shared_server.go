@@ -48,16 +48,30 @@ func (h *SharedServerHarness) holdSharedServer(args []string, deadline time.Time
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to spawn the held shared server: %w", err)
 	}
-	held, err := h.awaitHold(socketPath, end, deadline)
+	held, err := awaitAttach(socketPath, end, deadline)
 	if err != nil {
 		return "", nil, err
 	}
-	return id, held, nil
+	h.t.Cleanup(func() {
+		if err := held.conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			h.t.Errorf("failed to close the held shared server session: %v", err)
+		}
+	})
+	return id, &RawSession{h: h, conn: held.conn, reader: held.reader, Ready: held.ready}, nil
 }
 
-// awaitHold cancels the attach attempt in flight when the candidate ends, so
-// its exit is reported as itself and promptly rather than as a timeout.
-func (h *SharedServerHarness) awaitHold(socketPath string, end *candidateEnd, deadline time.Time) (*RawSession, error) {
+// attachedSession is a session with its decoded ready line that no test owns yet.
+type attachedSession struct {
+	conn   net.Conn
+	reader *bufio.Reader
+	ready  sharedserver.ReadyLine
+}
+
+// awaitAttach has no harness in scope, so the only exit it can observe is that
+// of the candidate of end. It cancels the attach attempt in flight when that
+// candidate ends, so its exit is reported as itself and promptly rather than
+// as a timeout.
+func awaitAttach(socketPath string, end *candidateEnd, deadline time.Time) (*attachedSession, error) {
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	go func() {
@@ -70,7 +84,7 @@ func (h *SharedServerHarness) awaitHold(socketPath string, end *candidateEnd, de
 	poll := time.NewTicker(pollInterval)
 	defer poll.Stop()
 	for {
-		if held := h.tryAttach(ctx, socketPath); held != nil {
+		if held := tryAttach(ctx, socketPath); held != nil {
 			return held, nil
 		}
 		select {
@@ -94,26 +108,22 @@ func holdFailure(end *candidateEnd) error {
 
 // tryAttach closes its connection when ctx ends, which also ends a read of a
 // ready line that is never written.
-func (h *SharedServerHarness) tryAttach(ctx context.Context, socketPath string) *RawSession {
+func tryAttach(ctx context.Context, socketPath string) *attachedSession {
 	var dialer net.Dialer
 	conn, err := dialer.DialContext(ctx, "unix", socketPath)
 	if err != nil {
 		return nil
 	}
 	closeOnEnd := context.AfterFunc(ctx, func() { _ = conn.Close() })
-	s := &RawSession{h: h, conn: conn, reader: bufio.NewReader(conn)}
-	line, err := s.reader.ReadBytes('\n')
+	reader := bufio.NewReader(conn)
+	line, err := reader.ReadBytes('\n')
+	var ready sharedserver.ReadyLine
 	if err == nil {
-		s.Ready, err = sharedserver.DecodeReadyLine(line)
+		ready, err = sharedserver.DecodeReadyLine(line)
 	}
 	if err != nil || !closeOnEnd() {
 		_ = conn.Close()
 		return nil
 	}
-	h.t.Cleanup(func() {
-		if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-			h.t.Errorf("failed to close the held shared server session: %v", err)
-		}
-	})
-	return s
+	return &attachedSession{conn: conn, reader: reader, ready: ready}
 }
