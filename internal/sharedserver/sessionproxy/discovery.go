@@ -28,31 +28,82 @@ type discovery struct {
 	logger      *slog.Logger
 }
 
+// connect bounds the whole dial-or-spawn phase by the connect wait: no
+// attempt starts at or after its expiry, and a dial or spawn in progress is
+// abandoned when it expires, when ctx ends or when abort closes.
 func (d discovery) connect(ctx context.Context, abort <-chan struct{}) (net.Conn, error) {
 	deadline := d.clock.Now().Add(d.connectWait)
+	phase, cancel := untilAborted(ctx, abort)
+	defer cancel(nil)
+	stopExpiry := d.clock.AfterFunc(d.connectWait, func() { cancel(ErrConnectWaitExpired) })
+	defer stopExpiry()
+
 	schedule := newBackoff()
 	for {
-		conn, err := d.dial(ctx)
+		if err := d.expired(phase, deadline); err != nil {
+			return nil, err
+		}
+		conn, err := d.dial(phase)
 		if err == nil {
 			return conn, nil
 		}
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+		if err := d.expired(phase, deadline); err != nil {
+			return nil, err
 		}
 		d.logger.Debug("Shared server not reachable, spawning a candidate", "error", err)
-		if err := d.spawn(); err != nil {
-			return nil, fmt.Errorf("failed to spawn a shared server: %w", err)
+		if err := supervise(phase, d.spawn); err != nil {
+			return nil, d.spawnFailure(phase, err)
 		}
-		remaining := deadline.Sub(d.clock.Now())
-		if remaining <= 0 {
-			return nil, ErrConnectWaitExpired
+		if err := d.expired(phase, deadline); err != nil {
+			return nil, err
 		}
 		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-abort:
-			return nil, errSessionEnded
-		case <-d.clock.After(min(schedule.next(), remaining)):
+		case <-phase.Done():
+			return nil, context.Cause(phase)
+		case <-d.clock.After(min(schedule.next(), deadline.Sub(d.clock.Now()))):
 		}
+	}
+}
+
+func (d discovery) expired(phase context.Context, deadline time.Time) error {
+	if phase.Err() != nil {
+		return context.Cause(phase)
+	}
+	if !d.clock.Now().Before(deadline) {
+		return ErrConnectWaitExpired
+	}
+	return nil
+}
+
+func (d discovery) spawnFailure(phase context.Context, err error) error {
+	if phase.Err() != nil {
+		return context.Cause(phase)
+	}
+	return fmt.Errorf("failed to spawn a shared server: %w", err)
+}
+
+// untilAborted ends with errSessionEnded as its cause once abort closes.
+func untilAborted(ctx context.Context, abort <-chan struct{}) (context.Context, context.CancelCauseFunc) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	go func() {
+		select {
+		case <-abort:
+			cancel(errSessionEnded)
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
+}
+
+// supervise stops waiting for op once ctx ends, since op cannot be
+// interrupted; op then finishes on its own and its result is dropped.
+func supervise(ctx context.Context, op func() error) error {
+	done := make(chan error, 1)
+	go func() { done <- op() }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return context.Cause(ctx)
 	}
 }

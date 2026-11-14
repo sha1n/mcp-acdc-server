@@ -56,9 +56,9 @@ func sessionResult(ctx context.Context, err error) error {
 }
 
 func discover(ctx context.Context, cfg Config, abort <-chan struct{}) (net.Conn, error) {
-	identity, err := cfg.Identity()
+	identity, err := computeIdentity(ctx, cfg.Identity, abort)
 	if err != nil {
-		return nil, fmt.Errorf("failed to compute the server identity: %w", err)
+		return nil, err
 	}
 	ep, err := endpoint.OpenEndpoint(cfg.EndpointDir)
 	if err != nil {
@@ -76,6 +76,26 @@ func discover(ctx context.Context, cfg Config, abort <-chan struct{}) (net.Conn,
 		connectWait: cfg.ConnectWait,
 		logger:      cfg.Logger,
 	}.connect(ctx, abort)
+}
+
+// computeIdentity does not wait for an identity walk once the session ends:
+// the walk cannot be interrupted and may cover a large content tree.
+func computeIdentity(ctx context.Context, compute func() (string, error), abort <-chan struct{}) (string, error) {
+	phase, cancel := untilAborted(ctx, abort)
+	defer cancel(nil)
+	var identity string
+	err := supervise(phase, func() error {
+		var err error
+		identity, err = compute()
+		return err
+	})
+	if phase.Err() != nil {
+		return "", context.Cause(phase)
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to compute the server identity: %w", err)
+	}
+	return identity, nil
 }
 
 // awaitReady has no limit of its own: the shared server may still be building
