@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -15,6 +16,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -100,7 +102,11 @@ func launchLingerTestServer(t *testing.T, opts lingerTestOptions) *lingerTestSer
 	createServer := params.CreateServer
 	params.CreateServer = func(ctx context.Context, logger *slog.Logger, settings *config.Settings, version string) (app.Components, error) {
 		if opts.buildGate != nil {
-			<-opts.buildGate
+			select {
+			case <-opts.buildGate:
+			case <-ctx.Done():
+				return app.Components{}, ctx.Err()
+			}
 		}
 		components, err := createServer(ctx, logger, settings, version)
 		if err == nil && opts.slowStarted != nil {
@@ -126,6 +132,107 @@ func launchLingerTestServer(t *testing.T, opts lingerTestOptions) *lingerTestSer
 		}
 	})
 	return s
+}
+
+// launchWinningFirstLingerWindow exists because the linger starts at bind
+// (spec section 6.2): a test that must observe the server or attach inside the
+// first linger can legitimately lose that window to expiry when it is
+// descheduled. A lost attempt is a valid outcome of the system, so it is
+// verified as a clean linger exit and a fresh server is tried. act reports
+// false only for a loss shaped like expiry and fails the test on anything else.
+func launchWinningFirstLingerWindow(t *testing.T, opts lingerTestOptions, act func(*lingerTestServer) bool) *lingerTestServer {
+	t.Helper()
+	deadline := time.Now().Add(lingerTestDeadline)
+	for attempt := 1; ; attempt++ {
+		server := launchLingerTestServer(t, opts)
+		if act(server) {
+			return server
+		}
+		server.assertCleanLingerExit(t)
+		t.Logf("attempt %d lost its first linger window to expiry; retrying with a fresh server", attempt)
+		if time.Now().After(deadline) {
+			t.Fatalf("no attempt won its first linger window within %s (%d attempts)", lingerTestDeadline, attempt)
+		}
+	}
+}
+
+func isLingerExpiryDrop(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, fs.ErrNotExist) ||
+		errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET)
+}
+
+func (s *lingerTestServer) assertCleanLingerExit(t *testing.T) {
+	t.Helper()
+	require.NoError(t, s.awaitExit(t), "a lost attempt must be a normal linger exit")
+	require.GreaterOrEqual(t, time.Since(s.launchedAt), lingerTestLinger, "a lost attempt exited before the linger elapsed")
+	s.assertSocketRemoved(t)
+	s.assertLockReleased(t)
+}
+
+func (s *lingerTestServer) exited() bool {
+	select {
+	case err := <-s.done:
+		s.done <- err
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *lingerTestServer) observeSocket(t *testing.T) bool {
+	t.Helper()
+	deadline := time.Now().Add(lingerTestDeadline)
+	for {
+		if info, err := os.Lstat(s.socketPath()); err == nil && info.Mode().Type() == fs.ModeSocket {
+			return true
+		}
+		if s.exited() {
+			return false
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("socket %s was never bound", s.socketPath())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func (s *lingerTestServer) tryDial(t *testing.T) (*lingerTestConn, bool) {
+	t.Helper()
+	conn, err := net.Dial("unix", s.socketPath())
+	if err != nil {
+		require.True(t, isLingerExpiryDrop(err), "dial failed for a reason other than expiry: %v", err)
+		return nil, false
+	}
+	require.NoError(t, conn.SetDeadline(time.Now().Add(lingerTestDeadline)))
+	t.Cleanup(func() { _ = conn.Close() })
+	return &lingerTestConn{conn: conn, reader: bufio.NewReader(conn)}, true
+}
+
+func (s *lingerTestServer) tryAttach(t *testing.T) (*lingerTestConn, bool) {
+	t.Helper()
+	if !s.observeSocket(t) {
+		return nil, false
+	}
+	conn, ok := s.tryDial(t)
+	if !ok {
+		return nil, false
+	}
+	line, err := conn.reader.ReadBytes('\n')
+	if err != nil {
+		require.True(t, isLingerExpiryDrop(err), "the connection failed for a reason other than expiry: %v", err)
+		return nil, false
+	}
+	var ready map[string]any
+	require.NoError(t, json.Unmarshal(line, &ready), "line: %s", line)
+	require.Equal(t, true, ready["ready"], "first line must be the ready line: %v", ready)
+	return conn, true
+}
+
+func (c *lingerTestConn) assertDroppedByExpiry(t *testing.T) {
+	t.Helper()
+	_, err := c.reader.ReadBytes('\n')
+	require.Error(t, err, "a connection outliving the server must not receive anything")
+	require.True(t, isLingerExpiryDrop(err), "the connection failed for a reason other than expiry: %v", err)
 }
 
 func (s *lingerTestServer) socketPath() string {
@@ -159,6 +266,16 @@ func (s *lingerTestServer) awaitExit(t *testing.T) error {
 	case <-time.After(lingerTestDeadline):
 		t.Fatalf("shared server did not exit")
 		return nil
+	}
+}
+
+func (s *lingerTestServer) runsFor(d time.Duration) bool {
+	select {
+	case err := <-s.done:
+		s.done <- err
+		return false
+	case <-time.After(d):
+		return true
 	}
 }
 
@@ -254,8 +371,8 @@ func (c *lingerTestConn) close(t *testing.T) time.Time {
 }
 
 func TestSharedServerLinger_WithNoConnectionsExitsAfterTheLingerAndRemovesTheSocket(t *testing.T) {
-	server := launchLingerTestServer(t, lingerTestOptions{linger: "1s", inMemory: true})
-	server.awaitSocket(t)
+	server := launchWinningFirstLingerWindow(t, lingerTestOptions{linger: "1s", inMemory: true},
+		func(s *lingerTestServer) bool { return s.observeSocket(t) })
 
 	require.NoError(t, server.awaitExit(t))
 
@@ -265,10 +382,12 @@ func TestSharedServerLinger_WithNoConnectionsExitsAfterTheLingerAndRemovesTheSoc
 }
 
 func TestSharedServerLinger_AnOpenConnectionKeepsItRunningUntilALingerAfterTheClose(t *testing.T) {
-	server := launchLingerTestServer(t, lingerTestOptions{linger: "1s", inMemory: true})
-	server.awaitSocket(t)
-	conn := server.dial(t)
-	conn.readReadyLine(t)
+	var conn *lingerTestConn
+	server := launchWinningFirstLingerWindow(t, lingerTestOptions{linger: "1s", inMemory: true},
+		func(s *lingerTestServer) (attached bool) {
+			conn, attached = s.tryAttach(t)
+			return attached
+		})
 
 	server.assertRunningFor(t, 2*lingerTestLinger)
 	closedAt := conn.close(t)
@@ -281,11 +400,22 @@ func TestSharedServerLinger_AnOpenConnectionKeepsItRunningUntilALingerAfterTheCl
 
 func TestSharedServerLinger_AConnectionOpenDuringTheIndexBuildCountsAsAttached(t *testing.T) {
 	gate := make(chan struct{})
-	server := launchLingerTestServer(t, lingerTestOptions{linger: "1s", inMemory: true, buildGate: gate})
-	server.awaitSocket(t)
-	conn := server.dial(t)
-
-	server.assertRunningFor(t, 2*lingerTestLinger)
+	var conn *lingerTestConn
+	server := launchWinningFirstLingerWindow(t, lingerTestOptions{linger: "1s", inMemory: true, buildGate: gate},
+		func(s *lingerTestServer) bool {
+			if !s.observeSocket(t) {
+				return false
+			}
+			var dialed bool
+			if conn, dialed = s.tryDial(t); !dialed {
+				return false
+			}
+			if s.runsFor(2 * lingerTestLinger) {
+				return true
+			}
+			conn.assertDroppedByExpiry(t)
+			return false
+		})
 	close(gate)
 	conn.readReadyLine(t)
 	closedAt := conn.close(t)
@@ -303,10 +433,12 @@ func TestSharedServerLinger_RemovesTheOnDiskIndexDirectory(t *testing.T) {
 		require.NoError(t, err)
 		return matches
 	}
-	server := launchLingerTestServer(t, lingerTestOptions{linger: "1s", inMemory: false})
-	server.awaitSocket(t)
-	conn := server.dial(t)
-	conn.readReadyLine(t)
+	var conn *lingerTestConn
+	server := launchWinningFirstLingerWindow(t, lingerTestOptions{linger: "1s", inMemory: false},
+		func(s *lingerTestServer) (attached bool) {
+			conn, attached = s.tryAttach(t)
+			return attached
+		})
 	require.Len(t, indexDirs(), 1, "search.in_memory=false must build the index on disk")
 
 	conn.close(t)
@@ -316,17 +448,13 @@ func TestSharedServerLinger_RemovesTheOnDiskIndexDirectory(t *testing.T) {
 }
 
 func TestSharedServerLinger_ASuccessorHoldingTheLockKeepsItsSocket(t *testing.T) {
-	endpointDir := newLingerTestEndpointDir(t)
-	identity := newLingerTestIdentity(t)
-	first := launchLingerTestServer(t, lingerTestOptions{
-		linger: "1s", inMemory: true, endpointDir: endpointDir, identity: identity,
-	})
-	first.awaitSocket(t)
+	first := launchWinningFirstLingerWindow(t, lingerTestOptions{linger: "1s", inMemory: true},
+		func(s *lingerTestServer) bool { return s.observeSocket(t) })
 	require.NoError(t, first.awaitExit(t))
 	first.assertSocketRemoved(t)
 
 	successor := launchLingerTestServer(t, lingerTestOptions{
-		linger: "30s", inMemory: true, endpointDir: endpointDir, identity: identity,
+		linger: "1h", inMemory: true, endpointDir: first.endpointDir, identity: first.identity,
 	})
 	successor.awaitSocket(t)
 	conn := successor.dial(t)
@@ -339,7 +467,7 @@ func TestSharedServerLinger_ASuccessorHoldingTheLockKeepsItsSocket(t *testing.T)
 
 func TestSharedServerLinger_CancellingTheSignalContextDropsConnectionsWithoutDrainOrLinger(t *testing.T) {
 	started := make(chan struct{})
-	server := launchLingerTestServer(t, lingerTestOptions{linger: "30s", inMemory: true, slowStarted: started})
+	server := launchLingerTestServer(t, lingerTestOptions{linger: "1h", inMemory: true, slowStarted: started})
 	server.awaitSocket(t)
 	conn := server.dial(t)
 	conn.readReadyLine(t)
