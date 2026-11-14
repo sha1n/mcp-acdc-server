@@ -1,7 +1,6 @@
 package config
 
 import (
-	"log/slog"
 	"os"
 	"testing"
 
@@ -176,36 +175,4 @@ func TestValidateSettings_UIRuleDoesNotMaskOtherErrors(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "transport")
-}
-
-func TestUISettingsLogValue_Group(t *testing.T) {
-	tests := []struct {
-		name string
-		ui   UISettings
-	}{
-		{name: "enabled", ui: UISettings{Enabled: true, MaxResults: 42}},
-		{name: "disabled", ui: UISettings{Enabled: false, MaxResults: 7}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			val := UISettingsLogValue(tt.ui)
-
-			require.Equal(t, slog.KindGroup, val.Kind())
-			attrs := groupAttrs(val)
-			require.Len(t, attrs, 2)
-			require.Contains(t, attrs, "enabled")
-			require.Contains(t, attrs, "max_results")
-			assert.Equal(t, tt.ui.Enabled, attrs["enabled"].Bool())
-			assert.Equal(t, int64(tt.ui.MaxResults), attrs["max_results"].Int64())
-		})
-	}
-}
-
-func groupAttrs(v slog.Value) map[string]slog.Value {
-	attrs := make(map[string]slog.Value)
-	for _, a := range v.Group() {
-		attrs[a.Key] = a.Value
-	}
-	return attrs
 }

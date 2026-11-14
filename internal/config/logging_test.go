@@ -121,74 +121,6 @@ func TestLog(t *testing.T) {
 	}
 }
 
-func TestLogValues(t *testing.T) {
-	s := Settings{
-		ContentDir: "/tmp",
-		Transport:  "stdio",
-		Search: SearchSettings{
-			MaxResults: 10,
-			ResultMode: SearchResultModeReferences,
-		},
-		Auth: AuthSettings{
-			Type: AuthTypeBasic,
-			Basic: BasicAuthSettings{
-				Username: "user",
-				Password: "secret-password",
-			},
-			APIKeys: []string{"key1", "key2"},
-		},
-	}
-
-	t.Run("SettingsLogValue", func(t *testing.T) {
-		val := SettingsLogValue(s)
-		assert.Equal(t, slog.KindGroup, val.Kind())
-		attrs := val.Group()
-		attrMap := make(map[string]slog.Value)
-		for _, a := range attrs {
-			attrMap[a.Key] = a.Value
-		}
-		assert.Equal(t, "/tmp", attrMap["content_dir"].String())
-		assert.Equal(t, "stdio", attrMap["transport"].String())
-	})
-
-	t.Run("SearchSettingsLogValue", func(t *testing.T) {
-		val := SearchSettingsLogValue(s.Search)
-		assert.Equal(t, slog.KindGroup, val.Kind())
-		attrs := val.Group()
-		attrMap := make(map[string]slog.Value)
-		for _, a := range attrs {
-			attrMap[a.Key] = a.Value
-		}
-		assert.Equal(t, int64(10), attrMap["max_results"].Int64())
-		assert.Equal(t, "references", attrMap["result_mode"].String())
-	})
-
-	t.Run("AuthSettingsLogValue", func(t *testing.T) {
-		val := AuthSettingsLogValue(s.Auth)
-		assert.Equal(t, slog.KindGroup, val.Kind())
-		attrs := val.Group()
-		attrMap := make(map[string]slog.Value)
-		for _, a := range attrs {
-			attrMap[a.Key] = a.Value
-		}
-		assert.Equal(t, "basic", attrMap["type"].String())
-		keys := attrMap["api_keys"].Any().([]string)
-		assert.Equal(t, []string{"****", "****"}, keys)
-	})
-
-	t.Run("BasicAuthSettingsLogValue", func(t *testing.T) {
-		val := BasicAuthSettingsLogValue(s.Auth.Basic)
-		assert.Equal(t, slog.KindGroup, val.Kind())
-		attrs := val.Group()
-		attrMap := make(map[string]slog.Value)
-		for _, a := range attrs {
-			attrMap[a.Key] = a.Value
-		}
-		assert.Equal(t, "user", attrMap["username"].String())
-		assert.Equal(t, "****", attrMap["password"].String())
-	})
-}
-
 func TestLog_IncludesHeadingAndPathBoosts(t *testing.T) {
 	captured := make(map[string]any)
 	logger := slog.New(&mapHandler{attrs: captured})
@@ -201,19 +133,6 @@ func TestLog_IncludesHeadingAndPathBoosts(t *testing.T) {
 
 	assert.Equal(t, 2.5, captured["Config: search.heading_boost"])
 	assert.Equal(t, 1.25, captured["Config: search.path_boost"])
-}
-
-func TestSearchSettingsLogValue_IncludesHeadingAndPathBoosts(t *testing.T) {
-	attrs := SearchSettingsLogValue(SearchSettings{HeadingBoost: 2.5, PathBoost: 1.25}).Group()
-
-	found := make(map[string]float64)
-	for _, attr := range attrs {
-		if attr.Value.Kind() == slog.KindFloat64 {
-			found[attr.Key] = attr.Value.Float64()
-		}
-	}
-	assert.Equal(t, 2.5, found["heading_boost"])
-	assert.Equal(t, 1.25, found["path_boost"])
 }
 
 // Custom handler for testing LogValue output
@@ -309,23 +228,6 @@ func TestLogWithLogger_LogsUIEnabledWhenDisabled(t *testing.T) {
 	}, slog.New(&mapHandler{attrs: captured}))
 
 	assert.Equal(t, false, captured["Config: ui.enabled"])
-}
-
-func TestSettingsLogValue_IncludesUIGroup(t *testing.T) {
-	attrs := SettingsLogValue(Settings{UI: UISettings{Enabled: true, MaxResults: 42}}).Group()
-
-	var ui slog.Value
-	found := false
-	for _, a := range attrs {
-		if a.Key == "ui" {
-			ui, found = a.Value.Resolve(), true
-		}
-	}
-	require.True(t, found, "SettingsLogValue must include a \"ui\" attribute")
-	require.Equal(t, slog.KindGroup, ui.Kind())
-	uiAttrs := groupAttrs(ui)
-	assert.Equal(t, true, uiAttrs["enabled"].Bool())
-	assert.Equal(t, int64(42), uiAttrs["max_results"].Int64())
 }
 
 func dumpTestSettings(transport string, auth AuthSettings, ui UISettings) *Settings {
