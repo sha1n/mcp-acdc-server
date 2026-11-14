@@ -103,24 +103,21 @@ func logReturn(logger *slog.Logger, err error) {
 	logger.Error("Shared server failed", "error", err)
 }
 
+// identityCheckError carries the returned error unchanged, so its text and
+// chain stay those of fmt.Errorf; only the log entry is added.
 type identityCheckError struct {
+	err             error
 	identity        string
 	contentIdentity string
 	cause           error
 }
 
 func (e *identityCheckError) Error() string {
-	if e.cause != nil {
-		return fmt.Sprintf("%s: %s", ErrIdentityMismatch, e.cause)
-	}
-	return fmt.Sprintf("%s: content identity is %s", ErrIdentityMismatch, e.contentIdentity)
+	return e.err.Error()
 }
 
-func (e *identityCheckError) Unwrap() []error {
-	if e.cause != nil {
-		return []error{ErrIdentityMismatch, e.cause}
-	}
-	return []error{ErrIdentityMismatch}
+func (e *identityCheckError) Unwrap() error {
+	return e.err
 }
 
 func (e *identityCheckError) logEntry() (string, []any) {
@@ -133,10 +130,10 @@ func (e *identityCheckError) logEntry() (string, []any) {
 func checkIdentity(identity string, current func() (string, error)) error {
 	actual, err := current()
 	if err != nil {
-		return &identityCheckError{identity: identity, cause: err}
+		return &identityCheckError{err: fmt.Errorf("%w: %w", ErrIdentityMismatch, err), identity: identity, cause: err}
 	}
 	if actual != identity {
-		return &identityCheckError{identity: identity, contentIdentity: actual}
+		return &identityCheckError{err: fmt.Errorf("%w: content identity is %s", ErrIdentityMismatch, actual), identity: identity, contentIdentity: actual}
 	}
 	return nil
 }
