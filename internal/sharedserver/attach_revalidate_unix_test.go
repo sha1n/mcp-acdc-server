@@ -55,7 +55,8 @@ func TestRun_EveryAttachRevalidatesBeforeTheReadyLine(t *testing.T) {
 	t.Cleanup(func() {
 		cancel()
 		select {
-		case <-done:
+		case err := <-done:
+			assert.NoError(t, err)
 		case <-time.After(serveTestDeadline):
 			t.Error("Run did not stop")
 		}
