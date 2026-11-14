@@ -2,11 +2,13 @@ package testkit
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -15,12 +17,14 @@ import (
 	"github.com/spf13/pflag"
 )
 
+const readinessPath = "/.testkit/readiness"
+
 type RunnerFunc func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error
 
 type acdcService struct {
 	name         string
 	flags        *pflag.FlagSet
-	srv          *http.Server
+	srv          atomic.Pointer[http.Server]
 	errChan      chan error
 	StopDelay    time.Duration
 	StartTimeout time.Duration
@@ -51,6 +55,7 @@ func (s *acdcService) GetName() string {
 
 func (s *acdcService) Start() (map[string]any, error) {
 	params := app.DefaultRunParams()
+	readinessMarker := rand.Text()
 	transport, _ := s.flags.GetString("transport")
 
 	var ctx context.Context
@@ -67,14 +72,14 @@ func (s *acdcService) Start() (map[string]any, error) {
 			Writer: s.stdoutWriter,
 		}
 	} else {
-		// For SSE, use custom handler that captures server instance
 		params.StartSSEServer = func(logger *slog.Logger, mcpSrv *mcp.Server, settings *config.Settings, opts ...app.SSEOption) error {
-			var err error
-			s.srv, err = app.NewSSEServer(logger, mcpSrv, settings, opts...)
+			srv, err := app.NewSSEServer(logger, mcpSrv, settings, opts...)
 			if err != nil {
 				return err
 			}
-			return s.srv.ListenAndServe()
+			srv.Handler = withReadinessMarker(srv.Handler, readinessMarker)
+			s.srv.Store(srv)
+			return srv.ListenAndServe()
 		}
 	}
 
@@ -92,7 +97,10 @@ func (s *acdcService) Start() (map[string]any, error) {
 		}, nil
 	}
 
-	// Wait for server to start by polling /sse
+	return s.awaitSSEReady(readinessMarker)
+}
+
+func (s *acdcService) awaitSSEReady(readinessMarker string) (map[string]any, error) {
 	port, _ := s.flags.GetInt("port")
 	host, _ := s.flags.GetString("host")
 	if host == "" || host == "0.0.0.0" {
@@ -100,7 +108,8 @@ func (s *acdcService) Start() (map[string]any, error) {
 	}
 	baseURL := fmt.Sprintf("http://%s:%d", host, port)
 
-	deadline := time.Now().Add(s.StartTimeout)
+	deadline := time.NewTimer(s.StartTimeout)
+	defer deadline.Stop()
 	// The probe closes its responses unread, and the transport hands such a
 	// connection back to its pool in the background. On the shared default pool
 	// that races the test's first request into dialling a connection it never uses.
@@ -108,26 +117,44 @@ func (s *acdcService) Start() (map[string]any, error) {
 		Timeout:   100 * time.Millisecond,
 		Transport: &http.Transport{DisableKeepAlives: true},
 	}
-	for time.Now().Before(deadline) {
+	for !answersWithMarker(client, baseURL, readinessMarker) {
 		select {
 		case err := <-s.errChan:
 			return nil, startupExitError(err)
-		default:
-			resp, err := client.Get(baseURL + "/sse")
-			if err == nil {
-				_ = resp.Body.Close()
-				return map[string]any{
-					"acdc.transport": "sse",
-					"acdc.port":      port,
-					"acdc.host":      host,
-					"acdc.baseURL":   baseURL,
-				}, nil
-			}
-			time.Sleep(100 * time.Millisecond)
+		case <-deadline.C:
+			return nil, fmt.Errorf("server failed to start after %v", s.StartTimeout)
+		case <-time.After(100 * time.Millisecond):
 		}
 	}
+	return map[string]any{
+		"acdc.transport": "sse",
+		"acdc.port":      port,
+		"acdc.host":      host,
+		"acdc.baseURL":   baseURL,
+	}, nil
+}
 
-	return nil, fmt.Errorf("server failed to start after %v", s.StartTimeout)
+// answersWithMarker tells this start's server apart from any other listener on the
+// same address: the port is chosen by closing a probe listener, so another process
+// can bind it before the server does.
+func answersWithMarker(client *http.Client, baseURL, marker string) bool {
+	resp, err := client.Get(baseURL + readinessPath)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(len(marker))+1))
+	return err == nil && resp.StatusCode == http.StatusOK && string(body) == marker
+}
+
+func withReadinessMarker(next http.Handler, marker string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == readinessPath {
+			_, _ = io.WriteString(w, marker)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func startupExitError(err error) error {
@@ -167,7 +194,8 @@ func (s *acdcService) Stop() error {
 }
 
 func (s *acdcService) shutdownHTTPServer() error {
-	if s.srv == nil {
+	srv := s.srv.Load()
+	if srv == nil {
 		return nil
 	}
 
@@ -179,10 +207,10 @@ func (s *acdcService) shutdownHTTPServer() error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), s.StopDelay)
 	defer cancel()
-	if err := s.srv.Shutdown(ctx); err != nil {
+	if err := srv.Shutdown(ctx); err != nil {
 		// Shutdown only stops accepting; without this the connections it gave up
 		// on, and the goroutines serving them, would outlive the test.
-		_ = s.srv.Close()
+		_ = srv.Close()
 		return fmt.Errorf("graceful shutdown of %s failed, connections were closed forcibly: %w", s.name, err)
 	}
 	return nil
