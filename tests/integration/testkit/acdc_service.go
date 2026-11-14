@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -29,8 +30,10 @@ type acdcService struct {
 	StopDelay    time.Duration
 	StartTimeout time.Duration
 	runner       RunnerFunc
-	runnerExited bool
+	watchRunner  sync.Once
+	runnerDone   chan struct{}
 	runnerErr    error
+	startErr     error
 
 	// Stdio pipes
 	stdinReader  *io.PipeReader
@@ -45,6 +48,7 @@ func NewACDCService(name string, flags *pflag.FlagSet) Service {
 		name:         name,
 		flags:        flags,
 		errChan:      make(chan error, 1),
+		runnerDone:   make(chan struct{}),
 		StopDelay:    5 * time.Second,
 		StartTimeout: 10 * time.Second,
 		runner:       app.RunWithDeps,
@@ -121,9 +125,9 @@ func (s *acdcService) awaitSSEReady(readinessMarker string) (map[string]any, err
 	}
 	for !answersWithMarker(client, baseURL, readinessMarker) {
 		select {
-		case err := <-s.errChan:
-			s.recordRunnerExit(err)
-			return nil, startupExitError(err)
+		case <-s.runnerExit():
+			s.startErr = startupExitError(s.runnerErr)
+			return nil, s.startErr
 		case <-deadline.C:
 			return nil, fmt.Errorf("server failed to start after %v", s.StartTimeout)
 		case <-time.After(100 * time.Millisecond):
@@ -220,13 +224,13 @@ func (s *acdcService) shutdownHTTPServer() error {
 }
 
 func (s *acdcService) awaitRunner() error {
-	if !s.runnerExited {
-		select {
-		case err := <-s.errChan:
-			s.recordRunnerExit(err)
-		case <-time.After(s.StopDelay):
-			return fmt.Errorf("timed out waiting for server to stop")
-		}
+	select {
+	case <-s.runnerExit():
+	case <-time.After(s.StopDelay):
+		return fmt.Errorf("timed out waiting for server to stop")
+	}
+	if s.startErr != nil {
+		return s.startErr
 	}
 	if s.runnerErr != nil && s.runnerErr != http.ErrServerClosed && s.runnerErr != context.Canceled {
 		return s.runnerErr
@@ -234,9 +238,15 @@ func (s *acdcService) awaitRunner() error {
 	return nil
 }
 
-// recordRunnerExit keeps the runner's single result for every later Stop, since
-// errChan delivers it only once and Start may already have received it.
-func (s *acdcService) recordRunnerExit(err error) {
-	s.runnerExited = true
-	s.runnerErr = err
+// runnerExit is closed once the runner's single result has been received from
+// errChan and stored in runnerErr, so Start and any number of Stop calls,
+// concurrent or repeated, observe the same result.
+func (s *acdcService) runnerExit() <-chan struct{} {
+	s.watchRunner.Do(func() {
+		go func() {
+			s.runnerErr = <-s.errChan
+			close(s.runnerDone)
+		}()
+	})
+	return s.runnerDone
 }
