@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"time"
 
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver"
@@ -122,11 +123,6 @@ func awaitReady(ctx context.Context, fromServer *bufio.Reader, abort <-chan stru
 	}
 }
 
-// relay ends at host stdin EOF without waiting for the write in progress: a
-// shared server that stopped reading would block it forever, and the caller
-// closing the connection unblocks it. A line still being written at EOF may
-// therefore not reach the shared server; its response could not reach the
-// host anyway.
 func relay(ctx context.Context, conn net.Conn, fromServer *bufio.Reader, input *hostInput, stdout io.Writer) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -142,7 +138,30 @@ func relay(ctx context.Context, conn net.Conn, fromServer *bufio.Reader, input *
 	case err := <-toHost:
 		return err
 	case <-input.ended:
-		return input.endErr()
+		return finishInput(ctx, conn, toServer, input)
+	}
+}
+
+// eofWriteLimit bounds delivering the lines read before host stdin ended: a
+// shared server that stopped reading must not hold the exit beyond the 500 ms
+// of spec sections 5.6 and 6.5.
+const eofWriteLimit = 200 * time.Millisecond
+
+// finishInput delivers every line read before host stdin ended, as a
+// per-session server reads up to EOF; only a write the shared server does not
+// take within eofWriteLimit is cut off.
+func finishInput(ctx context.Context, conn net.Conn, toServer <-chan error, input *hostInput) error {
+	if err := conn.SetWriteDeadline(time.Now().Add(eofWriteLimit)); err != nil {
+		return fmt.Errorf("failed to bound the final relay to the shared server: %w", err)
+	}
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-toServer:
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			return input.endErr()
+		}
+		return err
 	}
 }
 
