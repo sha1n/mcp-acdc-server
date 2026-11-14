@@ -117,4 +117,5 @@ func requireFallbackAnswersHeldRequests(t *testing.T, l *testkit.LaunchUnderTest
 	warnings := l.FallbackWarnings()
 	require.Len(t, warnings, 1, "stderr: %s", l.Stderr())
 	assert.Contains(t, warnings[0], "cause="+cause)
+	assert.Empty(t, proxyAttachLine.FindAllString(l.Stderr(), -1), "a fallback launch never reports an attach")
 }

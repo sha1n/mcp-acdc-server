@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver"
@@ -63,10 +64,12 @@ func attachOnce(ctx context.Context, cfg Config, abort <-chan struct{}) (*attach
 		return nil, endedOr(ctx, abort, err)
 	}
 	fromServer := bufio.NewReader(conn)
-	if err := awaitReady(ctx, fromServer, abort); err != nil {
+	ready, err := awaitReady(ctx, fromServer, abort)
+	if err != nil {
 		_ = conn.Close()
 		return nil, endedOr(ctx, abort, err)
 	}
+	logAttached(cfg.Logger, ready)
 	return &attachment{conn: conn, fromServer: fromServer}, nil
 }
 
@@ -162,24 +165,37 @@ func endedOr(ctx context.Context, abort <-chan struct{}, err error) error {
 
 // awaitReady has no limit of its own: the shared server may still be building
 // its index, and the host's initialize timeout governs that wait.
-func awaitReady(ctx context.Context, fromServer *bufio.Reader, abort <-chan struct{}) error {
-	result := make(chan error, 1)
+func awaitReady(ctx context.Context, fromServer *bufio.Reader, abort <-chan struct{}) (sharedserver.ReadyLine, error) {
+	type decoded struct {
+		ready sharedserver.ReadyLine
+		err   error
+	}
+	result := make(chan decoded, 1)
 	go func() {
 		line, err := fromServer.ReadBytes('\n')
+		var ready sharedserver.ReadyLine
 		if err == nil {
-			_, err = sharedserver.DecodeReadyLine(line)
+			ready, err = sharedserver.DecodeReadyLine(line)
 		}
 		if err != nil {
 			err = fmt.Errorf("%w: %w", errBrokeBeforeReady, err)
 		}
-		result <- err
+		result <- decoded{ready: ready, err: err}
 	}()
 	select {
-	case err := <-result:
-		return err
+	case r := <-result:
+		return r.ready, r.err
 	case <-ctx.Done():
-		return ctx.Err()
+		return sharedserver.ReadyLine{}, ctx.Err()
 	case <-abort:
-		return errSessionEnded
+		return sharedserver.ReadyLine{}, errSessionEnded
 	}
+}
+
+func logAttached(logger *slog.Logger, ready sharedserver.ReadyLine) {
+	if ready.Log == "" {
+		logger.Warn("Attached to the shared server, which has no log file", "session", ready.Session)
+		return
+	}
+	logger.Info("Attached to the shared server", "session", ready.Session, "log", ready.Log)
 }

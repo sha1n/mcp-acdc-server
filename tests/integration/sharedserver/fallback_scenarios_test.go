@@ -117,6 +117,7 @@ func TestSessionProxyFallback_SingleBreakAttachesToASharedServerWithoutFallback(
 			assert.Empty(t, l.FallbackWarnings())
 			assert.Equal(t, 1, accepted())
 			assert.Equal(t, 1, h.Builds())
+			proxyAttachedSession(t, l)
 		})
 	}
 }
