@@ -31,8 +31,18 @@ func runSessionProxy(ctx context.Context, logger *slog.Logger, params RunParams,
 		return errors.New("session proxy requires host stdin and stdout")
 	}
 
-	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, os.Interrupt)
-	defer stop()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM, os.Interrupt)
+	defer signal.Stop(signals)
+	go func() {
+		select {
+		case <-signals:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
 
 	return sessionproxy.Run(ctx, sessionproxy.Config{
 		EndpointDir: params.EndpointDir,
@@ -42,6 +52,10 @@ func runSessionProxy(ctx context.Context, logger *slog.Logger, params RunParams,
 		ConnectWait: settings.SharedServer.ConnectWait,
 		Spawn:       params.SpawnSharedServer,
 		Fallback: func(ctx context.Context, input io.ReadCloser) error {
+			// The per-session server gets the default signal disposition a
+			// per-session launch has. Stopping notification does not cancel
+			// ctx, so a signal delivered before Stop still ends the launch.
+			signal.Stop(signals)
 			transport := &mcp.IOTransport{Reader: input, Writer: hostOutput{params.Stdout}}
 			return runPerSession(ctx, logger, params, settings, binary.Version, transport)
 		},
