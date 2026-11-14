@@ -43,7 +43,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer func() { _ = lock.Unlock() }()
 
-	logger, logPath, stopLog := startLog(cfg.LogDir, cfg.Identity)
+	logger, logPath, stopLog := startLog(separateLogDir(cfg.LogDir, cfg.EndpointDir), cfg.Identity)
 	defer stopLog()
 	if cfg.LogStartup != nil {
 		cfg.LogStartup(logger)

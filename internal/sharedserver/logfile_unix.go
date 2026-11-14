@@ -68,6 +68,16 @@ func createLogDir(dir string) error {
 	return os.Chmod(dir, 0o700)
 }
 
+// separateLogDir returns no directory when the log directory is the endpoint
+// directory, which happens on Linux when XDG_STATE_HOME equals
+// XDG_RUNTIME_DIR; the log must never be written beside the socket and lock.
+func separateLogDir(logDir, endpointDir string) string {
+	if filepath.Clean(logDir) == filepath.Clean(endpointDir) {
+		return ""
+	}
+	return logDir
+}
+
 // startLog makes the identity's log, or a discarding logger when it cannot be
 // opened, the process default for the shared server's lifetime: the packages
 // it runs log through slog.Default. stop restores the previous default and
