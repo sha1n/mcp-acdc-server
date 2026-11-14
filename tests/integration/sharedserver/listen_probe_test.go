@@ -233,14 +233,16 @@ func (s *rawServer) stop(t *testing.T) {
 		return
 	}
 	s.stopped = true
+	defer s.cleanup()
 
 	close(s.done)
+	// Both pipe ends close before any wait so a handler that never drains
+	// cannot hold the transport open; the session wait below is then bounded.
 	_ = s.conn.Close()
+	_ = s.serverConn.Close()
 	if s.session != nil {
 		s.awaitSessionEnd(t)
 	}
-	_ = s.serverConn.Close()
-	s.cleanup()
 }
 
 func (s *rawServer) awaitSessionEnd(t *testing.T) {
@@ -253,8 +255,7 @@ func (s *rawServer) awaitSessionEnd(t *testing.T) {
 	select {
 	case <-ended:
 	case <-time.After(stopTimeout):
-		_ = s.session.Close()
-		t.Errorf("server session did not end within %s of input EOF", stopTimeout)
+		t.Errorf("server session did not end within %s of its transport closing", stopTimeout)
 	}
 }
 
