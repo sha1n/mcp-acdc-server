@@ -2,6 +2,7 @@ package testkit
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"testing"
 	"time"
@@ -83,8 +84,7 @@ func newStdioTestClientForDir(t testing.TB, contentDir, resultMode string, cross
 
 	session, err := client.Connect(ctx, transport, nil)
 	if err != nil {
-		_ = env.Stop()
-		t.Fatalf("Failed to connect client: %v", err)
+		t.Fatalf("%v", connectFailure(err, env.Stop()))
 	}
 
 	return &TestClient{
@@ -133,8 +133,7 @@ func NewSSETestClient(t testing.TB, contentOpts *ContentDirOptions) *TestClient 
 	session, err := client.Connect(ctx, transport, nil)
 	if err != nil {
 		cancel()
-		_ = env.Stop()
-		t.Fatalf("Failed to connect SSE client: %v", err)
+		t.Fatalf("%v", connectFailure(err, env.Stop()))
 	}
 
 	return &TestClient{
@@ -144,6 +143,17 @@ func NewSSETestClient(t testing.TB, contentOpts *ContentDirOptions) *TestClient 
 		t:          t,
 		cancelFunc: cancel,
 	}
+}
+
+// connectFailure explains a failed client connect. When the server has already exited
+// with an error, the client sees the closed transport through the SDK, which may replace
+// the cause with its own closing error depending on which goroutine observes the closed
+// pipe first; the server's error, collected by stopping it, is the deterministic cause.
+func connectFailure(connectErr, serverErr error) error {
+	if serverErr != nil {
+		return fmt.Errorf("server failed: %w (client connect error: %v)", serverErr, connectErr)
+	}
+	return fmt.Errorf("failed to connect client: %w", connectErr)
 }
 
 // Close stops the client and server
