@@ -275,3 +275,31 @@ func TestEstablish_DoesNotClassifyACancellationReportedByTheEndpointResolver(t *
 	require.False(t, errors.As(err, &failure), "cancellation classified as a discovery failure")
 	require.ErrorIs(t, err, context.Canceled)
 }
+
+func TestEstablish_ReportsTheSessionEndInsteadOfAPhaseFailureThatFollowedIt(t *testing.T) {
+	for _, tt := range failingPhaseCases() {
+		for _, way := range []string{"cancellation", "stdin EOF"} {
+			t.Run(tt.name+"/"+way, func(t *testing.T) {
+				s := newEndedSession(t)
+				end := s.endByCancellation
+				if way == "stdin EOF" {
+					end = s.endByEOF
+				}
+				dir := sessionEndTestDir(t)
+				cfg := s.config(dir)
+				tt.configure(t, dir, end, &cfg)
+
+				att, err := establish(s.ctx, cfg, s.input.ended)
+
+				require.Nil(t, att)
+				var failure *discoveryError
+				require.False(t, errors.As(err, &failure), "a session end classified as a %v failure", err)
+				if way == "stdin EOF" {
+					require.ErrorIs(t, err, errSessionEnded)
+				} else {
+					require.ErrorIs(t, err, context.Canceled)
+				}
+			})
+		}
+	}
+}
