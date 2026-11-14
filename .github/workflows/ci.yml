@@ -130,6 +130,23 @@ jobs:
       - name: Run complexity analysis
         run: make complexity
 
+  # Windows never attempts discovery, so the job builds everything and runs
+  # only the Windows launch package; the rest of the suite stays on Ubuntu.
+  windows:
+    needs: changes
+    if: needs.changes.outputs.src == 'true' || github.event_name != 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: go build ./...
+      - name: Run Windows launch tests
+        run: go test -count=1 ./tests/integration/windows/...
+
   docker:
     needs: [changes, test]
     if: |
@@ -265,7 +282,7 @@ jobs:
 
   # This job acts as a bridge for documentation-only PRs to satisfy status checks
   status-check:
-    needs: [changes, test, test-macos, complexity, docker]
+    needs: [changes, test, test-macos, complexity, windows, docker]
     if: always()
     runs-on: ubuntu-latest
     steps:

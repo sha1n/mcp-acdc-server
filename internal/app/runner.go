@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"runtime"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
@@ -74,7 +75,7 @@ func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, bi
 	logger.Info("Starting MCP Acdc server", "version", binary.Version)
 	config.LogWithLogger(settings, logger)
 
-	if attemptsDiscovery(params, settings) {
+	if attemptsDiscovery(logger, runtime.GOOS, params, settings) {
 		return runSessionProxy(ctx, logger, params, settings, binary)
 	}
 
