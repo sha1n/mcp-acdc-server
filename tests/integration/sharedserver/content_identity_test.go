@@ -14,6 +14,7 @@ import (
 	"github.com/sha1n/mcp-acdc-server/internal/content"
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver"
 	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
+	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit/slogtext"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -156,8 +157,9 @@ func TestSessionProxy_StartupFixedContentEditGivesLaterLaunchesANewSharedServer(
 }
 
 func TestSharedServer_IdentityMismatchIsLoggedAndExitsWithoutBinding(t *testing.T) {
+	const credential = "mismatch-test-secret-key"
 	h := testkit.NewSharedServerHarness(t)
-	args := testkit.SharedLaunchArgs(newStartupFixedContentDir(t))
+	args := testkit.SharedLaunchArgs(newStartupFixedContentDir(t), "--auth-type", "apikey", "--auth-api-keys", credential)
 	staleID := h.Identity(args)
 	editManifest(t, args[1])
 	require.NotEqual(t, staleID, h.Identity(args))
@@ -175,9 +177,13 @@ func TestSharedServer_IdentityMismatchIsLoggedAndExitsWithoutBinding(t *testing.
 
 	logged, err := os.ReadFile(filepath.Join(h.LogDir, staleID+".log"))
 	require.NoError(t, err)
-	assert.Contains(t, string(logged), "level=ERROR")
-	assert.Contains(t, string(logged), "Identity self-check failed")
-	assert.Contains(t, string(logged), h.Identity(args), "the log must name the identity of the content on disk")
+	assert.NotContains(t, string(logged), credential, "the log must not disclose credentials")
+	records, err := slogtext.Parse(logged)
+	require.NoError(t, err)
+	failures := slogtext.Filter(records, slogtext.Record{"level": "ERROR", "msg": "Identity self-check failed"})
+	require.Len(t, failures, 1, "the self-check failure must be logged exactly once")
+	assert.Equal(t, staleID, failures[0]["identity"], "the entry must name the expected identity")
+	assert.Equal(t, h.Identity(args), failures[0]["content_identity"], "the entry must name the identity of the content on disk")
 }
 
 func TestSessionProxy_LaunchesDifferingInSearchInMemoryDoNotShare(t *testing.T) {

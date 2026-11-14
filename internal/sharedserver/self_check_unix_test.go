@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit/slogtext"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,11 +22,15 @@ func currentIsTestIdentity() (string, error) {
 	return testIdentity, nil
 }
 
-func readTestLog(t *testing.T, logDir string) string {
+func requireOneSelfCheckFailure(t *testing.T, logDir string) slogtext.Record {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(logDir, testIdentity+".log"))
 	require.NoError(t, err)
-	return string(data)
+	records, err := slogtext.Parse(data)
+	require.NoError(t, err)
+	failures := slogtext.Filter(records, slogtext.Record{"level": "ERROR", "msg": "Identity self-check failed"})
+	require.Len(t, failures, 1, "the self-check failure must be logged exactly once")
+	return failures[0]
 }
 
 func TestRun_RejectsAMissingCurrentIdentityBeforeCreatingAnything(t *testing.T) {
@@ -60,10 +65,9 @@ func TestRun_IdentityMismatchIsLoggedAndExitsBeforeBind(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(dir, testIdentity+".sock"), "a mismatched server must not bind")
 	assert.False(t, *built)
 	assertLockReleased(t, dir)
-	logged := readTestLog(t, logDir)
-	assert.Contains(t, logged, "level=ERROR")
-	assert.Contains(t, logged, "Identity self-check failed")
-	assert.Contains(t, logged, otherTestIdentity, "the log must name the identity of the content on disk")
+	failure := requireOneSelfCheckFailure(t, logDir)
+	assert.Equal(t, testIdentity, failure["identity"], "the entry must name the expected identity")
+	assert.Equal(t, otherTestIdentity, failure["content_identity"], "the entry must name the identity of the content on disk")
 }
 
 func TestRun_UncomputableIdentityIsLoggedAndExitsBeforeBind(t *testing.T) {
@@ -86,10 +90,9 @@ func TestRun_UncomputableIdentityIsLoggedAndExitsBeforeBind(t *testing.T) {
 	assert.NoFileExists(t, filepath.Join(dir, testIdentity+".sock"), "a server that cannot check its identity must not bind")
 	assert.False(t, *built)
 	assertLockReleased(t, dir)
-	logged := readTestLog(t, logDir)
-	assert.Contains(t, logged, "level=ERROR")
-	assert.Contains(t, logged, "Identity self-check failed")
-	assert.Contains(t, logged, errCompute.Error())
+	failure := requireOneSelfCheckFailure(t, logDir)
+	assert.Equal(t, testIdentity, failure["identity"], "the entry must name the expected identity")
+	assert.Equal(t, errCompute.Error(), failure["error"], "the entry must name the cause")
 }
 
 func TestRun_SelfCheckRunsWithTheLockHeldAndTheLogOpenBeforeBind(t *testing.T) {
