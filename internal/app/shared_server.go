@@ -8,6 +8,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/endpoint"
 	"github.com/spf13/pflag"
 )
 
@@ -37,7 +38,7 @@ func sharedServerIdentity(flags *pflag.FlagSet) (identity string, supplied bool)
 }
 
 func runSharedServer(ctx context.Context, params RunParams, settings *config.Settings, identity, version string) error {
-	if !sharedserver.ValidIdentity(identity) {
+	if !endpoint.ValidIdentity(identity) {
 		return fmt.Errorf("invalid shared server identity %q", identity)
 	}
 	if params.EndpointDir == nil {
