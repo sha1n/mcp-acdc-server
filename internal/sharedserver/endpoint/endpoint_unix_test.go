@@ -1,6 +1,6 @@
 //go:build unix
 
-package sharedserver
+package endpoint
 
 import (
 	"io/fs"
@@ -17,7 +17,8 @@ import (
 func TestEnsureEndpointDir_CreatesAMissingDirectoryWithMode0700(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "parent", "acdc-mcp")
 
-	require.NoError(t, EnsureEndpointDir(dir))
+	_, err := OpenEndpoint(dir)
+	require.NoError(t, err)
 
 	info, err := os.Stat(dir)
 	require.NoError(t, err)
@@ -29,7 +30,9 @@ func TestEnsureEndpointDir_AcceptsAnExistingPrivateDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "acdc-mcp")
 	require.NoError(t, os.Mkdir(dir, 0o700))
 
-	assert.NoError(t, EnsureEndpointDir(dir))
+	_, err := OpenEndpoint(dir)
+
+	assert.NoError(t, err)
 }
 
 func TestEnsureEndpointDir_RejectsAnExistingDirectoryWithMode0755(t *testing.T) {
@@ -37,7 +40,8 @@ func TestEnsureEndpointDir_RejectsAnExistingDirectoryWithMode0755(t *testing.T) 
 	require.NoError(t, os.Mkdir(dir, 0o700))
 	require.NoError(t, os.Chmod(dir, 0o755))
 
-	assert.Error(t, EnsureEndpointDir(dir))
+	_, err := OpenEndpoint(dir)
+	assert.Error(t, err)
 
 	info, err := os.Stat(dir)
 	require.NoError(t, err)
@@ -48,7 +52,9 @@ func TestEnsureEndpointDir_RejectsANonDirectory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "acdc-mcp")
 	require.NoError(t, os.WriteFile(path, nil, 0o600))
 
-	assert.Error(t, EnsureEndpointDir(path))
+	_, err := OpenEndpoint(path)
+
+	assert.Error(t, err)
 }
 
 type fakeDirInfo struct {

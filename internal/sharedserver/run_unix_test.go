@@ -16,6 +16,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/endpoint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,6 +29,22 @@ func shortTempDir(t *testing.T) string {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	return dir
+}
+
+func lockFileIn(dir string) string {
+	return filepath.Join(dir, testIdentity+".lock")
+}
+
+func bindTestEndpoint(t *testing.T) (*net.UnixListener, string) {
+	t.Helper()
+	ep, err := endpoint.OpenEndpoint(filepath.Join(shortTempDir(t), "ep"))
+	require.NoError(t, err)
+	socketPath, err := ep.SocketPath(testIdentity)
+	require.NoError(t, err)
+	listener, err := bind(ep, testIdentity)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	return listener, socketPath
 }
 
 func buildSpy(err error) (BuildFunc, *bool) {
@@ -43,7 +60,7 @@ func buildSpy(err error) (BuildFunc, *bool) {
 
 func assertLockReleased(t *testing.T, dir string) {
 	t.Helper()
-	lock := flock.New(LockPath(dir, testIdentity))
+	lock := flock.New(lockFileIn(dir))
 	locked, err := lock.TryLock()
 	require.NoError(t, err)
 	assert.True(t, locked, "the lock must be released when Run returns")
@@ -93,7 +110,7 @@ func TestRun_EndpointDirCheckFailureStopsBeforeTheLock(t *testing.T) {
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), strings.ReplaceAll(tt.wantErr, "{dir}", dir))
-			assert.NoFileExists(t, LockPath(dir, testIdentity))
+			assert.NoFileExists(t, lockFileIn(dir))
 			assert.False(t, *built)
 		})
 	}
@@ -105,14 +122,14 @@ func TestRun_RejectsAnOverLongSocketPathBeforeTheLock(t *testing.T) {
 
 	err := Run(context.Background(), Config{Identity: testIdentity, EndpointDir: dir, Build: build})
 
-	require.ErrorIs(t, err, ErrSocketPathTooLong)
-	assert.NoFileExists(t, LockPath(dir, testIdentity), "the lock must not be taken for an unusable socket path")
+	require.ErrorIs(t, err, endpoint.ErrSocketPathTooLong)
+	assert.NoFileExists(t, lockFileIn(dir), "the lock must not be taken for an unusable socket path")
 	assert.False(t, *built)
 }
 
 func TestRun_LockIOErrorIsReportedAsLockNotAcquired(t *testing.T) {
 	dir := shortTempDir(t)
-	require.NoError(t, os.Symlink(filepath.Join(dir, "missing", "lock"), LockPath(dir, testIdentity)))
+	require.NoError(t, os.Symlink(filepath.Join(dir, "missing", "lock"), lockFileIn(dir)))
 	build, built := buildSpy(nil)
 
 	err := Run(context.Background(), Config{Identity: testIdentity, EndpointDir: dir, Build: build})
@@ -157,9 +174,7 @@ func TestRun_BuildFailureReleasesTheLockAndClosesTheSocket(t *testing.T) {
 }
 
 func TestAttach_ReadyLineWriteFailureClosesTheConnectionWithoutServing(t *testing.T) {
-	listener, err := bind(filepath.Join(shortTempDir(t), "s.sock"))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = listener.Close() })
+	listener, _ := bindTestEndpoint(t)
 
 	client, err := net.Dial("unix", listener.Addr().String())
 	require.NoError(t, err)

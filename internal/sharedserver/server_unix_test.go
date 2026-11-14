@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -20,14 +19,7 @@ import (
 const serveTestDeadline = 10 * time.Second
 
 func TestServe_AcceptFailureClosesListenerAndIdleSessions(t *testing.T) {
-	dir, err := os.MkdirTemp("/tmp", "acdc-serve-")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	socketPath := filepath.Join(dir, "s.sock")
-
-	listener, err := bind(socketPath)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = listener.Close() })
+	listener, socketPath := bindTestEndpoint(t)
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil)
 	done := make(chan error, 1)
@@ -64,13 +56,7 @@ func TestServe_AcceptFailureClosesListenerAndIdleSessions(t *testing.T) {
 }
 
 func TestServe_ContextCancellationReturnsNil(t *testing.T) {
-	dir, err := os.MkdirTemp("/tmp", "acdc-serve-")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-
-	listener, err := bind(filepath.Join(dir, "s.sock"))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = listener.Close() })
+	listener, _ := bindTestEndpoint(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

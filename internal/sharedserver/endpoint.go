@@ -1,7 +1,6 @@
 package sharedserver
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,9 +9,6 @@ import (
 )
 
 const endpointDirName = "acdc-mcp"
-
-// ErrSocketPathTooLong reports a socket path the platform cannot bind.
-var ErrSocketPathTooLong = errors.New("socket path exceeds the platform limit")
 
 type endpointPlatform struct {
 	goos         string
@@ -50,51 +46,4 @@ func resolveEndpointDir(p endpointPlatform) (string, error) {
 	default:
 		return "", fmt.Errorf("shared server is not supported on %s", p.goos)
 	}
-}
-
-// SocketPath returns the socket path of the shared server for identity,
-// rejecting a path longer than the platform allows.
-func SocketPath(dir, identity string) (string, error) {
-	path := filepath.Join(dir, identity+".sock")
-	if err := checkSocketPathLength(runtime.GOOS, path); err != nil {
-		return "", err
-	}
-	return path, nil
-}
-
-// LockPath returns the lock file path of the shared server for identity.
-func LockPath(dir, identity string) string {
-	return filepath.Join(dir, identity+".lock")
-}
-
-func checkSocketPathLength(goos, path string) error {
-	limit := socketPathLimit(goos)
-	if len(path) > limit {
-		return fmt.Errorf("%w: %d bytes, limit %d: %s", ErrSocketPathTooLong, len(path), limit, path)
-	}
-	return nil
-}
-
-// socketPathLimit is the longest path Go binds: sun_path is 104 bytes on
-// darwin and 108 on linux, one of which Go reserves.
-func socketPathLimit(goos string) int {
-	if goos == "darwin" {
-		return 103
-	}
-	return 107
-}
-
-// ValidIdentity reports whether s is a server identity: 32 lowercase hex
-// characters. Validating it keeps the identity from escaping the endpoint
-// directory when it is used in a file name.
-func ValidIdentity(s string) bool {
-	if len(s) != 32 {
-		return false
-	}
-	for _, c := range s {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/endpoint"
 )
 
 // Run serves the shared server for cfg.Identity until ctx is cancelled.
@@ -23,24 +24,26 @@ import (
 // index is built before bind, so a dialable socket means "one is alive" while
 // the ready line means "it is ready".
 func Run(ctx context.Context, cfg Config) error {
-	if !ValidIdentity(cfg.Identity) {
+	if !endpoint.ValidIdentity(cfg.Identity) {
 		return fmt.Errorf("invalid shared server identity %q", cfg.Identity)
 	}
-	if err := EnsureEndpointDir(cfg.EndpointDir); err != nil {
-		return err
-	}
-	socketPath, err := SocketPath(cfg.EndpointDir, cfg.Identity)
+	ep, err := endpoint.OpenEndpoint(cfg.EndpointDir)
 	if err != nil {
 		return err
 	}
+	// Checked here although bind derives the path again: an unusable socket
+	// path must be rejected before the lock is taken.
+	if _, err := ep.SocketPath(cfg.Identity); err != nil {
+		return err
+	}
 
-	lock, err := acquireLock(LockPath(cfg.EndpointDir, cfg.Identity))
+	lock, err := acquireLock(ep, cfg.Identity)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = lock.Unlock() }()
 
-	listener, err := bind(socketPath)
+	listener, err := bind(ep, cfg.Identity)
 	if err != nil {
 		return err
 	}
@@ -57,7 +60,11 @@ func Run(ctx context.Context, cfg Config) error {
 	return serve(ctx, listener, server)
 }
 
-func acquireLock(path string) (*flock.Flock, error) {
+func acquireLock(ep endpoint.Endpoint, identity string) (*flock.Flock, error) {
+	path, err := ep.LockPath(identity)
+	if err != nil {
+		return nil, err
+	}
 	lock := flock.New(path)
 	locked, err := lock.TryLock()
 	if err != nil {
@@ -69,7 +76,11 @@ func acquireLock(path string) (*flock.Flock, error) {
 	return lock, nil
 }
 
-func bind(socketPath string) (*net.UnixListener, error) {
+func bind(ep endpoint.Endpoint, identity string) (*net.UnixListener, error) {
+	socketPath, err := ep.SocketPath(identity)
+	if err != nil {
+		return nil, err
+	}
 	if err := os.Remove(socketPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("failed to remove stale socket: %w", err)
 	}
