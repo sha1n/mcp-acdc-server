@@ -61,3 +61,49 @@ func TestRunWithDeps_SharedServerIdentityEnvironmentVariableHasNoEffect(t *testi
 func TestDefaultRunParams_ProvidesEndpointDir(t *testing.T) {
 	assert.NotNil(t, DefaultRunParams().EndpointDir)
 }
+
+func TestRunWithDeps_SuppliedSharedServerIdentityMustBeValid(t *testing.T) {
+	tests := []struct {
+		name     string
+		identity string
+	}{
+		{name: "explicit empty", identity: ""},
+		{name: "too short", identity: "0123456789abcdef"},
+		{name: "uppercase hex", identity: "0123456789ABCDEF0123456789ABCDEF"},
+		{name: "non-hex", identity: "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			endpointDir := t.TempDir()
+			flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+			RegisterFlags(flags)
+			require.NoError(t, flags.Set("content-dir", t.TempDir()))
+			require.NoError(t, flags.Set("transport", "stdio"))
+			require.NoError(t, flags.Parse([]string{"--shared-server-identity=" + tt.identity}))
+
+			created := false
+			stdioUsed := false
+			params := RunParams{
+				LoadSettings:  config.LoadSettingsWithFlags,
+				ValidSettings: config.ValidateSettings,
+				CreateServer: func(context.Context, *config.Settings, string) (Components, error) {
+					created = true
+					return Components{MCP: mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil)}, nil
+				},
+				CustomIOTransport: &mockTransport{connectCalled: &stdioUsed},
+				EndpointDir:       func() (string, error) { return endpointDir, nil },
+			}
+
+			err := RunWithDeps(context.Background(), params, flags, "test")
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "invalid shared server identity")
+			assert.False(t, created, "no server may be built for a malformed identity")
+			assert.False(t, stdioUsed, "an ordinary launch must not start")
+			entries, err := os.ReadDir(endpointDir)
+			require.NoError(t, err)
+			assert.Empty(t, entries, "nothing may be written for a malformed identity")
+		})
+	}
+}
