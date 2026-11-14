@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
-	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit/slogtext"
+	"github.com/sha1n/mcp-acdc-server/internal/testutil/slogtext"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
