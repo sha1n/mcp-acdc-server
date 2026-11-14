@@ -105,6 +105,8 @@ func TestLogSharedServerStartup_OutputIsByteIdentical(t *testing.T) {
 	assert.Equal(t, []string{
 		`level=INFO msg="Starting MCP Acdc shared server" version=1.2.3 pid=` + strconv.Itoa(os.Getpid()),
 		`level=INFO msg="Config: content_dir" value=/content`,
+		`level=INFO msg="Config: uri_scheme" value=""`,
+		`level=INFO msg="Config: cross_ref" value=false`,
 		`level=INFO msg="Config: search.max_results" value=10`,
 		`level=INFO msg="Config: search.in_memory" value=true`,
 		`level=INFO msg="Config: search.keywords_boost" value=3`,
@@ -218,6 +220,8 @@ func TestLogSharedServerStartup_EdgeValueOutputIsByteIdentical(t *testing.T) {
 	zeroDump := []string{
 		startup,
 		`level=INFO msg="Config: content_dir" value=""`,
+		`level=INFO msg="Config: uri_scheme" value=""`,
+		`level=INFO msg="Config: cross_ref" value=false`,
 		`level=INFO msg="Config: search.max_results" value=0`,
 		`level=INFO msg="Config: search.in_memory" value=false`,
 		`level=INFO msg="Config: search.keywords_boost" value=0`,
@@ -230,6 +234,8 @@ func TestLogSharedServerStartup_EdgeValueOutputIsByteIdentical(t *testing.T) {
 	populatedDump := []string{
 		startup,
 		`level=INFO msg="Config: content_dir" value=/content`,
+		`level=INFO msg="Config: uri_scheme" value=""`,
+		`level=INFO msg="Config: cross_ref" value=false`,
 		`level=INFO msg="Config: search.max_results" value=10`,
 		`level=INFO msg="Config: search.in_memory" value=true`,
 		`level=INFO msg="Config: search.keywords_boost" value=3`,

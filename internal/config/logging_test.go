@@ -5,7 +5,6 @@ import (
 	"context"
 	"log/slog"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -332,6 +331,8 @@ func TestSettingsLogValue_IncludesUIGroup(t *testing.T) {
 func dumpTestSettings(transport string, auth AuthSettings, ui UISettings) *Settings {
 	return &Settings{
 		ContentDir: "/content dir",
+		Scheme:     "docs",
+		CrossRef:   true,
 		Transport:  transport,
 		Host:       "0.0.0.0",
 		Port:       8080,
@@ -381,6 +382,8 @@ func TestLogWithLogger_DumpIsByteIdentical(t *testing.T) {
 				AuthSettings{Type: AuthTypeBasic, Basic: BasicAuthSettings{Username: "alice", Password: "secret"}},
 				UISettings{Enabled: true, MaxResults: 20}),
 			expected: `level=INFO msg="Config: content_dir" value="/content dir"
+level=INFO msg="Config: uri_scheme" value=docs
+level=INFO msg="Config: cross_ref" value=true
 level=INFO msg="Config: transport" value=sse
 level=INFO msg="Config: host" value=0.0.0.0
 level=INFO msg="Config: port" value=8080
@@ -400,6 +403,8 @@ level=INFO msg="Config: ui.max_results" value=20
 				AuthSettings{Type: AuthTypeAPIKey, APIKeys: []string{"k1", "k2"}},
 				UISettings{Enabled: true, MaxResults: 20}),
 			expected: `level=INFO msg="Config: content_dir" value="/content dir"
+level=INFO msg="Config: uri_scheme" value=docs
+level=INFO msg="Config: cross_ref" value=true
 level=INFO msg="Config: transport" value=stdio
 level=INFO msg="Config: server_mode" value=shared
 level=INFO msg="Config: shared_server.connect_wait" value=5s
@@ -417,6 +422,8 @@ level=WARN msg="Web UI requires the sse transport; ui.enabled is ignored"
 				AuthSettings{Type: AuthTypeNone},
 				UISettings{Enabled: false, MaxResults: 20}),
 			expected: `level=INFO msg="Config: content_dir" value="/content dir"
+level=INFO msg="Config: uri_scheme" value=docs
+level=INFO msg="Config: cross_ref" value=true
 level=INFO msg="Config: transport" value=stdio
 level=INFO msg="Config: server_mode" value=shared
 level=INFO msg="Config: shared_server.connect_wait" value=5s
@@ -454,6 +461,8 @@ func TestLogIdentitySettings_DumpsOnlyIdentityRelevantLines(t *testing.T) {
 			got := dumpTestOutput(func(logger *slog.Logger) { LogIdentitySettings(settings, logger) })
 
 			assert.Equal(t, `level=INFO msg="Config: content_dir" value="/content dir"
+level=INFO msg="Config: uri_scheme" value=docs
+level=INFO msg="Config: cross_ref" value=true
 `+dumpTestIdentityLines, got)
 		})
 	}
@@ -489,6 +498,8 @@ func TestLogWithLogger_EdgeValueDumpIsByteIdentical(t *testing.T) {
 			name:     "sse with web UI disabled, zero values and no api keys",
 			settings: &Settings{Transport: "sse", Auth: AuthSettings{Type: AuthTypeAPIKey}},
 			expected: `level=INFO msg="Config: content_dir" value=""
+level=INFO msg="Config: uri_scheme" value=""
+level=INFO msg="Config: cross_ref" value=false
 level=INFO msg="Config: transport" value=sse
 level=INFO msg="Config: host" value=""
 level=INFO msg="Config: port" value=0
@@ -501,6 +512,8 @@ level=INFO msg="Config: ui.enabled" value=false
 			name:     "stdio with ignored web UI, zero values and empty basic credentials",
 			settings: &Settings{Transport: "stdio", Auth: AuthSettings{Type: AuthTypeBasic}, UI: UISettings{Enabled: true}},
 			expected: `level=INFO msg="Config: content_dir" value=""
+level=INFO msg="Config: uri_scheme" value=""
+level=INFO msg="Config: cross_ref" value=false
 level=INFO msg="Config: transport" value=stdio
 ` + dumpTestZeroSessionLines + `level=INFO msg="Config: auth.type" value=basic
 level=INFO msg="Config: auth.basic.username" value=""
@@ -516,6 +529,8 @@ level=WARN msg="Web UI requires the sse transport; ui.enabled is ignored"
 				AuthSettings{Type: AuthTypeNone},
 				UISettings{Enabled: false, MaxResults: 20}),
 			expected: `level=INFO msg="Config: content_dir" value="/content dir"
+level=INFO msg="Config: uri_scheme" value=docs
+level=INFO msg="Config: cross_ref" value=true
 level=INFO msg="Config: transport" value=sse
 level=INFO msg="Config: host" value=0.0.0.0
 level=INFO msg="Config: port" value=8080
@@ -537,11 +552,6 @@ level=INFO msg="Config: ui.enabled" value=false
 	}
 }
 
-// knownUndumpedSettings lists the settings leaves the dump does not report
-// yet. Adding their lines changes the dump output and is tracked by #201;
-// no other leaf may be missing from the dump.
-var knownUndumpedSettings = []string{"uri_scheme", "cross_ref"}
-
 func TestLogWithLogger_DumpsEverySettingsLeaf(t *testing.T) {
 	everyConditionalLine := []*Settings{
 		dumpTestSettings("sse",
@@ -562,17 +572,8 @@ func TestLogWithLogger_DumpsEverySettingsLeaf(t *testing.T) {
 		}
 	}
 
-	leaves := dumpTestSettingsLeaves(reflect.TypeFor[Settings](), "")
-
-	for _, leaf := range leaves {
-		if slices.Contains(knownUndumpedSettings, leaf) {
-			assert.False(t, dumped[leaf], "%s is dumped; remove it from knownUndumpedSettings", leaf)
-			continue
-		}
+	for _, leaf := range dumpTestSettingsLeaves(reflect.TypeFor[Settings](), "") {
 		assert.True(t, dumped[leaf], "settings leaf %s has no dump line", leaf)
-	}
-	for _, leaf := range knownUndumpedSettings {
-		assert.Contains(t, leaves, leaf, "knownUndumpedSettings names %s, which is no settings leaf", leaf)
 	}
 }
 
