@@ -59,6 +59,9 @@ func runProxy(t *testing.T, ctx context.Context, cfg sessionproxy.Config) <-chan
 		cfg.Identity = func() (string, error) { return proxyTestIdentity, nil }
 	}
 	cfg.ConnectWait = proxyTestDeadline
+	if cfg.Fallback == nil {
+		cfg.Fallback = func(context.Context, io.ReadCloser) error { return nil }
+	}
 	done := make(chan error, 1)
 	go func() { done <- sessionproxy.Run(ctx, cfg) }()
 	return done
@@ -82,7 +85,7 @@ func TestRun_StopsConsumingHostInputOnceItReturns(t *testing.T) {
 	}{
 		{name: "discovery failure", run: func(t *testing.T, stdin *scriptedStdin) error {
 			return awaitRunResult(t, runProxy(t, context.Background(), sessionproxy.Config{
-				EndpointDir: proxyTestEndpointDir(t),
+				EndpointDir: fixedEndpointDir(proxyTestEndpointDir(t)),
 				Stdin:       stdin,
 				Spawn:       func(string) error { return nil },
 				Identity: func() (string, error) {
@@ -94,7 +97,7 @@ func TestRun_StopsConsumingHostInputOnceItReturns(t *testing.T) {
 		{name: "cancellation", run: func(t *testing.T, stdin *scriptedStdin) error {
 			ctx, cancel := context.WithCancel(context.Background())
 			done := runProxy(t, ctx, sessionproxy.Config{
-				EndpointDir: proxyTestEndpointDir(t),
+				EndpointDir: fixedEndpointDir(proxyTestEndpointDir(t)),
 				Stdin:       stdin,
 				Spawn:       func(string) error { return nil },
 			})
@@ -105,7 +108,7 @@ func TestRun_StopsConsumingHostInputOnceItReturns(t *testing.T) {
 		{name: "connection lost after attach", run: func(t *testing.T, stdin *scriptedStdin) error {
 			dir := proxyTestEndpointDir(t)
 			server := newFakeSharedServer(t, dir)
-			done := runProxy(t, context.Background(), sessionproxy.Config{EndpointDir: dir, Stdin: stdin, Spawn: server.spawn})
+			done := runProxy(t, context.Background(), sessionproxy.Config{EndpointDir: fixedEndpointDir(dir), Stdin: stdin, Spawn: server.spawn})
 			stdin.awaitRead(t)
 			conn := server.nextConn()
 			conn.sendReady()

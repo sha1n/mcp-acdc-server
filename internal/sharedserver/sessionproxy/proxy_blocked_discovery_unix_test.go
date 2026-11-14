@@ -55,7 +55,7 @@ func TestRun_EndsPromptlyWhileTheIdentityIsBeingComputed(t *testing.T) {
 			server := newFakeSharedServer(t, dir)
 			identity := newBlockedCall(t)
 			host := startProxy(t, sessionproxy.Config{
-				EndpointDir: dir,
+				EndpointDir: fixedEndpointDir(dir),
 				Spawn:       server.spawn,
 				Identity: func() (string, error) {
 					identity.block()
@@ -79,7 +79,7 @@ func TestRun_EndsPromptlyWhileASpawnIsInProgress(t *testing.T) {
 		t.Run(way.name, func(t *testing.T) {
 			spawn := newBlockedCall(t)
 			host := startProxy(t, sessionproxy.Config{
-				EndpointDir: proxyTestEndpointDir(t),
+				EndpointDir: fixedEndpointDir(proxyTestEndpointDir(t)),
 				Spawn: func(string) error {
 					spawn.block()
 					return errors.New("late spawn result")

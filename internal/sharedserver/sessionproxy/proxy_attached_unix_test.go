@@ -21,7 +21,7 @@ func attachedProxy(t *testing.T) (*proxyHost, *fakeSharedConn) {
 	t.Helper()
 	dir := proxyTestEndpointDir(t)
 	server := newFakeSharedServer(t, dir)
-	host := startProxy(t, sessionproxy.Config{EndpointDir: dir, Spawn: server.spawn})
+	host := startProxy(t, sessionproxy.Config{EndpointDir: fixedEndpointDir(dir), Spawn: server.spawn})
 	conn := server.nextConn()
 	conn.sendReady()
 	host.write("{\"id\":1}\n")
@@ -86,11 +86,12 @@ func TestRun_FailsWhenTheHostOutputBreaks(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- sessionproxy.Run(context.Background(), sessionproxy.Config{
-			EndpointDir: dir,
+			EndpointDir: fixedEndpointDir(dir),
 			Identity:    func() (string, error) { return proxyTestIdentity, nil },
 			ConnectWait: proxyTestDeadline,
 			Spawn:       server.spawn,
 			Logger:      slog.New(slog.DiscardHandler),
+			Fallback:    unexpectedFallback(t),
 			Stdin:       stdin,
 			Stdout:      brokenHostOutput{err: outputErr},
 		})

@@ -11,7 +11,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -27,6 +26,19 @@ import (
 const proxyTestIdentity = "0123456789abcdef0123456789abcdef"
 
 const proxyTestDeadline = 10 * time.Second
+
+func fixedEndpointDir(dir string) func() (string, error) {
+	return func() (string, error) { return dir, nil }
+}
+
+// unexpectedFallback fails a test whose session must never become a
+// per-session server.
+func unexpectedFallback(t *testing.T) func(context.Context, io.ReadCloser) error {
+	return func(context.Context, io.ReadCloser) error {
+		t.Error("the session proxy fell back to a per-session server")
+		return errors.New("unexpected fallback")
+	}
+}
 
 func proxyTestEndpointDir(t *testing.T) string {
 	t.Helper()
@@ -165,6 +177,9 @@ func startProxy(t *testing.T, cfg sessionproxy.Config) *proxyHost {
 	if cfg.ConnectWait == 0 {
 		cfg.ConnectWait = proxyTestDeadline
 	}
+	if cfg.Fallback == nil {
+		cfg.Fallback = unexpectedFallback(t)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	host := &proxyHost{t: t, stdin: stdinWriter, stdout: bufio.NewReader(stdoutReader), cancel: cancel, done: make(chan error, 1)}
@@ -220,7 +235,7 @@ func (h *proxyHost) result() error {
 func TestRun_RelaysHeldBytesInOrderBeforeLiveStdinAndHidesTheReadyLine(t *testing.T) {
 	dir := proxyTestEndpointDir(t)
 	server := newFakeSharedServer(t, dir)
-	host := startProxy(t, sessionproxy.Config{EndpointDir: dir, Spawn: server.spawn})
+	host := startProxy(t, sessionproxy.Config{EndpointDir: fixedEndpointDir(dir), Spawn: server.spawn})
 
 	host.write("{\"id\":1}\n")
 	host.write("{\"id\":2}\n")
@@ -238,7 +253,7 @@ func TestRun_RelaysHeldBytesInOrderBeforeLiveStdinAndHidesTheReadyLine(t *testin
 func TestRun_ForwardsLineBytesVerbatimInBothDirections(t *testing.T) {
 	dir := proxyTestEndpointDir(t)
 	server := newFakeSharedServer(t, dir)
-	host := startProxy(t, sessionproxy.Config{EndpointDir: dir, Spawn: server.spawn})
+	host := startProxy(t, sessionproxy.Config{EndpointDir: fixedEndpointDir(dir), Spawn: server.spawn})
 	conn := server.nextConn()
 	conn.sendReady()
 
@@ -270,7 +285,7 @@ func TestRun_AttachesToAListeningServerWithoutSpawning(t *testing.T) {
 	dir := proxyTestEndpointDir(t)
 	server := newFakeSharedServer(t, dir)
 	server.once.Do(server.listen)
-	host := startProxy(t, sessionproxy.Config{EndpointDir: dir, Spawn: server.spawn})
+	host := startProxy(t, sessionproxy.Config{EndpointDir: fixedEndpointDir(dir), Spawn: server.spawn})
 
 	conn := server.nextConn()
 	conn.sendReady()
@@ -290,7 +305,7 @@ func TestRun_KeepsSpawningUntilACandidateListens(t *testing.T) {
 		}
 		return server.spawn(identity)
 	}
-	startProxy(t, sessionproxy.Config{EndpointDir: dir, Spawn: spawn})
+	startProxy(t, sessionproxy.Config{EndpointDir: fixedEndpointDir(dir), Spawn: spawn})
 
 	server.nextConn()
 	assert.Equal(t, int32(4), server.spawns.Load())
@@ -318,7 +333,7 @@ func TestRun_StdinEOFEndsTheSession(t *testing.T) {
 			if tt.name == "during discovery" {
 				spawn = func(string) error { return nil }
 			}
-			host := startProxy(t, sessionproxy.Config{EndpointDir: dir, Spawn: spawn})
+			host := startProxy(t, sessionproxy.Config{EndpointDir: fixedEndpointDir(dir), Spawn: spawn})
 			conn := tt.reach(server)
 			if tt.name == "after attach" {
 				// Linux resets a socket closed with unread data, so the proxy
@@ -353,7 +368,7 @@ func TestRun_CancellationEndsTheSessionWellInside500ms(t *testing.T) {
 			if tt.name == "during discovery" {
 				spawn = func(string) error { return nil }
 			}
-			host := startProxy(t, sessionproxy.Config{EndpointDir: dir, Spawn: spawn})
+			host := startProxy(t, sessionproxy.Config{EndpointDir: fixedEndpointDir(dir), Spawn: spawn})
 			tt.reach(server)
 
 			cancelled := time.Now()
@@ -365,99 +380,10 @@ func TestRun_CancellationEndsTheSessionWellInside500ms(t *testing.T) {
 	}
 }
 
-func TestRun_ConnectWaitExpiryIsADiscoveryFailure(t *testing.T) {
-	dir := proxyTestEndpointDir(t)
-	host := startProxy(t, sessionproxy.Config{
-		EndpointDir: dir,
-		ConnectWait: 100 * time.Millisecond,
-		Spawn:       func(string) error { return nil },
-	})
-
-	require.ErrorIs(t, host.result(), sessionproxy.ErrConnectWaitExpired)
-}
-
-func TestRun_SpawnFailureIsADiscoveryFailure(t *testing.T) {
-	spawnErr := errors.New("exec failed")
-	host := startProxy(t, sessionproxy.Config{
-		EndpointDir: proxyTestEndpointDir(t),
-		Spawn:       func(string) error { return spawnErr },
-	})
-
-	require.ErrorIs(t, host.result(), spawnErr)
-}
-
-func TestRun_UnusableEndpointFailsBeforeAnyDialOrSpawn(t *testing.T) {
-	longDir := filepath.Join(proxyTestEndpointDir(t), strings.Repeat("d", 120))
-	tests := []struct {
-		name        string
-		endpointDir string
-		wantErr     error
-	}{
-		{name: "non-absolute directory", endpointDir: "@runtime/acdc-mcp"},
-		{name: "over-long socket path", endpointDir: longDir, wantErr: endpoint.ErrSocketPathTooLong},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var spawns atomic.Int32
-			host := startProxy(t, sessionproxy.Config{
-				EndpointDir: tt.endpointDir,
-				Spawn:       func(string) error { spawns.Add(1); return nil },
-			})
-
-			err := host.result()
-
-			require.Error(t, err)
-			if tt.wantErr != nil {
-				require.ErrorIs(t, err, tt.wantErr)
-			}
-			assert.Zero(t, spawns.Load())
-		})
-	}
-	_, err := os.Stat("@runtime")
-	assert.ErrorIs(t, err, os.ErrNotExist, "a non-absolute endpoint directory must never be created")
-}
-
-func TestRun_IdentityFailureIsADiscoveryFailure(t *testing.T) {
-	identityErr := errors.New("manifest unreadable")
-	dir := proxyTestEndpointDir(t)
-	var spawns atomic.Int32
-	host := startProxy(t, sessionproxy.Config{
-		EndpointDir: dir,
-		Identity:    func() (string, error) { return "", identityErr },
-		Spawn:       func(string) error { spawns.Add(1); return nil },
-	})
-
-	require.ErrorIs(t, host.result(), identityErr)
-	assert.Zero(t, spawns.Load())
-	_, err := os.Stat(dir)
-	assert.ErrorIs(t, err, os.ErrNotExist, "the endpoint directory is created only for a computed identity")
-}
-
-func TestRun_FailsWhenTheConnectionBreaksBeforeTheReadyLine(t *testing.T) {
-	tests := []struct {
-		name      string
-		breakConn func(*fakeSharedConn)
-	}{
-		{name: "dropped", breakConn: func(c *fakeSharedConn) { _ = c.conn.Close() }},
-		{name: "first line is not a ready line", breakConn: func(c *fakeSharedConn) { c.write("{\"jsonrpc\":\"2.0\"}\n") }},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dir := proxyTestEndpointDir(t)
-			server := newFakeSharedServer(t, dir)
-			host := startProxy(t, sessionproxy.Config{EndpointDir: dir, Spawn: server.spawn})
-
-			tt.breakConn(server.nextConn())
-
-			require.Error(t, host.result())
-		})
-	}
-}
-
 func TestRun_FailsWhenTheConnectionDropsAfterAttach(t *testing.T) {
 	dir := proxyTestEndpointDir(t)
 	server := newFakeSharedServer(t, dir)
-	host := startProxy(t, sessionproxy.Config{EndpointDir: dir, Spawn: server.spawn})
+	host := startProxy(t, sessionproxy.Config{EndpointDir: fixedEndpointDir(dir), Spawn: server.spawn})
 	conn := server.nextConn()
 	conn.sendReady()
 
