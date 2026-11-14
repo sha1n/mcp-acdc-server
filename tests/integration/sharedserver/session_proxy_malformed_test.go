@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,29 +17,38 @@ import (
 
 func TestSessionProxy_IncompleteLineAtStdinEOFEndsTheSessionWithoutOutputAsAPerSessionServer(t *testing.T) {
 	const incomplete = `{"jsonrpc":"2.0","id":1,`
-	h := testkit.NewSharedServerHarness(t)
 	contentDir := newSessionProxyContentDir(t)
+	proxyArgs := testkit.SharedLaunchArgs(contentDir)
 	sessionArgs := testkit.SharedLaunchArgs(contentDir, "--server-mode", "session")
+	// An answered initialize proves the session is attached before the
+	// incomplete line arrives.
+	attach := func(t *testing.T, l *testkit.LaunchUnderTest, name string) *testkit.LaunchUnderTest {
+		l.WriteLine(rawInitializeRequest)
+		assert.Nil(t, decodeRawResponse(t, l.ReadLine()).Error, name)
+		return l
+	}
+	var proxy *testkit.LaunchUnderTest
+	runWinningColdStart(t, func(t *testing.T, h *testkit.SharedServerHarness) {
+		proxy = attach(t, h.Launch(proxyArgs...), "proxy")
+	})
+	reference := testkit.NewSharedServerHarness(t)
+	perSession := attach(t, testkit.StartLaunch(t, reference.SessionProxyParams(sessionArgs), reference.Binary, sessionArgs...), "per-session")
 	launches := map[string]struct {
 		launch     *testkit.LaunchUnderTest
 		assertExit func(t *testing.T, err error)
 	}{
 		"proxy": {
-			launch:     h.Launch(testkit.SharedLaunchArgs(contentDir)...),
+			launch:     proxy,
 			assertExit: func(t *testing.T, err error) { assert.NoError(t, err, "the session proxy ends normally at stdin EOF") },
 		},
 		"per-session": {
-			launch:     testkit.StartLaunch(t, h.SessionProxyParams(sessionArgs), h.Binary, sessionArgs...),
+			launch:     perSession,
 			assertExit: func(t *testing.T, err error) { assert.ErrorIs(t, err, io.ErrUnexpectedEOF) },
 		},
 	}
 
 	for name, launch := range launches {
 		l := launch.launch
-		// An answered initialize proves the session is attached before the
-		// incomplete line arrives.
-		l.WriteLine(rawInitializeRequest)
-		assert.Nil(t, decodeRawResponse(t, l.ReadLine()).Error, name)
 		l.WriteLine(incomplete)
 		l.CloseStdin()
 
@@ -49,17 +59,20 @@ func TestSessionProxy_IncompleteLineAtStdinEOFEndsTheSessionWithoutOutputAsAPerS
 
 func TestSessionProxy_InvalidLineEndsOnlyItsSessionAndIsLoggedByTheSharedServer(t *testing.T) {
 	const invalid = `{"jsonrpc":"2.0","id":1,}`
-	h := testkit.NewSharedServerHarness(t)
 	contentDir := newSessionProxyContentDir(t)
 	sharedArgs := testkit.SharedLaunchArgs(contentDir)
 	sessionArgs := testkit.SharedLaunchArgs(contentDir, "--server-mode", "session")
 
-	perSession := testkit.StartLaunch(t, h.SessionProxyParams(sessionArgs), h.Binary, sessionArgs...)
+	reference := testkit.NewSharedServerHarness(t)
+	perSession := testkit.StartLaunch(t, reference.SessionProxyParams(sessionArgs), reference.Binary, sessionArgs...)
 	perSession.WriteLine(invalid)
 	perSessionErr := perSession.Wait(testkit.SharedServerDeadline)
 	require.Error(t, perSessionErr)
 
-	first := connectAndListTools(t, h.Launch(sharedArgs...))
+	var first *mcp.ClientSession
+	h := runWinningColdStart(t, func(t *testing.T, h *testkit.SharedServerHarness) {
+		first = connectAndListTools(t, h.Launch(sharedArgs...))
+	})
 	logPath := h.DialSharedServer(h.Identity(sharedArgs)).Ready.Log
 	second := h.Launch(sharedArgs...)
 	second.WriteLine(invalid)

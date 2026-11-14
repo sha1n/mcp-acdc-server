@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -131,7 +130,7 @@ func attachWithoutLingerLoss(t *testing.T, attempt func(h *testkit.SharedServerH
 	for attempts := 1; ; attempts++ {
 		h := testkit.NewSharedServerHarness(t)
 		l := attempt(h)
-		if !lostToTheInitialLinger(t, h, l) {
+		if !lostToTheInitialLinger(t, h, l, deadline) {
 			return h, l
 		}
 		require.True(t, time.Now().Before(deadline), "no attempt attached without lingering out in %d attempts", attempts)
@@ -143,23 +142,12 @@ func attachWithoutLingerLoss(t *testing.T, attempt func(h *testkit.SharedServerH
 // still attached; a lost one had a built candidate linger out after bind
 // before the session proxy reached it (#196), which may show as a fallback
 // or as a second build. Anything else fails the test.
-func lostToTheInitialLinger(t *testing.T, h *testkit.SharedServerHarness, l *testkit.LaunchUnderTest) bool {
+func lostToTheInitialLinger(t *testing.T, h *testkit.SharedServerHarness, l *testkit.LaunchUnderTest, deadline time.Time) bool {
 	t.Helper()
-	builtExits := func() []testkit.SharedServerExit {
-		return slices.DeleteFunc(h.SharedServerExits(), func(e testkit.SharedServerExit) bool { return !e.Built })
-	}
-	if h.Builds() == 1 && len(l.FallbackWarnings()) == 0 && len(builtExits()) == 0 {
+	if h.Builds() == 1 && len(l.FallbackWarnings()) == 0 && len(builtExits(h)) == 0 {
 		return false
 	}
-	// A candidate that closed its listener at linger expiry may not have
-	// recorded its exit yet.
-	h.Eventually(func() bool { return len(builtExits()) > 0 },
-		"an attempt that fell back or built again must have a built candidate that lingered out")
-	for _, exit := range builtExits() {
-		require.NoError(t, exit.Err, "a lost attempt's candidate must end as a normal linger exit")
-		require.GreaterOrEqual(t, exit.ExitedAt.Sub(exit.SpawnedAt), config.MinSharedServerLinger,
-			"a lost attempt's candidate exited before the linger elapsed")
-	}
+	requireLingerExits(t, awaitBuiltExits(t, h, deadline, 1))
 	return true
 }
 

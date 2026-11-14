@@ -5,6 +5,7 @@ package sharedserver
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
 	"github.com/stretchr/testify/require"
 )
+
+const lossPollInterval = 10 * time.Millisecond
 
 const (
 	rawInitializeRequest    = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"raw-host","version":"1.0.0"}}}`
@@ -57,37 +60,66 @@ type coldStartAttempt func(t *testing.T, h *testkit.SharedServerHarness)
 // attempt must have served every session through a shared server.
 func runWinningColdStart(t *testing.T, attempt coldStartAttempt) *testkit.SharedServerHarness {
 	t.Helper()
+	return runWinningColdStarts(t, 1, attempt)
+}
+
+// runWinningColdStarts generalises runWinningColdStart to attempts that
+// build shared servers by design: every build beyond those must be a
+// candidate that lingered out before any session reached it.
+func runWinningColdStarts(t *testing.T, builds int, attempt coldStartAttempt) *testkit.SharedServerHarness {
+	t.Helper()
 	deadline := time.Now().Add(testkit.SharedServerDeadline)
 	for attempts := 1; ; attempts++ {
 		h := testkit.NewSharedServerHarness(t)
 		attempt(t, h)
-		if h.Builds() <= 1 && h.FallbackWarnings() == 0 {
+		if h.Builds() <= builds && h.FallbackWarnings() == 0 {
 			return h
 		}
-		requireLostToTheInitialLinger(t, h)
-		require.True(t, time.Now().Before(deadline), "no cold start built only once in %d attempts", attempts)
+		requireLostColdStarts(t, h, builds, deadline)
+		require.True(t, time.Now().Before(deadline), "no attempt built only %d shared servers in %d attempts", builds, attempts)
 	}
 }
 
-func requireLostToTheInitialLinger(t *testing.T, h *testkit.SharedServerHarness) {
+func requireLostColdStarts(t *testing.T, h *testkit.SharedServerHarness, builds int, deadline time.Time) {
 	t.Helper()
-	builds := h.Builds()
-	wantLingeredOut := []int{builds - 1}
-	if h.FallbackWarnings() > 0 {
-		require.GreaterOrEqual(t, builds, 2, "a fallback-served attempt is lost only after its first candidate lingered out")
-		// No shared server holds a fallback-served session, so the last
-		// candidate may have lingered out as well.
-		wantLingeredOut = append(wantLingeredOut, builds)
+	extraBuilds := h.Builds() - builds
+	fallbacks := h.FallbackWarnings()
+	// A launch falls back only after two of its candidates lingered out, in
+	// place of the one it builds by design.
+	require.GreaterOrEqual(t, extraBuilds, fallbacks, "a fallback-served launch is lost only after its first candidate lingered out")
+	// No shared server holds a fallback-served session, so the last
+	// candidate of each such launch may have lingered out as well.
+	lingeredOut := requireLingerExits(t, awaitBuiltExits(t, h, deadline, extraBuilds))
+	require.GreaterOrEqual(t, lingeredOut, extraBuilds, "every extra build follows a candidate that lingered out")
+	require.LessOrEqual(t, lingeredOut, extraBuilds+fallbacks, "only lost candidates lingered out")
+}
+
+// awaitBuiltExits returns the exits of the built candidates once at least
+// want of them have been recorded. A candidate records its exit only after
+// it has closed its listener, so a session proxy can move on before the
+// record exists.
+func awaitBuiltExits(t *testing.T, h *testkit.SharedServerHarness, deadline time.Time, want int) []testkit.SharedServerExit {
+	t.Helper()
+	if exits := builtExits(h); len(exits) >= want {
+		return exits
 	}
-	lingeredOut := 0
-	for _, exit := range h.SharedServerExits() {
-		if !exit.Built {
-			continue
-		}
+	require.Eventually(t, func() bool { return len(builtExits(h)) >= want }, time.Until(deadline), lossPollInterval,
+		"a lost attempt must have %d built candidates that lingered out", want)
+	return builtExits(h)
+}
+
+func builtExits(h *testkit.SharedServerHarness) []testkit.SharedServerExit {
+	return slices.DeleteFunc(h.SharedServerExits(), func(e testkit.SharedServerExit) bool { return !e.Built })
+}
+
+// requireLingerExits requires every exit to be a normal linger exit and
+// returns how many there are.
+func requireLingerExits(t *testing.T, exits []testkit.SharedServerExit) int {
+	t.Helper()
+	for _, exit := range exits {
 		require.NoError(t, exit.Err, "a lost attempt's candidate must end as a normal linger exit")
 		require.GreaterOrEqual(t, exit.ExitedAt.Sub(exit.SpawnedAt), config.MinSharedServerLinger,
 			"a lost attempt's candidate exited before the linger elapsed")
-		lingeredOut++
 	}
-	require.Contains(t, wantLingeredOut, lingeredOut, "every extra build follows a candidate that lingered out")
+	return len(exits)
 }

@@ -12,19 +12,22 @@ import (
 )
 
 func TestSessionProxy_AnswersInputHeldBeforeTheReadyLineThroughTheSharedServer(t *testing.T) {
-	h := testkit.NewSharedServerHarness(t)
 	args := testkit.SharedLaunchArgs(newSessionProxyContentDir(t), "--shared-server-connect-wait", "1m")
-	release := h.HoldLock(h.Identity(args))
-	l := h.Launch(args...)
-	h.Eventually(func() bool { return h.Spawns() >= 1 }, "the proxy is discovering")
+	var lines [][]byte
 
-	l.WriteLine(rawInitializeRequest)
-	l.WriteLine(rawInitializedNotice)
-	l.WriteLine(rawToolsListRequestID2)
-	release()
-	l.WriteLine(rawToolsListRequestID3)
+	h := runWinningColdStart(t, func(t *testing.T, h *testkit.SharedServerHarness) {
+		release := h.HoldLock(h.Identity(args))
+		l := h.Launch(args...)
+		h.Eventually(func() bool { return h.Spawns() >= 1 }, "the proxy is discovering")
 
-	lines := [][]byte{l.ReadLine(), l.ReadLine(), l.ReadLine()}
+		l.WriteLine(rawInitializeRequest)
+		l.WriteLine(rawInitializedNotice)
+		l.WriteLine(rawToolsListRequestID2)
+		release()
+		l.WriteLine(rawToolsListRequestID3)
+
+		lines = [][]byte{l.ReadLine(), l.ReadLine(), l.ReadLine()}
+	})
 
 	for _, line := range lines {
 		_, err := sharedserver.DecodeReadyLine(line)

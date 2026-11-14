@@ -29,12 +29,13 @@ func exchangeSearchSession(s rawLineSession) [][]byte {
 
 func TestSessionProxy_RelaysSharedServerBytesVerbatim(t *testing.T) {
 	args := testkit.SharedLaunchArgs(newSessionProxyContentDir(t))
-	var viaProxy, direct [][]byte
+	var viaProxy [][]byte
 
 	h := runWinningColdStart(t, func(t *testing.T, h *testkit.SharedServerHarness) {
 		viaProxy = exchangeSearchSession(h.Launch(args...))
-		direct = exchangeSearchSession(h.DialSharedServer(h.Identity(args)))
 	})
+	// The proxy session keeps the shared server it attached to running.
+	direct := exchangeSearchSession(h.DialSharedServer(h.Identity(args)))
 
 	require.Len(t, viaProxy, len(direct))
 	for i := range direct {
