@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -94,4 +95,51 @@ func TestRun_BuildFailureDropsAConnectionWaitingForTheReadyLine(t *testing.T) {
 	_, err = os.Lstat(socketPath)
 	assert.False(t, errors.Is(err, fs.ErrNotExist), "a failed build is not a linger shutdown and leaves the socket path")
 	assertLockReleased(t, dir)
+}
+
+func TestRun_AConnectionAcceptedDuringTheBuildRevalidatesAfterItBeforeTheReadyLine(t *testing.T) {
+	dir := shortTempDir(t)
+	socketPath := filepath.Join(dir, testIdentity+".sock")
+	release := make(chan struct{})
+	var buildReturned atomic.Bool
+	build := func(context.Context) (*mcp.Server, func(), error) {
+		<-release
+		buildReturned.Store(true)
+		return mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil), nil, nil
+	}
+	revalidatedAfterBuild := make(chan bool, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Config{
+			Identity: testIdentity, EndpointDir: dir, Build: build, Linger: time.Hour,
+			Revalidate: func(context.Context) { revalidatedAfterBuild <- buildReturned.Load() },
+		})
+	}()
+
+	conn, reader := dialAcceptorTestSocket(t, socketPath)
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(200*time.Millisecond)))
+	_, err := reader.ReadByte()
+	require.ErrorIs(t, err, os.ErrDeadlineExceeded, "nothing may be sent before the build finishes")
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(serveTestDeadline)))
+	close(release)
+
+	line, err := reader.ReadBytes('\n')
+	require.NoError(t, err)
+	ready, err := DecodeReadyLine(line)
+	require.NoError(t, err, "the first line after the build must be the ready line")
+	assert.NotEmpty(t, ready.Session)
+	select {
+	case afterBuild := <-revalidatedAfterBuild:
+		assert.True(t, afterBuild, "revalidation must run only after the build returned")
+	default:
+		t.Fatal("the ready line was sent without revalidating first")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		assert.NoError(t, err)
+	case <-time.After(serveTestDeadline):
+		t.Fatal("Run did not stop")
+	}
 }
