@@ -6,7 +6,9 @@ import (
 	"math"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -80,6 +82,26 @@ type UISettings struct {
 	MaxResults int  `mapstructure:"max_results"`
 }
 
+// ServerMode selects how a stdio launch obtains its server. The set of values
+// is open to extension without a contract change.
+type ServerMode string
+
+const (
+	ServerModeShared  ServerMode = "shared"
+	ServerModeSession ServerMode = "session"
+)
+
+const (
+	DefaultSharedServerConnectWait = 5 * time.Second
+	DefaultSharedServerLinger      = 30 * time.Second
+	MinSharedServerLinger          = time.Second
+)
+
+type SharedServerSettings struct {
+	ConnectWait time.Duration `mapstructure:"connect_wait"`
+	Linger      time.Duration `mapstructure:"linger"`
+}
+
 // Settings application settings
 type Settings struct {
 	ContentDir string         `mapstructure:"content_dir"`
@@ -91,6 +113,9 @@ type Settings struct {
 	Search     SearchSettings `mapstructure:"search"`
 	Auth       AuthSettings   `mapstructure:"auth"`
 	UI         UISettings     `mapstructure:"ui"`
+
+	ServerMode   ServerMode           `mapstructure:"server_mode"`
+	SharedServer SharedServerSettings `mapstructure:"shared_server"`
 }
 
 // LoadSettings loads settings from environment variables and optional .env file
@@ -124,6 +149,9 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	v.SetDefault("auth.type", AuthTypeNone)
 	v.SetDefault("ui.enabled", false)
 	v.SetDefault("ui.max_results", DefaultUIMaxResults)
+	v.SetDefault("server_mode", ServerModeShared)
+	v.SetDefault("shared_server.connect_wait", DefaultSharedServerConnectWait)
+	v.SetDefault("shared_server.linger", DefaultSharedServerLinger)
 
 	// Environment variables
 	v.SetEnvPrefix("ACDC_MCP")
@@ -153,6 +181,10 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	_ = v.BindEnv("ui.enabled", "ACDC_MCP_UI_ENABLED")
 	_ = v.BindEnv("ui.max_results", "ACDC_MCP_UI_MAX_RESULTS")
 
+	_ = v.BindEnv("server_mode", "ACDC_MCP_SERVER_MODE")
+	_ = v.BindEnv("shared_server.connect_wait", "ACDC_MCP_SHARED_SERVER_CONNECT_WAIT")
+	_ = v.BindEnv("shared_server.linger", "ACDC_MCP_SHARED_SERVER_LINGER")
+
 	// Bind CLI flags if provided (highest priority)
 	if flags != nil {
 		_ = v.BindPFlag("content_dir", flags.Lookup("content-dir"))
@@ -175,6 +207,9 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 		_ = v.BindPFlag("auth.api_keys", flags.Lookup("auth-api-keys"))
 		_ = v.BindPFlag("ui.enabled", flags.Lookup("ui-enabled"))
 		_ = v.BindPFlag("ui.max_results", flags.Lookup("ui-max-results"))
+		_ = v.BindPFlag("server_mode", flags.Lookup("server-mode"))
+		_ = v.BindPFlag("shared_server.connect_wait", flags.Lookup("shared-server-connect-wait"))
+		_ = v.BindPFlag("shared_server.linger", flags.Lookup("shared-server-linger"))
 	}
 
 	// Helper to look for .env file
@@ -183,6 +218,9 @@ func LoadSettingsWithFlags(flags *pflag.FlagSet) (*Settings, error) {
 	v.AddConfigPath(".")
 	_ = v.ReadInConfig() // Ignore error if .env doesn't exist
 
+	if err := checkDurationFormat(v, "shared_server.connect_wait", "shared_server.linger"); err != nil {
+		return nil, err
+	}
 	var settings Settings
 	if err := v.Unmarshal(&settings); err != nil {
 		return nil, err
@@ -222,6 +260,9 @@ func ValidateSettings(s *Settings) error {
 	if err := validateUI(s.UI); err != nil {
 		return err
 	}
+	if err := validateServerMode(s.ServerMode, s.SharedServer); err != nil {
+		return err
+	}
 
 	return validateAuth(s.Auth)
 }
@@ -234,6 +275,24 @@ func validateUI(ui UISettings) error {
 	}
 	if ui.MaxResults < 1 || ui.MaxResults > MaxUIResultLimit {
 		return fmt.Errorf("ui.max_results must be between 1 and %d, got: %d", MaxUIResultLimit, ui.MaxResults)
+	}
+
+	return nil
+}
+
+// validateServerMode applies to every launch, including those where the
+// settings have no effect, so a value is never valid in one context only.
+func validateServerMode(mode ServerMode, shared SharedServerSettings) error {
+	switch mode {
+	case ServerModeShared, ServerModeSession:
+	default:
+		return fmt.Errorf("server_mode must be '%s' or '%s', got: %s", ServerModeShared, ServerModeSession, mode)
+	}
+	if shared.ConnectWait <= 0 {
+		return fmt.Errorf("shared_server.connect_wait must be greater than 0, got: %s", shared.ConnectWait)
+	}
+	if shared.Linger < MinSharedServerLinger {
+		return fmt.Errorf("shared_server.linger must be at least %s, got: %s", MinSharedServerLinger, shared.Linger)
 	}
 
 	return nil
@@ -348,4 +407,27 @@ func validateBoosts(s SearchSettings) error {
 		return errors.New("at least one of search.keywords_boost, search.heading_boost, search.title_boost, search.path_boost, or search.content_boost must be positive; all five at zero disables search entirely")
 	}
 	return nil
+}
+
+// checkDurationFormat runs before Unmarshal so a malformed value, notably a
+// bare number, names the expected format instead of surfacing only the
+// decoder's time.ParseDuration error.
+func checkDurationFormat(v *viper.Viper, keys ...string) error {
+	for _, key := range keys {
+		raw := v.GetString(key)
+		if !isGoDuration(raw) {
+			return fmt.Errorf("%s must be a Go duration such as 500ms, 5s or 1m, got: %q", key, raw)
+		}
+	}
+	return nil
+}
+
+// isGoDuration rejects every unitless number, including the 0, +0 and -0 that
+// time.ParseDuration accepts, so a bare number never reaches range validation.
+func isGoDuration(raw string) bool {
+	if _, err := strconv.ParseFloat(raw, 64); err == nil {
+		return false
+	}
+	_, err := time.ParseDuration(raw)
+	return err == nil
 }

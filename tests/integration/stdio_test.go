@@ -13,7 +13,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The server mode settings are inert: stdio and SSE launches serve exactly as
+// they did before the settings existed, with or without them.
+var serverModeFlagVariants = []struct {
+	name  string
+	flags map[string]string
+}{
+	{name: "without server mode flags"},
+	{name: "server mode shared", flags: map[string]string{
+		"server-mode":                "shared",
+		"shared-server-connect-wait": "500ms",
+		"shared-server-linger":       "1s",
+	}},
+	{name: "server mode session", flags: map[string]string{
+		"server-mode":                "session",
+		"shared-server-connect-wait": "10s",
+		"shared-server-linger":       "2m",
+	}},
+}
+
 func TestStdioServer(t *testing.T) {
+	for _, variant := range serverModeFlagVariants {
+		t.Run(variant.name, func(t *testing.T) {
+			testStdioServer(t, variant.flags)
+		})
+	}
+}
+
+func testStdioServer(t *testing.T, serverModeFlags map[string]string) {
 	// 1. Prepare content using testkit
 	contentDir := testkit.CreateTestContentDir(t, &testkit.ContentDirOptions{
 		Resources: map[string]string{
@@ -25,6 +52,10 @@ func TestStdioServer(t *testing.T) {
 	flags := testkit.NewTestFlags(t, contentDir, &testkit.FlagOptions{
 		Transport: "stdio",
 	})
+
+	for name, value := range serverModeFlags {
+		require.NoError(t, flags.Set(name, value))
+	}
 
 	service := testkit.NewACDCService("acdc-stdio", flags)
 	env := testkit.NewTestEnv(service)

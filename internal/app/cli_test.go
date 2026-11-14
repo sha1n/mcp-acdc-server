@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/spf13/pflag"
@@ -276,5 +277,78 @@ func TestCLI_FlagParsing_UISettings(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tt.expected, settings.UI)
 		})
+	}
+}
+
+func TestRegisterFlags_ServerModeFlagsHaveNoShortForm(t *testing.T) {
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	RegisterFlags(flags)
+
+	for _, name := range []string{"server-mode", "shared-server-connect-wait", "shared-server-linger"} {
+		f := flags.Lookup(name)
+		require.NotNil(t, f, "flag --%s not registered", name)
+		require.Empty(t, f.Shorthand, "flag --%s must have no short form", name)
+		require.False(t, f.Hidden, "flag --%s must appear in --help", name)
+	}
+}
+
+func TestCLI_FlagParsing_ServerModeSettings(t *testing.T) {
+	t.Chdir(t.TempDir())
+	clearServerModeEnv(t)
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	RegisterFlags(flags)
+
+	require.NoError(t, flags.Parse([]string{
+		"--server-mode=session",
+		"--shared-server-connect-wait=500ms",
+		"--shared-server-linger=1m",
+	}))
+	settings, err := config.LoadSettingsWithFlags(flags)
+
+	require.NoError(t, err)
+	require.Equal(t, config.ServerModeSession, settings.ServerMode)
+	require.Equal(t, 500*time.Millisecond, settings.SharedServer.ConnectWait)
+	require.Equal(t, time.Minute, settings.SharedServer.Linger)
+}
+
+func TestCLI_FlagParsing_ServerModeDefaults(t *testing.T) {
+	t.Chdir(t.TempDir())
+	clearServerModeEnv(t)
+	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	RegisterFlags(flags)
+
+	require.NoError(t, flags.Parse(nil))
+	settings, err := config.LoadSettingsWithFlags(flags)
+
+	require.NoError(t, err)
+	require.Equal(t, config.ServerModeShared, settings.ServerMode)
+	require.Equal(t, 5*time.Second, settings.SharedServer.ConnectWait)
+	require.Equal(t, 30*time.Second, settings.SharedServer.Linger)
+}
+
+// The bare-number error must come from settings loading, which names the Go
+// duration format, not from the flag parser, which does not.
+func TestCLI_FlagParsing_SharedServerDurationBareNumber(t *testing.T) {
+	for _, name := range []string{"shared-server-connect-wait", "shared-server-linger"} {
+		t.Run(name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+			RegisterFlags(flags)
+
+			require.NoError(t, flags.Parse([]string{"--" + name + "=5"}))
+			_, err := config.LoadSettingsWithFlags(flags)
+
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "Go duration")
+		})
+	}
+}
+
+// Viper treats an empty variable as unset, so t.Setenv to "" isolates the test
+// from the caller's environment and restores it afterwards.
+func clearServerModeEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{"ACDC_MCP_SERVER_MODE", "ACDC_MCP_SHARED_SERVER_CONNECT_WAIT", "ACDC_MCP_SHARED_SERVER_LINGER"} {
+		t.Setenv(key, "")
 	}
 }

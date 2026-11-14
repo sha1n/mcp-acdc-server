@@ -9,6 +9,14 @@ import (
 )
 
 func TestSSEServer(t *testing.T) {
+	for _, variant := range serverModeFlagVariants {
+		t.Run(variant.name, func(t *testing.T) {
+			testSSEServer(t, variant.flags)
+		})
+	}
+}
+
+func testSSEServer(t *testing.T, serverModeFlags map[string]string) {
 	// 1. Setup Data using testkit helper
 	contentDir := testkit.CreateTestContentDir(t, &testkit.ContentDirOptions{
 		Resources: map[string]string{
@@ -18,6 +26,9 @@ func TestSSEServer(t *testing.T) {
 
 	// 2. Start ACDC Service via TestEnv using testkit flags helper
 	flags := testkit.NewTestFlags(t, contentDir, nil)
+	for name, value := range serverModeFlags {
+		require.NoError(t, flags.Set(name, value))
+	}
 	service := testkit.NewACDCService("acdc", flags)
 	env := testkit.NewTestEnv(service)
 

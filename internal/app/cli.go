@@ -27,4 +27,9 @@ func RegisterFlags(flags *pflag.FlagSet) {
 	flags.StringSliceP("auth-api-keys", "k", nil, "API keys (comma-separated)")
 	flags.Bool("ui-enabled", false, "Serve the browser-based web UI on the SSE transport (default: false)")
 	flags.Int("ui-max-results", 0, "Default number of web UI search results, 1-100 (default: 20)")
+	// String rather than Duration flags so a malformed value reaches settings
+	// loading, whose error names the expected Go duration format.
+	flags.String("server-mode", "", "Server mode: shared or session (default: shared)")
+	flags.String("shared-server-connect-wait", "", "How long a session tries to reach or start a shared server, a Go duration > 0 (default: 5s)")
+	flags.String("shared-server-linger", "", "How long a shared server keeps running with no attached sessions, a Go duration >= 1s (default: 30s)")
 }

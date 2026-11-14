@@ -20,6 +20,10 @@ func LogWithLogger(s *Settings, logger *slog.Logger) {
 		logger.InfoContext(ctx, "Config: port", "value", s.Port)
 	}
 
+	logger.InfoContext(ctx, "Config: server_mode", "value", s.ServerMode)
+	logger.InfoContext(ctx, "Config: shared_server.connect_wait", "value", s.SharedServer.ConnectWait)
+	logger.InfoContext(ctx, "Config: shared_server.linger", "value", s.SharedServer.Linger)
+
 	logger.InfoContext(ctx, "Config: search.max_results", "value", s.Search.MaxResults)
 	logger.InfoContext(ctx, "Config: search.in_memory", "value", s.Search.InMemory)
 	logger.InfoContext(ctx, "Config: search.keywords_boost", "value", s.Search.KeywordsBoost)

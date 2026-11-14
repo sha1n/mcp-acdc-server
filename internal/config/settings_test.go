@@ -355,7 +355,7 @@ func defaultSearchSettings() SearchSettings {
 }
 
 func TestValidateSettings_ValidNone(t *testing.T) {
-	s := &Settings{Transport: "stdio", Scheme: "acdc", Search: defaultSearchSettings(), Auth: AuthSettings{Type: AuthTypeNone}}
+	s := &Settings{Transport: "stdio", ServerMode: ServerModeShared, SharedServer: defaultSharedServerSettings(), Scheme: "acdc", Search: defaultSearchSettings(), Auth: AuthSettings{Type: AuthTypeNone}}
 	if err := ValidateSettings(s); err != nil {
 		t.Errorf("Expected no error for valid none auth, got: %v", err)
 	}
@@ -363,17 +363,19 @@ func TestValidateSettings_ValidNone(t *testing.T) {
 
 func TestValidateSettings_SearchResultMode(t *testing.T) {
 	settings := &Settings{
-		Transport: "stdio",
-		Scheme:    "acdc",
-		Search:    defaultSearchSettings(),
-		Auth:      AuthSettings{Type: AuthTypeNone},
+		Transport:    "stdio",
+		ServerMode:   ServerModeShared,
+		SharedServer: defaultSharedServerSettings(),
+		Scheme:       "acdc",
+		Search:       defaultSearchSettings(),
+		Auth:         AuthSettings{Type: AuthTypeNone},
 	}
 	settings.Search.ResultMode = "verbose"
 	require.EqualError(t, ValidateSettings(settings), "search result mode must be 'references' or 'content', got: verbose")
 }
 
 func TestValidateSettings_ValidNone_EmptyType(t *testing.T) {
-	s := &Settings{Transport: "stdio", Scheme: "acdc", Search: defaultSearchSettings(), Auth: AuthSettings{Type: ""}}
+	s := &Settings{Transport: "stdio", ServerMode: ServerModeShared, SharedServer: defaultSharedServerSettings(), Scheme: "acdc", Search: defaultSearchSettings(), Auth: AuthSettings{Type: ""}}
 	if err := ValidateSettings(s); err != nil {
 		t.Errorf("Expected no error for empty auth type, got: %v", err)
 	}
@@ -381,9 +383,11 @@ func TestValidateSettings_ValidNone_EmptyType(t *testing.T) {
 
 func TestValidateSettings_ValidBasic(t *testing.T) {
 	s := &Settings{
-		Transport: "stdio",
-		Scheme:    "acdc",
-		Search:    defaultSearchSettings(),
+		Transport:    "stdio",
+		ServerMode:   ServerModeShared,
+		SharedServer: defaultSharedServerSettings(),
+		Scheme:       "acdc",
+		Search:       defaultSearchSettings(),
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
 			Basic: BasicAuthSettings{
@@ -399,9 +403,11 @@ func TestValidateSettings_ValidBasic(t *testing.T) {
 
 func TestValidateSettings_ValidAPIKey(t *testing.T) {
 	s := &Settings{
-		Transport: "stdio",
-		Scheme:    "acdc",
-		Search:    defaultSearchSettings(),
+		Transport:    "stdio",
+		ServerMode:   ServerModeShared,
+		SharedServer: defaultSharedServerSettings(),
+		Scheme:       "acdc",
+		Search:       defaultSearchSettings(),
 		Auth: AuthSettings{
 			Type:    AuthTypeAPIKey,
 			APIKeys: []string{"key1", "key2"},
@@ -420,9 +426,11 @@ func TestValidateSettings_NoneWithCredentials(t *testing.T) {
 		{
 			name: "none with username",
 			settings: Settings{
-				Transport: "stdio",
-				Scheme:    "acdc",
-				Search:    defaultSearchSettings(),
+				Transport:    "stdio",
+				ServerMode:   ServerModeShared,
+				SharedServer: defaultSharedServerSettings(),
+				Scheme:       "acdc",
+				Search:       defaultSearchSettings(),
 				Auth: AuthSettings{
 					Type:  AuthTypeNone,
 					Basic: BasicAuthSettings{Username: "admin"},
@@ -432,9 +440,11 @@ func TestValidateSettings_NoneWithCredentials(t *testing.T) {
 		{
 			name: "none with password",
 			settings: Settings{
-				Transport: "stdio",
-				Scheme:    "acdc",
-				Search:    defaultSearchSettings(),
+				Transport:    "stdio",
+				ServerMode:   ServerModeShared,
+				SharedServer: defaultSharedServerSettings(),
+				Scheme:       "acdc",
+				Search:       defaultSearchSettings(),
 				Auth: AuthSettings{
 					Type:  AuthTypeNone,
 					Basic: BasicAuthSettings{Password: "secret"},
@@ -444,9 +454,11 @@ func TestValidateSettings_NoneWithCredentials(t *testing.T) {
 		{
 			name: "none with api keys",
 			settings: Settings{
-				Transport: "stdio",
-				Scheme:    "acdc",
-				Search:    defaultSearchSettings(),
+				Transport:    "stdio",
+				ServerMode:   ServerModeShared,
+				SharedServer: defaultSharedServerSettings(),
+				Scheme:       "acdc",
+				Search:       defaultSearchSettings(),
 				Auth: AuthSettings{
 					Type:    AuthTypeNone,
 					APIKeys: []string{"key1"},
@@ -470,9 +482,11 @@ func TestValidateSettings_NoneWithCredentials(t *testing.T) {
 
 func TestValidateSettings_BasicAuthMissingUsername(t *testing.T) {
 	s := &Settings{
-		Transport: "stdio",
-		Scheme:    "acdc",
-		Search:    defaultSearchSettings(),
+		Transport:    "stdio",
+		ServerMode:   ServerModeShared,
+		SharedServer: defaultSharedServerSettings(),
+		Scheme:       "acdc",
+		Search:       defaultSearchSettings(),
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
 			Basic: BasicAuthSettings{
@@ -491,9 +505,11 @@ func TestValidateSettings_BasicAuthMissingUsername(t *testing.T) {
 
 func TestValidateSettings_BasicAuthMissingPassword(t *testing.T) {
 	s := &Settings{
-		Transport: "stdio",
-		Scheme:    "acdc",
-		Search:    defaultSearchSettings(),
+		Transport:    "stdio",
+		ServerMode:   ServerModeShared,
+		SharedServer: defaultSharedServerSettings(),
+		Scheme:       "acdc",
+		Search:       defaultSearchSettings(),
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
 			Basic: BasicAuthSettings{
@@ -509,9 +525,11 @@ func TestValidateSettings_BasicAuthMissingPassword(t *testing.T) {
 
 func TestValidateSettings_BasicAuthWithAPIKeys(t *testing.T) {
 	s := &Settings{
-		Transport: "stdio",
-		Scheme:    "acdc",
-		Search:    defaultSearchSettings(),
+		Transport:    "stdio",
+		ServerMode:   ServerModeShared,
+		SharedServer: defaultSharedServerSettings(),
+		Scheme:       "acdc",
+		Search:       defaultSearchSettings(),
 		Auth: AuthSettings{
 			Type: AuthTypeBasic,
 			Basic: BasicAuthSettings{
@@ -532,9 +550,11 @@ func TestValidateSettings_BasicAuthWithAPIKeys(t *testing.T) {
 
 func TestValidateSettings_APIKeyMissingKeys(t *testing.T) {
 	s := &Settings{
-		Transport: "stdio",
-		Scheme:    "acdc",
-		Search:    defaultSearchSettings(),
+		Transport:    "stdio",
+		ServerMode:   ServerModeShared,
+		SharedServer: defaultSharedServerSettings(),
+		Scheme:       "acdc",
+		Search:       defaultSearchSettings(),
 		Auth: AuthSettings{
 			Type: AuthTypeAPIKey,
 		},
@@ -550,9 +570,11 @@ func TestValidateSettings_APIKeyMissingKeys(t *testing.T) {
 
 func TestValidateSettings_APIKeyWithBasicCreds(t *testing.T) {
 	s := &Settings{
-		Transport: "stdio",
-		Scheme:    "acdc",
-		Search:    defaultSearchSettings(),
+		Transport:    "stdio",
+		ServerMode:   ServerModeShared,
+		SharedServer: defaultSharedServerSettings(),
+		Scheme:       "acdc",
+		Search:       defaultSearchSettings(),
 		Auth: AuthSettings{
 			Type:    AuthTypeAPIKey,
 			APIKeys: []string{"key1"},
@@ -572,9 +594,11 @@ func TestValidateSettings_APIKeyWithBasicCreds(t *testing.T) {
 
 func TestValidateSettings_UnknownAuthType(t *testing.T) {
 	s := &Settings{
-		Transport: "stdio",
-		Scheme:    "acdc",
-		Search:    defaultSearchSettings(),
+		Transport:    "stdio",
+		ServerMode:   ServerModeShared,
+		SharedServer: defaultSharedServerSettings(),
+		Scheme:       "acdc",
+		Search:       defaultSearchSettings(),
 		Auth: AuthSettings{
 			Type: "oauth",
 		},
@@ -591,14 +615,14 @@ func TestValidateSettings_UnknownAuthType(t *testing.T) {
 // --- Transport Validation Tests ---
 
 func TestValidateSettings_ValidTransportStdio(t *testing.T) {
-	s := &Settings{Transport: "stdio", Scheme: "acdc", Search: defaultSearchSettings(), Auth: AuthSettings{Type: AuthTypeNone}}
+	s := &Settings{Transport: "stdio", ServerMode: ServerModeShared, SharedServer: defaultSharedServerSettings(), Scheme: "acdc", Search: defaultSearchSettings(), Auth: AuthSettings{Type: AuthTypeNone}}
 	if err := ValidateSettings(s); err != nil {
 		t.Errorf("Expected no error for valid stdio transport, got: %v", err)
 	}
 }
 
 func TestValidateSettings_ValidTransportSSE(t *testing.T) {
-	s := &Settings{Transport: "sse", Scheme: "acdc", Search: defaultSearchSettings(), Auth: AuthSettings{Type: AuthTypeNone}}
+	s := &Settings{Transport: "sse", ServerMode: ServerModeShared, SharedServer: defaultSharedServerSettings(), Scheme: "acdc", Search: defaultSearchSettings(), Auth: AuthSettings{Type: AuthTypeNone}}
 	if err := ValidateSettings(s); err != nil {
 		t.Errorf("Expected no error for valid sse transport, got: %v", err)
 	}
@@ -618,10 +642,12 @@ func TestValidateSettings_InvalidTransport(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &Settings{
-				Transport: tt.transport,
-				Scheme:    "acdc",
-				Search:    defaultSearchSettings(),
-				Auth:      AuthSettings{Type: AuthTypeNone},
+				Transport:    tt.transport,
+				ServerMode:   ServerModeShared,
+				SharedServer: defaultSharedServerSettings(),
+				Scheme:       "acdc",
+				Search:       defaultSearchSettings(),
+				Auth:         AuthSettings{Type: AuthTypeNone},
 			}
 			err := ValidateSettings(s)
 			if err == nil {
@@ -712,7 +738,7 @@ func TestValidateSettings_ValidSchemes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &Settings{Transport: "stdio", Scheme: tt.scheme, Search: defaultSearchSettings(), Auth: AuthSettings{Type: AuthTypeNone}}
+			s := &Settings{Transport: "stdio", ServerMode: ServerModeShared, SharedServer: defaultSharedServerSettings(), Scheme: tt.scheme, Search: defaultSearchSettings(), Auth: AuthSettings{Type: AuthTypeNone}}
 			if err := ValidateSettings(s); err != nil {
 				t.Errorf("Expected no error for scheme %q, got: %v", tt.scheme, err)
 			}
@@ -735,7 +761,7 @@ func TestValidateSettings_InvalidSchemes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &Settings{Transport: "stdio", Scheme: tt.scheme, Search: defaultSearchSettings(), Auth: AuthSettings{Type: AuthTypeNone}}
+			s := &Settings{Transport: "stdio", ServerMode: ServerModeShared, SharedServer: defaultSharedServerSettings(), Scheme: tt.scheme, Search: defaultSearchSettings(), Auth: AuthSettings{Type: AuthTypeNone}}
 			err := ValidateSettings(s)
 			if err == nil {
 				t.Fatalf("Expected error for scheme %q", tt.scheme)
@@ -865,7 +891,7 @@ func TestValidateSettings_RejectsInvalidBoosts(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			search := SearchSettings{ResultMode: SearchResultModeReferences}
 			tt.mutate(&search)
-			s := &Settings{Transport: "stdio", Scheme: "acdc", Search: search, Auth: AuthSettings{Type: AuthTypeNone}}
+			s := &Settings{Transport: "stdio", ServerMode: ServerModeShared, SharedServer: defaultSharedServerSettings(), Scheme: "acdc", Search: search, Auth: AuthSettings{Type: AuthTypeNone}}
 
 			err := ValidateSettings(s)
 
@@ -893,7 +919,7 @@ func TestValidateSettings_AcceptsIndividualZeroBoosts(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			search := defaultSearchSettings()
 			tt.mutate(&search)
-			s := &Settings{Transport: "stdio", Scheme: "acdc", Search: search, Auth: AuthSettings{Type: AuthTypeNone}}
+			s := &Settings{Transport: "stdio", ServerMode: ServerModeShared, SharedServer: defaultSharedServerSettings(), Scheme: "acdc", Search: search, Auth: AuthSettings{Type: AuthTypeNone}}
 
 			require.NoError(t, ValidateSettings(s))
 		})
@@ -905,8 +931,10 @@ func TestValidateSettings_AcceptsIndividualZeroBoosts(t *testing.T) {
 // still returns everything. Silent, and indistinguishable from an empty index.
 func TestValidateSettings_RejectsAllZeroBoosts(t *testing.T) {
 	s := &Settings{
-		Transport: "stdio",
-		Scheme:    "acdc",
+		Transport:    "stdio",
+		ServerMode:   ServerModeShared,
+		SharedServer: defaultSharedServerSettings(),
+		Scheme:       "acdc",
 		Search: SearchSettings{
 			ResultMode:    SearchResultModeReferences,
 			KeywordsBoost: 0, HeadingBoost: 0, TitleBoost: 0, PathBoost: 0, ContentBoost: 0,
@@ -939,7 +967,7 @@ func TestValidateSettings_RejectsBoostsBleveCannotSquare(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			search := defaultSearchSettings()
 			tt.mutate(&search)
-			s := &Settings{Transport: "stdio", Scheme: "acdc", Search: search, Auth: AuthSettings{Type: AuthTypeNone}}
+			s := &Settings{Transport: "stdio", ServerMode: ServerModeShared, SharedServer: defaultSharedServerSettings(), Scheme: "acdc", Search: search, Auth: AuthSettings{Type: AuthTypeNone}}
 
 			err := ValidateSettings(s)
 
@@ -955,10 +983,12 @@ func TestValidateSettings_AcceptsLargeButSquarableBoosts(t *testing.T) {
 	search := defaultSearchSettings()
 	search.HeadingBoost = 1e150
 	s := &Settings{
-		Transport: "stdio",
-		Scheme:    "acdc",
-		Search:    search,
-		Auth:      AuthSettings{Type: AuthTypeNone},
+		Transport:    "stdio",
+		ServerMode:   ServerModeShared,
+		SharedServer: defaultSharedServerSettings(),
+		Scheme:       "acdc",
+		Search:       search,
+		Auth:         AuthSettings{Type: AuthTypeNone},
 	}
 
 	require.NoError(t, ValidateSettings(s))
@@ -970,10 +1000,12 @@ func TestValidateSettings_AcceptsBoostAtExactCap(t *testing.T) {
 	search := defaultSearchSettings()
 	search.HeadingBoost = maxBoost
 	s := &Settings{
-		Transport: "stdio",
-		Scheme:    "acdc",
-		Search:    search,
-		Auth:      AuthSettings{Type: AuthTypeNone},
+		Transport:    "stdio",
+		ServerMode:   ServerModeShared,
+		SharedServer: defaultSharedServerSettings(),
+		Scheme:       "acdc",
+		Search:       search,
+		Auth:         AuthSettings{Type: AuthTypeNone},
 	}
 
 	require.NoError(t, ValidateSettings(s))
