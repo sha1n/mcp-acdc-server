@@ -194,3 +194,191 @@ func readUntilError(conn net.Conn) (int, error) {
 		}
 	}
 }
+
+func TestACDCService_StopOverlappingAStartReturnsTheStartupError(t *testing.T) {
+	cases := []struct {
+		name      string
+		stopDelay time.Duration
+		runner    func(ctx context.Context, release <-chan struct{}) error
+	}{
+		{
+			name:      "runner exits cleanly when Stop cancels it",
+			stopDelay: time.Minute,
+			runner: func(ctx context.Context, _ <-chan struct{}) error {
+				<-ctx.Done()
+				return nil
+			},
+		},
+		{
+			name:      "runner is abandoned by Stop",
+			stopDelay: 50 * time.Millisecond,
+			runner: func(_ context.Context, release <-chan struct{}) error {
+				<-release
+				return nil
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			service := NewACDCService("stop-overlapping-start", NewTestFlags(t, CreateTestContentDir(t, nil), nil))
+			acdc := service.(*acdcService)
+			acdc.StopDelay = c.stopDelay
+			entered := make(chan struct{})
+			release := make(chan struct{})
+			t.Cleanup(func() { close(release) })
+			acdc.runner = func(ctx context.Context, _ app.RunParams, _ *pflag.FlagSet, _ string) error {
+				close(entered)
+				return c.runner(ctx, release)
+			}
+
+			started := make(chan error, 1)
+			go func() {
+				_, err := service.Start()
+				started <- err
+			}()
+			<-entered
+
+			stopErr := stopWithin(t, service, 2*time.Second)
+
+			var startErr error
+			select {
+			case startErr = <-started:
+			case <-time.After(2 * time.Second):
+				t.Fatal("Start did not return after Stop")
+			}
+			require.Error(t, startErr)
+			require.EqualError(t, stopErr, startErr.Error(), "Stop #1")
+			require.Same(t, stopErr, stopWithin(t, service, 2*time.Second), "Stop #2")
+		})
+	}
+}
+
+func TestACDCService_StopAfterAReadinessTimeoutReturnsTheStartupError(t *testing.T) {
+	cases := []struct {
+		name   string
+		runner func(ctx context.Context, release <-chan struct{}) error
+	}{
+		{
+			name: "runner returns the cancellation",
+			runner: func(ctx context.Context, _ <-chan struct{}) error {
+				<-ctx.Done()
+				return ctx.Err()
+			},
+		},
+		{
+			name: "runner exits cleanly after the timeout",
+			runner: func(_ context.Context, release <-chan struct{}) error {
+				<-release
+				return nil
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			service := NewACDCService("stop-after-readiness-timeout", NewTestFlags(t, CreateTestContentDir(t, nil), nil))
+			acdc := service.(*acdcService)
+			acdc.StopDelay = time.Minute
+			acdc.StartTimeout = 50 * time.Millisecond
+			release := make(chan struct{})
+			acdc.runner = func(ctx context.Context, _ app.RunParams, _ *pflag.FlagSet, _ string) error {
+				return c.runner(ctx, release)
+			}
+
+			_, startErr := service.Start()
+			require.Error(t, startErr)
+			close(release)
+
+			for attempt := 1; attempt <= 2; attempt++ {
+				require.EqualError(t, stopWithin(t, service, 2*time.Second), startErr.Error(), "Stop #%d", attempt)
+			}
+		})
+	}
+}
+
+func TestACDCService_StopsShareOneShutdownResultWhileAStreamIsOpen(t *testing.T) {
+	cases := []struct {
+		name  string
+		stops func(t *testing.T, service Service) [2]error
+	}{
+		{
+			name: "repeated",
+			stops: func(t *testing.T, service Service) [2]error {
+				return [2]error{stopWithin(t, service, 5*time.Second), stopWithin(t, service, 5*time.Second)}
+			},
+		},
+		{
+			name: "concurrent",
+			stops: func(t *testing.T, service Service) [2]error {
+				entered := make(chan struct{}, 2)
+				results := make(chan error, 2)
+				for range 2 {
+					go func() {
+						entered <- struct{}{}
+						results <- service.Stop()
+					}()
+				}
+				<-entered
+				<-entered
+				var errs [2]error
+				for i := range errs {
+					select {
+					case errs[i] = <-results:
+					case <-time.After(5 * time.Second):
+						t.Fatalf("Stop #%d did not return", i+1)
+					}
+				}
+				return errs
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			service := NewACDCService("stops-share-shutdown", NewTestFlags(t, CreateTestContentDir(t, nil), nil))
+			service.(*acdcService).StopDelay = 200 * time.Millisecond
+
+			props, err := service.Start()
+			require.NoError(t, err)
+			stream := openEventStream(t, props["acdc.baseURL"].(string))
+			defer func() { _ = stream.Close() }()
+
+			errs := c.stops(t, service)
+
+			for i, err := range errs {
+				require.ErrorIs(t, err, context.DeadlineExceeded, "Stop #%d", i+1)
+			}
+			require.Same(t, errs[0], errs[1])
+		})
+	}
+}
+
+func TestACDCService_StartAfterStopFails(t *testing.T) {
+	service := NewACDCService("start-after-stop", NewTestFlags(t, CreateTestContentDir(t, nil), nil))
+	acdc := service.(*acdcService)
+	acdc.StopDelay = 50 * time.Millisecond
+	ran := make(chan struct{}, 1)
+	acdc.runner = func(context.Context, app.RunParams, *pflag.FlagSet, string) error {
+		ran <- struct{}{}
+		return nil
+	}
+	_ = stopWithin(t, service, 2*time.Second)
+
+	_, err := service.Start()
+
+	require.Error(t, err)
+	select {
+	case <-ran:
+		t.Fatal("Start ran the server after Stop")
+	default:
+	}
+}
+
+func openEventStream(t *testing.T, baseURL string) net.Conn {
+	t.Helper()
+	stream, err := net.Dial("tcp", strings.TrimPrefix(baseURL, "http://"))
+	require.NoError(t, err)
+	_, err = stream.Write([]byte("GET /sse HTTP/1.1\r\nHost: localhost\r\n\r\n"))
+	require.NoError(t, err)
+	_, err = stream.Read(make([]byte, 1))
+	require.NoError(t, err, "the server must be serving the stream before it is stopped")
+	return stream
+}
