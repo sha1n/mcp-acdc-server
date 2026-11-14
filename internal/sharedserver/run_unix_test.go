@@ -188,7 +188,7 @@ func TestAttach_ReadyLineWriteFailureClosesTheConnectionWithoutServing(t *testin
 
 	done := make(chan struct{})
 	go func() {
-		attach(context.Background(), conn, mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil))
+		attach(context.Background(), conn, mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil), nil)
 		close(done)
 	}()
 

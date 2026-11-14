@@ -79,7 +79,23 @@ func (r *catalogRefresher) Revalidate(ctx context.Context) {
 		return
 	}
 	r.lastCheck = now
+	r.revalidateLocked(ctx)
+}
 
+// revalidateNow bypasses the debounce for the shared server's attach
+// revalidation. It leaves lastCheck untouched so the request-triggered
+// schedule Revalidate keeps is exactly what it would be without attaches.
+func (r *catalogRefresher) revalidateNow(ctx context.Context) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.registrar == nil {
+		return
+	}
+	r.revalidateLocked(ctx)
+}
+
+func (r *catalogRefresher) revalidateLocked(ctx context.Context) {
 	walkDigest, err := r.fingerprint(ctx)
 	if err != nil {
 		slog.Warn("Catalog refresh failed to fingerprint content root, retrying next interval", "error", err)

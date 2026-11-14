@@ -57,7 +57,7 @@ func Run(ctx context.Context, cfg Config) error {
 		defer cleanup()
 	}
 
-	return serve(ctx, listener, server)
+	return serve(ctx, listener, server, cfg.Revalidate)
 }
 
 func acquireLock(ep endpoint.Endpoint, identity string) (*flock.Flock, error) {
@@ -95,7 +95,7 @@ func bind(ep endpoint.Endpoint, identity string) (*net.UnixListener, error) {
 	return listener, nil
 }
 
-func serve(ctx context.Context, listener *net.UnixListener, server *mcp.Server) error {
+func serve(ctx context.Context, listener *net.UnixListener, server *mcp.Server, revalidate func(context.Context)) error {
 	stopAccepting := context.AfterFunc(ctx, func() { _ = listener.Close() })
 	defer stopAccepting()
 
@@ -119,16 +119,19 @@ func serve(ctx context.Context, listener *net.UnixListener, server *mcp.Server) 
 			}
 			return fmt.Errorf("failed to accept shared server connection: %w", err)
 		}
-		sessions.Go(func() { attach(sessionCtx, conn, server) })
+		sessions.Go(func() { attach(sessionCtx, conn, server, revalidate) })
 	}
 }
 
-func attach(ctx context.Context, conn *net.UnixConn, server *mcp.Server) {
+func attach(ctx context.Context, conn *net.UnixConn, server *mcp.Server, revalidate func(context.Context)) {
 	defer func() { _ = conn.Close() }()
 	stopOnCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stopOnCancel()
 
 	session := NewSessionID()
+	if revalidate != nil {
+		revalidate(ctx)
+	}
 	readyLine, err := EncodeReadyLine(session, "")
 	if err != nil {
 		slog.Error("Failed to attach session", "session", session, "error", err)

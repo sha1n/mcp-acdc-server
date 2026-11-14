@@ -21,4 +21,8 @@ type Config struct {
 	Identity    string
 	EndpointDir string
 	Build       BuildFunc
+	// Revalidate, if set, runs for every accepted connection before its ready
+	// line, so a session's first listing reflects current content. It is
+	// called only after Build has returned.
+	Revalidate func(context.Context)
 }
