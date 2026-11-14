@@ -130,17 +130,3 @@ func TestRun_RejectsANonAbsoluteEndpointDirFromEveryResolverSource(t *testing.T)
 		})
 	}
 }
-
-func TestEnsureEndpointDir_RejectsANonAbsoluteDir(t *testing.T) {
-	for _, dir := range []string{"@runtime/acdc-mcp", "runtime/acdc-mcp", ""} {
-		t.Run(fmt.Sprintf("%q", dir), func(t *testing.T) {
-			cwd := chdirToEmptyDir(t)
-
-			_, err := OpenEndpoint(dir)
-
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), fmt.Sprintf("endpoint directory %q is not an absolute path", dir))
-			assertDirEmpty(t, cwd)
-		})
-	}
-}

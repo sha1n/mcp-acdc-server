@@ -16,6 +16,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/endpoint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,6 +29,22 @@ func shortTempDir(t *testing.T) string {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	return dir
+}
+
+func lockFileIn(dir string) string {
+	return filepath.Join(dir, testIdentity+".lock")
+}
+
+func bindTestEndpoint(t *testing.T) (*net.UnixListener, string) {
+	t.Helper()
+	ep, err := endpoint.OpenEndpoint(filepath.Join(shortTempDir(t), "ep"))
+	require.NoError(t, err)
+	socketPath, err := ep.SocketPath(testIdentity)
+	require.NoError(t, err)
+	listener, err := bind(ep, testIdentity)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	return listener, socketPath
 }
 
 func buildSpy(err error) (BuildFunc, *bool) {
@@ -105,7 +122,7 @@ func TestRun_RejectsAnOverLongSocketPathBeforeTheLock(t *testing.T) {
 
 	err := Run(context.Background(), Config{Identity: testIdentity, EndpointDir: dir, Build: build})
 
-	require.ErrorIs(t, err, ErrSocketPathTooLong)
+	require.ErrorIs(t, err, endpoint.ErrSocketPathTooLong)
 	assert.NoFileExists(t, lockFileIn(dir), "the lock must not be taken for an unusable socket path")
 	assert.False(t, *built)
 }
@@ -157,9 +174,7 @@ func TestRun_BuildFailureReleasesTheLockAndClosesTheSocket(t *testing.T) {
 }
 
 func TestAttach_ReadyLineWriteFailureClosesTheConnectionWithoutServing(t *testing.T) {
-	listener, err := bind(filepath.Join(shortTempDir(t), "s.sock"))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = listener.Close() })
+	listener, _ := bindTestEndpoint(t)
 
 	client, err := net.Dial("unix", listener.Addr().String())
 	require.NoError(t, err)

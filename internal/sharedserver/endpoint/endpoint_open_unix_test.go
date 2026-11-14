@@ -1,6 +1,6 @@
 //go:build unix
 
-package sharedserver
+package endpoint
 
 import (
 	"fmt"
@@ -13,10 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func lockFileIn(dir string) string {
-	return filepath.Join(dir, testIdentity+".lock")
-}
 
 func openTestEndpoint(t *testing.T) (Endpoint, string) {
 	t.Helper()
