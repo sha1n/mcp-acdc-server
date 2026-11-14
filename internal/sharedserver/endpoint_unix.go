@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"syscall"
 )
 
@@ -15,8 +16,14 @@ const endpointDirMode fs.FileMode = 0o700
 // EnsureEndpointDir creates dir if missing and verifies it is a directory
 // owned by the current user with mode 0700. The directory mode is the only
 // protection of the socket, so an existing directory that fails the check is
-// rejected, never repaired.
+// rejected, never repaired. A non-absolute dir is rejected before anything is
+// created: a relative one would resolve against the working directory, and on
+// Linux an @-prefixed socket path binds an abstract socket that the directory
+// mode does not protect.
 func EnsureEndpointDir(dir string) error {
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("endpoint directory %q is not an absolute path", dir)
+	}
 	if err := os.MkdirAll(dir, endpointDirMode); err != nil {
 		return fmt.Errorf("failed to create endpoint directory: %w", err)
 	}
