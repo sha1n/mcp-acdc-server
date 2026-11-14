@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"io"
 	"net"
 	"net/http"
@@ -188,7 +189,7 @@ func TestACDCService_StartExit(t *testing.T) {
 
 	service := NewACDCService("exit", flags)
 	acdc := service.(*acdcService)
-	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error {
+	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, _ identity.Binary) error {
 		return errors.New("exit early")
 	}
 
@@ -206,7 +207,7 @@ func TestACDCService_StartCleanExit(t *testing.T) {
 
 	service := NewACDCService("clean-exit", flags)
 	acdc := service.(*acdcService)
-	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error {
+	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, _ identity.Binary) error {
 		return nil
 	}
 
@@ -221,7 +222,7 @@ func TestACDCService_StdioStartFailureClosesThePipesWithTheStartupError(t *testi
 	service := NewACDCService("stdio-start-failure", flags)
 	acdc := service.(*acdcService)
 	startErr := errors.New("startup failed")
-	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error {
+	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, _ identity.Binary) error {
 		return startErr
 	}
 
@@ -272,7 +273,7 @@ func TestACDCService_StartTimeout(t *testing.T) {
 	service := NewACDCService("timeout", flags)
 	acdc := service.(*acdcService)
 	acdc.StartTimeout = 100 * time.Millisecond
-	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error {
+	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, _ identity.Binary) error {
 		time.Sleep(1 * time.Second)
 		return nil
 	}
@@ -300,13 +301,13 @@ func TestACDCService_StartReportsTheBindErrorWhenAForeignListenerHoldsThePort(t 
 	service := NewACDCService("foreign-listener", flags)
 	acdc := service.(*acdcService)
 	acdc.StopDelay = 2 * time.Second
-	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error {
+	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, binary identity.Binary) error {
 		select {
 		case <-probed:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
-		return app.RunWithDeps(ctx, params, flags, version)
+		return app.RunWithDeps(ctx, params, flags, binary)
 	}
 
 	props, startErr := service.Start()
@@ -324,14 +325,14 @@ func TestACDCService_StopTimeout(t *testing.T) {
 	service := NewACDCService("stop-timeout", flags)
 	acdc := service.(*acdcService)
 	acdc.StopDelay = 100 * time.Millisecond
-	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error {
+	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, _ identity.Binary) error {
 		time.Sleep(1 * time.Second)
 		return nil
 	}
 
 	// Mock Start to avoid polling
 	go func() {
-		acdc.errChan <- acdc.runner(context.Background(), app.RunParams{}, flags, "test")
+		acdc.errChan <- acdc.runner(context.Background(), app.RunParams{}, flags, identity.Binary{Version: "test"})
 	}()
 
 	err := service.Stop()
@@ -346,13 +347,13 @@ func TestACDCService_StopError(t *testing.T) {
 
 	service := NewACDCService("stop-error", flags)
 	acdc := service.(*acdcService)
-	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error {
+	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, _ identity.Binary) error {
 		return errors.New("stop error")
 	}
 
 	// Mock Start
 	go func() {
-		acdc.errChan <- acdc.runner(context.Background(), app.RunParams{}, flags, "test")
+		acdc.errChan <- acdc.runner(context.Background(), app.RunParams{}, flags, identity.Binary{Version: "test"})
 	}()
 
 	err := service.Stop()

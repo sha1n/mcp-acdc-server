@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"io"
 	"log/slog"
 	"os"
@@ -53,7 +54,7 @@ func TestRunWithDeps_SharedServerIdentityEnvironmentVariableHasNoEffect(t *testi
 		EndpointDir:       func() (string, error) { return endpointDir, nil },
 	}
 
-	_ = RunWithDeps(context.Background(), params, flags, "test")
+	_ = RunWithDeps(context.Background(), params, flags, identity.Binary{Version: "test"})
 
 	assert.True(t, stdioUsed, "an ordinary stdio launch must run")
 	entries, err := os.ReadDir(endpointDir)
@@ -99,7 +100,7 @@ func TestRunWithDeps_SuppliedSharedServerIdentityMustBeValid(t *testing.T) {
 				EndpointDir:       func() (string, error) { return endpointDir, nil },
 			}
 
-			err := RunWithDeps(context.Background(), params, flags, "test")
+			err := RunWithDeps(context.Background(), params, flags, identity.Binary{Version: "test"})
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "invalid shared server identity")

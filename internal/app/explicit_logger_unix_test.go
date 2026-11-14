@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"log/slog"
 	"sync"
 	"testing"
@@ -52,7 +53,9 @@ func TestRunWithDeps_OrdinaryLaunchDoesNotRedirectAConcurrentSharedServersEntrie
 	t.Cleanup(cancelRunner)
 	runnerDone := make(chan error, 1)
 	runnerFlags := loggingDestinationFlags(t, writeLoggingDestinationContent(t, "Runner Guide"))
-	go func() { runnerDone <- RunWithDeps(runnerCtx, runnerParams, runnerFlags, "9.8.7") }()
+	go func() {
+		runnerDone <- RunWithDeps(runnerCtx, runnerParams, runnerFlags, identity.Binary{Version: "9.8.7"})
+	}()
 	client := mcp.NewClient(&mcp.Implementation{Name: "logging-destination-client", Version: "1.0"}, nil)
 	session, err := client.Connect(runnerCtx, clientTransport, nil)
 	require.NoError(t, err)

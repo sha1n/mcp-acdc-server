@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"io"
 	"log/slog"
 	"strings"
@@ -86,7 +87,7 @@ func TestRunWithDeps_ErrorCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := RunWithDeps(context.Background(), tt.params, nil, "test")
+			err := RunWithDeps(context.Background(), tt.params, nil, identity.Binary{Version: "test"})
 			if err == nil {
 				t.Fatalf("Expected error containing %q, got nil", tt.wantErrContain)
 			}
@@ -113,7 +114,7 @@ func TestRunWithDeps_Cleanup(t *testing.T) {
 		},
 	}
 
-	_ = RunWithDeps(context.Background(), params, nil, "test")
+	_ = RunWithDeps(context.Background(), params, nil, identity.Binary{Version: "test"})
 
 	if !cleanupCalled {
 		t.Error("Cleanup was not called")
@@ -162,7 +163,7 @@ func TestRunWithDeps_StdioWithDefaultTransport(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := RunWithDeps(ctx, params, nil, "test")
+	err := RunWithDeps(ctx, params, nil, identity.Binary{Version: "test"})
 
 	// We expect an error because the context is cancelled
 	// The important thing is that we exercised the code path through line 66
@@ -198,7 +199,7 @@ func TestRunWithDeps_StdioWithCustomTransport(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_ = RunWithDeps(ctx, params, nil, "test")
+	_ = RunWithDeps(ctx, params, nil, identity.Binary{Version: "test"})
 
 	// Verify that the custom transport was used (Connect was called)
 	if !transportUsed {
@@ -222,7 +223,7 @@ func TestRunWithDeps_PassesExactCallerContextToCreateServer(t *testing.T) {
 		StartSSEServer: func(*slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error { return nil },
 	}
 
-	err := RunWithDeps(ctx, params, nil, "test")
+	err := RunWithDeps(ctx, params, nil, identity.Binary{Version: "test"})
 
 	if err != nil {
 		t.Fatalf("RunWithDeps returned error: %v", err)
@@ -247,7 +248,7 @@ func TestRunWithDeps_PassesVersionToCreateServer(t *testing.T) {
 		StartSSEServer: func(*slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error { return nil },
 	}
 
-	err := RunWithDeps(context.Background(), params, nil, "9.9.9")
+	err := RunWithDeps(context.Background(), params, nil, identity.Binary{Version: "9.9.9"})
 
 	if err != nil {
 		t.Fatalf("RunWithDeps returned error: %v", err)
@@ -297,7 +298,7 @@ func TestRunWithDeps_PassesComponentsToStartSSEServer(t *testing.T) {
 		},
 	}
 
-	err := RunWithDeps(context.Background(), params, nil, "test")
+	err := RunWithDeps(context.Background(), params, nil, identity.Binary{Version: "test"})
 
 	require.NoError(t, err)
 	require.Same(t, mcpServer, gotServer)
@@ -335,7 +336,7 @@ func TestRunWithDeps_StdioIgnoresSSEOptions(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_ = RunWithDeps(ctx, params, nil, "test")
+	_ = RunWithDeps(ctx, params, nil, identity.Binary{Version: "test"})
 
 	require.False(t, sseStarted)
 	require.Equal(t, 1, cleanupCalls)
@@ -356,7 +357,7 @@ func TestRunWithDeps_CreateServerErrorSkipsStartAndCleanup(t *testing.T) {
 		},
 	}
 
-	err := RunWithDeps(context.Background(), params, nil, "test")
+	err := RunWithDeps(context.Background(), params, nil, identity.Binary{Version: "test"})
 
 	require.ErrorContains(t, err, "create failed")
 	require.False(t, sseStarted)

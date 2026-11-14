@@ -14,6 +14,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/app"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
@@ -26,10 +27,10 @@ func TestACDCService_StopReleasesTheServerWhenGracefulShutdownTimesOut(t *testin
 
 	var serverCtx context.Context
 	runnerReturned := make(chan struct{})
-	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error {
+	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, binary identity.Binary) error {
 		defer close(runnerReturned)
 		serverCtx = ctx
-		return app.RunWithDeps(ctx, params, flags, version)
+		return app.RunWithDeps(ctx, params, flags, binary)
 	}
 
 	props, err := service.Start()
@@ -68,7 +69,7 @@ func TestACDCService_StopAfterAFailedStartReturnsTheStartupErrorPromptly(t *test
 	service := NewACDCService("stop-after-failed-start", flags)
 	acdc := service.(*acdcService)
 	acdc.StopDelay = time.Minute
-	acdc.runner = func(context.Context, app.RunParams, *pflag.FlagSet, string) error {
+	acdc.runner = func(context.Context, app.RunParams, *pflag.FlagSet, identity.Binary) error {
 		return startupErr
 	}
 
@@ -100,7 +101,7 @@ func TestACDCService_ConcurrentStopsShareTheRunnerResult(t *testing.T) {
 	acdc := service.(*acdcService)
 	acdc.StopDelay = time.Minute
 	release := make(chan struct{})
-	acdc.runner = func(context.Context, app.RunParams, *pflag.FlagSet, string) error {
+	acdc.runner = func(context.Context, app.RunParams, *pflag.FlagSet, identity.Binary) error {
 		<-release
 		return runnerErr
 	}
@@ -137,7 +138,7 @@ func TestACDCService_StopAfterACleanExitBeforeReadinessReturnsTheStartupError(t 
 	service := NewACDCService("clean-exit-before-ready", flags)
 	acdc := service.(*acdcService)
 	acdc.StopDelay = time.Minute
-	acdc.runner = func(context.Context, app.RunParams, *pflag.FlagSet, string) error {
+	acdc.runner = func(context.Context, app.RunParams, *pflag.FlagSet, identity.Binary) error {
 		return nil
 	}
 
@@ -230,7 +231,7 @@ func TestACDCService_StopOverlappingAStartReturnsTheStartupError(t *testing.T) {
 			entered := make(chan struct{})
 			release := make(chan struct{})
 			t.Cleanup(func() { close(release) })
-			acdc.runner = func(ctx context.Context, _ app.RunParams, _ *pflag.FlagSet, _ string) error {
+			acdc.runner = func(ctx context.Context, _ app.RunParams, _ *pflag.FlagSet, _ identity.Binary) error {
 				close(entered)
 				return c.runner(ctx, release)
 			}
@@ -284,7 +285,7 @@ func TestACDCService_StopAfterAReadinessTimeoutReturnsTheStartupError(t *testing
 			acdc.StopDelay = time.Minute
 			acdc.StartTimeout = 50 * time.Millisecond
 			release := make(chan struct{})
-			acdc.runner = func(ctx context.Context, _ app.RunParams, _ *pflag.FlagSet, _ string) error {
+			acdc.runner = func(ctx context.Context, _ app.RunParams, _ *pflag.FlagSet, _ identity.Binary) error {
 				return c.runner(ctx, release)
 			}
 
@@ -360,7 +361,7 @@ func TestACDCService_StartAfterStopFails(t *testing.T) {
 	acdc := service.(*acdcService)
 	acdc.StopDelay = 50 * time.Millisecond
 	ran := make(chan struct{}, 1)
-	acdc.runner = func(context.Context, app.RunParams, *pflag.FlagSet, string) error {
+	acdc.runner = func(context.Context, app.RunParams, *pflag.FlagSet, identity.Binary) error {
 		ran <- struct{}{}
 		return nil
 	}
@@ -393,7 +394,7 @@ func TestACDCService_SecondStartFailsAndLeavesTheFirstRunning(t *testing.T) {
 	acdc := service.(*acdcService)
 	acdc.StopDelay = time.Minute
 	runs := make(chan context.Context, 2)
-	acdc.runner = func(ctx context.Context, _ app.RunParams, _ *pflag.FlagSet, _ string) error {
+	acdc.runner = func(ctx context.Context, _ app.RunParams, _ *pflag.FlagSet, _ identity.Binary) error {
 		runs <- ctx
 		<-ctx.Done()
 		return ctx.Err()
@@ -426,7 +427,7 @@ func TestACDCService_ServerPublishedAfterStopIsNeverServed(t *testing.T) {
 	hookEntered := make(chan struct{})
 	releaseHook := make(chan struct{})
 	hookReturned := make(chan error, 1)
-	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, version string) error {
+	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, binary identity.Binary) error {
 		startSSEServer := params.StartSSEServer
 		params.StartSSEServer = func(logger *slog.Logger, mcpSrv *mcp.Server, settings *config.Settings, opts ...app.SSEOption) error {
 			close(hookEntered)
@@ -435,7 +436,7 @@ func TestACDCService_ServerPublishedAfterStopIsNeverServed(t *testing.T) {
 			hookReturned <- err
 			return err
 		}
-		return app.RunWithDeps(ctx, params, flags, version)
+		return app.RunWithDeps(ctx, params, flags, binary)
 	}
 
 	started := make(chan error, 1)
