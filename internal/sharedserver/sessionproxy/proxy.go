@@ -55,15 +55,25 @@ func Run(ctx context.Context, cfg Config) error {
 
 func serve(ctx context.Context, cfg Config, input *hostInput) error {
 	att, err := establish(ctx, cfg, input.ended)
-	var failure *discoveryError
-	if errors.As(err, &failure) && sessionResult(ctx, err) != nil {
-		return fallBack(ctx, cfg, failure, input)
-	}
 	if err != nil {
-		return sessionResult(ctx, err)
+		return endWithoutAttach(ctx, cfg, err, input)
 	}
 	defer func() { _ = att.conn.Close() }()
 	return sessionResult(ctx, relay(ctx, att.conn, att.fromServer, input, cfg.Stdout))
+}
+
+// endWithoutAttach checks the session end again at the fallback decision:
+// host EOF may be read after discovery returned its failure, and a host that
+// ended is never handed to a per-session server.
+func endWithoutAttach(ctx context.Context, cfg Config, err error, input *hostInput) error {
+	if sessionEnd(ctx, input.ended) != nil {
+		return nil
+	}
+	var failure *discoveryError
+	if errors.As(err, &failure) {
+		return fallBack(ctx, cfg, failure, input)
+	}
+	return sessionResult(ctx, err)
 }
 
 func fallBack(ctx context.Context, cfg Config, failure *discoveryError, input *hostInput) error {
