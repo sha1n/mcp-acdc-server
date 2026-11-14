@@ -50,6 +50,7 @@ type sessionAcceptor struct {
 	// accept loop stops, whatever the reason, so that neither outlives it.
 	ctx         context.Context
 	cancel      context.CancelFunc
+	runCtx      context.Context
 	lingeredOut bool
 	listener    *net.UnixListener
 	endpoint    endpoint.Endpoint
@@ -74,6 +75,7 @@ func startAccepting(ctx context.Context, listener *net.UnixListener, ep endpoint
 		built:    make(chan struct{}),
 		stopped:  make(chan struct{}),
 	}
+	a.runCtx = ctx
 	a.ctx, a.cancel = context.WithCancel(ctx)
 	a.linger = newSessionLinger(linger, realLingerClock{}, a.wake.wake)
 	go func() {
@@ -100,7 +102,8 @@ func (a *sessionAcceptor) serve(server *mcp.Server, revalidate func(context.Cont
 
 // abandon drops every connection after a failed build. A build that failed
 // because the accept loop had already stopped reports why it stopped: an
-// accept error, or nothing for a linger exit, which is a normal exit.
+// accept error, or nothing for a linger exit. A cancelled run context is a
+// signal stop, which is normal wherever it arrives.
 func (a *sessionAcceptor) abandon(buildErr error) error {
 	close(a.built)
 	a.cancel()
@@ -108,7 +111,7 @@ func (a *sessionAcceptor) abandon(buildErr error) error {
 	if a.err != nil {
 		return a.err
 	}
-	if a.lingeredOut {
+	if a.lingeredOut || a.runCtx.Err() != nil {
 		return nil
 	}
 	return buildErr
