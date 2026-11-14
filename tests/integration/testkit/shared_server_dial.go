@@ -112,16 +112,27 @@ func (h *SharedServerHarness) ServeReadyWithoutAnswering(id string) (received fu
 	}
 }
 
-// serveSocket runs handle for every connection accepted at the socket of id.
-// When the test ends the listener and every accepted connection are closed
-// and all handlers have returned.
+// serveSocket runs handle for every connection accepted at the socket of id,
+// as serve does.
 func (h *SharedServerHarness) serveSocket(id string, handle func(net.Conn)) {
+	h.t.Helper()
+	h.serve(h.listenAt(id), handle)
+}
+
+func (h *SharedServerHarness) listenAt(id string) net.Listener {
 	h.t.Helper()
 	socketPath, err := h.Endpoint().SocketPath(id)
 	require.NoError(h.t, err)
 	listener, err := net.Listen("unix", socketPath)
 	require.NoError(h.t, err)
+	return listener
+}
 
+// serve runs handle in its own goroutine for every connection listener
+// accepts. When the test ends, whether or not it has failed and whatever the
+// order of the other cleanups, the listener and every accepted connection are
+// closed and all handlers have returned.
+func (h *SharedServerHarness) serve(listener net.Listener, handle func(net.Conn)) {
 	held := &heldConns{}
 	var handlers sync.WaitGroup
 	stopped := make(chan struct{})
@@ -140,9 +151,7 @@ func (h *SharedServerHarness) serveSocket(id string, handle func(net.Conn)) {
 		}
 	}()
 	h.t.Cleanup(func() {
-		if err := listener.Close(); err != nil {
-			h.t.Errorf("failed to close the test listener: %v", err)
-		}
+		closeTestListener(h, listener)
 		<-stopped
 		held.closeAll(h)
 		handlers.Wait()
@@ -174,7 +183,8 @@ func (c *heldConns) closeAll(h *SharedServerHarness) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, conn := range c.conns {
-		if err := conn.Close(); err != nil {
+		// A handler may have closed its connection already.
+		if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			h.t.Errorf("failed to close a held connection: %v", err)
 		}
 	}

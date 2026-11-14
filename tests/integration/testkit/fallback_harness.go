@@ -14,7 +14,6 @@ import (
 
 	"github.com/sha1n/mcp-acdc-server/internal/app"
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
-	"github.com/stretchr/testify/require"
 )
 
 const fallbackWarningMessage = `msg="Shared server unavailable, continuing as a per-session server"`
@@ -87,36 +86,21 @@ func SendInvalidReadyLine(conn net.Conn) error {
 // listener before breaking the last one, which removes the socket, so the
 // next dial fails and the session proxy spawns a candidate; a limit of zero
 // breaks every connection. accepted counts the connections accepted so far.
+// breakConn must return once its connection is closed: when the test ends
+// every accepted connection is closed and every breakConn has returned.
 func (h *SharedServerHarness) BreakBeforeReady(id string, limit int, breakConn ConnectionBreak) (accepted func() int) {
 	h.t.Helper()
-	socketPath, err := h.Endpoint().SocketPath(id)
-	require.NoError(h.t, err)
-	listener, err := net.Listen("unix", socketPath)
-	require.NoError(h.t, err)
-
+	listener := h.listenAt(id)
 	var count atomic.Int32
-	stopped := make(chan struct{})
-	go func() {
-		defer close(stopped)
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				if !errors.Is(err, net.ErrClosed) {
-					h.t.Errorf("failed to accept at the test socket: %v", err)
-				}
-				return
-			}
-			if n := count.Add(1); limit > 0 && int(n) == limit {
-				closeTestListener(h, listener)
-			}
-			if err := breakConn(conn); err != nil {
-				reportUnlessConnectionEnded(h, "failed to break a connection", err)
-			}
+	h.serve(listener, func(conn net.Conn) {
+		// The session proxy dials again only after this connection breaks,
+		// so the listener is closed before any further dial.
+		if n := count.Add(1); limit > 0 && int(n) == limit {
+			closeTestListener(h, listener)
 		}
-	}()
-	h.t.Cleanup(func() {
-		closeTestListener(h, listener)
-		<-stopped
+		if err := breakConn(conn); err != nil {
+			reportUnlessConnectionEnded(h, "failed to break a connection", err)
+		}
 	})
 	return func() int { return int(count.Load()) }
 }
