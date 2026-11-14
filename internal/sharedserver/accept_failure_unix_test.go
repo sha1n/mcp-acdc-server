@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"syscall"
 	"testing"
 	"time"
@@ -64,7 +65,10 @@ func requireAcceptFailureChildPasses(t *testing.T, child string) {
 
 	require.NoError(t, err, "the child must pass:\n%s", out)
 	assert.Contains(t, string(out), "--- PASS: "+child, "the child must run, not skip:\n%s", out)
+	t.Log(acceptFailureSchedulePattern.FindString(string(out)))
 }
+
+var acceptFailureSchedulePattern = regexp.MustCompile(`schedule: .*`)
 
 func skipUnlessAcceptFailureChild(t *testing.T) {
 	if os.Getenv(acceptFailureEnv) != t.Name() {
@@ -111,10 +115,18 @@ func lowerSoftFilesLimit(t *testing.T) {
 
 type acceptFailureBuild func(buildCtx context.Context, fillers *descriptorFillers) (*mcp.Server, func(), error)
 
-// runAcceptFailureChild exhausts descriptors inside Build and only then
-// connects, so the pending connection makes the accept loop fail with EMFILE.
-// The client socket is allocated before the limit is reached. Only a linger
-// exit unlinks the socket, so an accept failure leaves a stale, undialable one.
+// runAcceptFailureChild exhausts descriptors inside Build and then connects a
+// client socket allocated before the limit was reached. The accept loop runs
+// concurrently, so two schedules are legitimate. If its accept is already
+// pending, the connect wakes it and it fails with EMFILE. On Linux, accept4
+// reserves the descriptor before it looks at the backlog, so an accept that
+// starts after the fill fails with EMFILE on an empty backlog and closes the
+// listener first; the connect is then refused. Neither schedule can be forced
+// without a production seam: an accept parked before the fill is woken only by
+// a connection, so a child that never connects can hang even on Linux. The
+// outcome must be the same for both. Only
+// a linger exit unlinks the socket, so an accept failure leaves a stale,
+// undialable one.
 func runAcceptFailureChild(t *testing.T, build acceptFailureBuild) {
 	dir := shortTempDir(t)
 	logDir := t.TempDir()
@@ -132,10 +144,7 @@ func runAcceptFailureChild(t *testing.T, build acceptFailureBuild) {
 		Linger:          time.Hour,
 		Build: func(buildCtx context.Context, _ *slog.Logger) (*mcp.Server, func(), error) {
 			fillers := fillDescriptors(t)
-			if connectErr := syscall.Connect(client, &syscall.SockaddrUnix{Name: socketPath}); connectErr != nil {
-				fillers.close()
-				t.Errorf("connecting: %v", connectErr)
-			}
+			connectToFailingAcceptLoop(t, client, socketPath, fillers)
 			return build(buildCtx, fillers)
 		},
 	})
@@ -146,4 +155,17 @@ func runAcceptFailureChild(t *testing.T, build acceptFailureBuild) {
 	assert.ErrorIs(t, dialErr, syscall.ECONNREFUSED, "the socket left behind must not be served")
 	assertLockReleased(t, dir)
 	requireOneRunFailureEntry(t, logDir, err)
+}
+
+func connectToFailingAcceptLoop(t *testing.T, client int, socketPath string, fillers *descriptorFillers) {
+	err := syscall.Connect(client, &syscall.SockaddrUnix{Name: socketPath})
+	switch {
+	case err == nil:
+		t.Log("schedule: the connect woke a pending accept")
+	case errors.Is(err, syscall.ECONNREFUSED):
+		t.Log("schedule: the accept failed before the connect")
+	default:
+		fillers.close()
+		t.Errorf("connecting: %v", err)
+	}
 }
