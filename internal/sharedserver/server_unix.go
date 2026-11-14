@@ -13,6 +13,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/endpoint"
 )
 
@@ -25,6 +26,9 @@ import (
 func Run(ctx context.Context, cfg Config) error {
 	if !endpoint.ValidIdentity(cfg.Identity) {
 		return fmt.Errorf("invalid shared server identity %q", cfg.Identity)
+	}
+	if cfg.Linger < config.MinSharedServerLinger {
+		return fmt.Errorf("shared server linger must be at least %s, got: %s", config.MinSharedServerLinger, cfg.Linger)
 	}
 	ep, err := endpoint.OpenEndpoint(cfg.EndpointDir)
 	if err != nil {
