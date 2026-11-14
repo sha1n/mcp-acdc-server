@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
@@ -53,6 +54,10 @@ func runSharedServer(ctx context.Context, params RunParams, settings *config.Set
 	err = sharedserver.Run(ctx, sharedserver.Config{
 		Identity:    identity,
 		EndpointDir: endpointDir,
+		LogDir:      sharedServerLogDir(params),
+		LogStartup: func(logger *slog.Logger) {
+			logSharedServerStartup(logger, settings, version)
+		},
 		Build: func(ctx context.Context) (*mcp.Server, func(), error) {
 			components, err := params.CreateServer(ctx, settings, version)
 			revalidate = components.RevalidateNow

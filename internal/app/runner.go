@@ -20,6 +20,7 @@ type RunParams struct {
 	CreateServer      func(context.Context, *config.Settings, string) (Components, error)
 	CustomIOTransport mcp.Transport // Optional: for testing with custom IO
 	EndpointDir       func() (string, error)
+	LogDir            func() (string, error)
 }
 
 // DefaultRunParams returns production dependencies
@@ -30,6 +31,7 @@ func DefaultRunParams() RunParams {
 		StartSSEServer: StartSSEServer,
 		CreateServer:   CreateServer,
 		EndpointDir:    sharedserver.DefaultEndpointDir,
+		LogDir:         sharedserver.DefaultLogDir,
 	}
 }
 

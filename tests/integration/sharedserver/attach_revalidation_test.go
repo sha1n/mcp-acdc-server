@@ -3,12 +3,9 @@
 package sharedserver
 
 import (
-	"bytes"
 	"context"
-	"log/slog"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
@@ -26,34 +23,6 @@ const (
 	attachRevalidationLateURI = "acdc://late-guide"
 )
 
-type attachRevalidationLogBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (b *attachRevalidationLogBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *attachRevalidationLogBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
-}
-
-// captureAttachRevalidationLogs swaps the process-wide slog default, which the
-// shared server path logs through; tests using it must not run in parallel.
-func captureAttachRevalidationLogs(t *testing.T) *attachRevalidationLogBuffer {
-	t.Helper()
-	logs := &attachRevalidationLogBuffer{}
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
-	t.Cleanup(func() { slog.SetDefault(previous) })
-	return logs
-}
-
 func newAttachRevalidationContentDir(t *testing.T) (contentDir, resourcesDir string) {
 	t.Helper()
 	contentDir = testkit.CreateTestContentDir(t, &testkit.ContentDirOptions{
@@ -62,14 +31,16 @@ func newAttachRevalidationContentDir(t *testing.T) (contentDir, resourcesDir str
 	return contentDir, content.NewContentProvider(contentDir).ResourcesDir
 }
 
-func launchAttachRevalidationServer(t *testing.T, contentDir string) *sharedServerUnderTest {
+func launchAttachRevalidationServer(t *testing.T, contentDir string) (server *sharedServerUnderTest, logDir string) {
 	t.Helper()
-	server := newSharedServerUnderTest(t, newSharedServerSocketTestEndpointDir(t))
+	server = newSharedServerUnderTest(t, newSharedServerSocketTestEndpointDir(t))
 	flags := testkit.NewTestFlags(t, contentDir, &testkit.FlagOptions{Transport: "stdio"})
 	require.NoError(t, flags.Set("shared-server-identity", server.identity))
 
 	params := app.DefaultRunParams()
 	params.EndpointDir = func() (string, error) { return server.endpointDir, nil }
+	logDir = t.TempDir()
+	params.LogDir = func() (string, error) { return logDir, nil }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	server.cancel = cancel
@@ -85,7 +56,7 @@ func launchAttachRevalidationServer(t *testing.T, contentDir string) *sharedServ
 			t.Errorf("shared server did not stop")
 		}
 	})
-	return server
+	return server, logDir
 }
 
 func attachRevalidationSession(t *testing.T, server *sharedServerUnderTest) *sharedServerLineClient {
@@ -137,7 +108,7 @@ func attachRevalidationSearch(t *testing.T, client *sharedServerLineClient, id f
 
 func TestSharedServerAttach_NewSessionListsADocumentAddedWithinTheDebounceWindow(t *testing.T) {
 	contentDir, resourcesDir := newAttachRevalidationContentDir(t)
-	server := launchAttachRevalidationServer(t, contentDir)
+	server, _ := launchAttachRevalidationServer(t, contentDir)
 
 	first := attachRevalidationSession(t, server)
 	// Starts a debounce window, so any refresh a request could trigger before
@@ -158,9 +129,8 @@ func TestSharedServerAttach_FailedRevalidationIsLoggedKeepsTheCatalogAndSendsThe
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions, so the walk cannot be made to fail")
 	}
-	logs := captureAttachRevalidationLogs(t)
 	contentDir, resourcesDir := newAttachRevalidationContentDir(t)
-	server := launchAttachRevalidationServer(t, contentDir)
+	server, logDir := launchAttachRevalidationServer(t, contentDir)
 	attachRevalidationSession(t, server)
 
 	unreadable := filepath.Join(resourcesDir, "unreadable")
@@ -171,13 +141,15 @@ func TestSharedServerAttach_FailedRevalidationIsLoggedKeepsTheCatalogAndSendsThe
 
 	second := attachRevalidationSession(t, server)
 
-	assert.Contains(t, logs.String(), "Catalog refresh failed")
+	logged, err := os.ReadFile(filepath.Join(logDir, server.identity+".log"))
+	require.NoError(t, err)
+	assert.Contains(t, string(logged), "Catalog refresh failed")
 	assert.Equal(t, []string{attachRevalidationSeedURI}, attachRevalidationResourceURIs(t, second, 2))
 }
 
 func TestSharedServerAttach_SearchBySessionANotifiesSessionBOfTheListChange(t *testing.T) {
 	contentDir, resourcesDir := newAttachRevalidationContentDir(t)
-	server := launchAttachRevalidationServer(t, contentDir)
+	server, _ := launchAttachRevalidationServer(t, contentDir)
 	sessionA := attachRevalidationSession(t, server)
 	sessionB := attachRevalidationSession(t, server)
 

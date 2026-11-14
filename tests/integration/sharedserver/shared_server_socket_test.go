@@ -90,6 +90,8 @@ func (s *sharedServerUnderTest) launch(t *testing.T) {
 		return createServer(ctx, settings, version)
 	}
 	params.EndpointDir = func() (string, error) { return s.endpointDir, nil }
+	logDir := t.TempDir()
+	params.LogDir = func() (string, error) { return logDir, nil }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
@@ -162,7 +164,7 @@ func (c *sharedServerLineClient) readReadyLine(t *testing.T) map[string]any {
 	require.Equal(t, true, ready["ready"], "first line must be the ready line: %v", ready)
 	require.Len(t, ready, 3, "ready line carries exactly ready, session and log: %v", ready)
 	assert.Regexp(t, `^[0-9a-f]{8}$`, ready["session"])
-	assert.Equal(t, "", ready["log"])
+	assert.Regexp(t, `^/.+/[0-9a-f]{32}\.log$`, ready["log"], "log must be the absolute path of <identity>.log")
 	return ready
 }
 
