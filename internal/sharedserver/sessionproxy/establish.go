@@ -91,7 +91,7 @@ func discover(ctx context.Context, cfg Config, abort <-chan struct{}) (net.Conn,
 	conn, err := discovery{
 		dial:        func(ctx context.Context) (net.Conn, error) { return dialer.DialContext(ctx, "unix", socketPath) },
 		spawn:       func() error { return cfg.Spawn(identity) },
-		clock:       realClock{},
+		clock:       cfg.clockOrReal(),
 		connectWait: cfg.ConnectWait,
 		logger:      cfg.Logger,
 	}.connect(ctx, abort)
