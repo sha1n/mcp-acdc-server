@@ -22,12 +22,14 @@ func newSessionProxyContentDir(t *testing.T) string {
 }
 
 func TestSessionProxy_RelaysInitializeToolsListAndSearch(t *testing.T) {
-	h := testkit.NewSharedServerHarness(t)
 	args := testkit.SharedLaunchArgs(newSessionProxyContentDir(t))
 	ctx, cancel := context.WithTimeout(context.Background(), testkit.SharedServerDeadline)
 	defer cancel()
+	var session *mcp.ClientSession
 
-	session := h.Launch(args...).Connect(ctx)
+	h := runWinningColdStart(t, func(t *testing.T, h *testkit.SharedServerHarness) {
+		session = h.Launch(args...).Connect(ctx)
+	})
 
 	tools, err := session.ListTools(ctx, nil)
 	require.NoError(t, err)
@@ -41,15 +43,17 @@ func TestSessionProxy_RelaysInitializeToolsListAndSearch(t *testing.T) {
 }
 
 func TestSessionProxy_SecondProxyAttachesToTheSameSharedServer(t *testing.T) {
-	h := testkit.NewSharedServerHarness(t)
 	args := testkit.SharedLaunchArgs(newSessionProxyContentDir(t))
 	ctx, cancel := context.WithTimeout(context.Background(), testkit.SharedServerDeadline)
 	defer cancel()
+	var first, second *mcp.ClientSession
+	var spawnsBeforeSecond int
 
-	first := h.Launch(args...).Connect(ctx)
-	spawnsBeforeSecond := h.Spawns()
-
-	second := h.Launch(args...).Connect(ctx)
+	h := runWinningColdStart(t, func(t *testing.T, h *testkit.SharedServerHarness) {
+		first = h.Launch(args...).Connect(ctx)
+		spawnsBeforeSecond = h.Spawns()
+		second = h.Launch(args...).Connect(ctx)
+	})
 
 	for _, session := range []*mcp.ClientSession{first, second} {
 		_, err := session.ListTools(ctx, nil)

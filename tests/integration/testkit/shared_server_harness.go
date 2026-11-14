@@ -42,6 +42,16 @@ type SharedServerHarness struct {
 	spawns  atomic.Int32
 	builds  atomic.Int32
 	servers sync.WaitGroup
+	exitsMu sync.Mutex
+	exits   []SharedServerExit
+}
+
+// SharedServerExit is how one spawned candidate ended.
+type SharedServerExit struct {
+	Built     bool
+	Err       error
+	SpawnedAt time.Time
+	ExitedAt  time.Time
 }
 
 // NewSharedServerHarness stops every shared server it spawned when the test
@@ -157,11 +167,15 @@ func (h *SharedServerHarness) SpawnSharedServer(args []string) func(string) erro
 		if err != nil {
 			return err
 		}
-		params := h.sharedServerParams()
+		var built atomic.Bool
+		params := h.sharedServerParams(&built)
+		spawnedAt := time.Now()
 		h.servers.Add(1)
 		go func() {
 			defer h.servers.Done()
-			if err := app.RunWithDeps(h.ctx, params, flags, h.Binary); err != nil {
+			err := app.RunWithDeps(h.ctx, params, flags, h.Binary)
+			h.recordExit(SharedServerExit{Built: built.Load(), Err: err, SpawnedAt: spawnedAt, ExitedAt: time.Now()})
+			if err != nil {
 				h.t.Logf("shared server %s stopped with: %v", id, err)
 			}
 		}()
@@ -179,10 +193,25 @@ func (h *SharedServerHarness) SessionProxyParams(args []string) app.RunParams {
 	return params
 }
 
-func (h *SharedServerHarness) sharedServerParams() app.RunParams {
+// SharedServerExits returns how every spawned candidate that has ended so
+// far ended.
+func (h *SharedServerHarness) SharedServerExits() []SharedServerExit {
+	h.exitsMu.Lock()
+	defer h.exitsMu.Unlock()
+	return slices.Clone(h.exits)
+}
+
+func (h *SharedServerHarness) recordExit(exit SharedServerExit) {
+	h.exitsMu.Lock()
+	defer h.exitsMu.Unlock()
+	h.exits = append(h.exits, exit)
+}
+
+func (h *SharedServerHarness) sharedServerParams(built *atomic.Bool) app.RunParams {
 	params := app.DefaultRunParams()
 	createServer := params.CreateServer
 	params.CreateServer = func(ctx context.Context, logger *slog.Logger, settings *config.Settings, version string) (app.Components, error) {
+		built.Store(true)
 		h.builds.Add(1)
 		return createServer(ctx, logger, settings, version)
 	}
