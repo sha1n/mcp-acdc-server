@@ -54,11 +54,11 @@ func Run(ctx context.Context, cfg Config) (err error) {
 	logger, logPath, stopLog := startLog(separateLogDir(cfg.LogDir, cfg.EndpointDir), cfg.Identity)
 	defer stopLog()
 	logger = slog.New(newSessionHandler(logger.Handler()))
-	defer logStoppedOnNormalReturn(logger, &err)
+	defer func() { logReturn(logger, err) }()
 	if cfg.LogStartup != nil {
 		cfg.LogStartup(logger)
 	}
-	if err := checkIdentity(logger, cfg.Identity, cfg.CurrentIdentity); err != nil {
+	if err := checkIdentity(cfg.Identity, cfg.CurrentIdentity); err != nil {
 		return err
 	}
 
@@ -80,21 +80,60 @@ func Run(ctx context.Context, cfg Config) (err error) {
 	return sessions.serve(server, cfg.Revalidate, logPath)
 }
 
-func logStoppedOnNormalReturn(logger *slog.Logger, err *error) {
-	if *err == nil {
-		logger.Info("Shared server stopped")
-	}
+// describedFailure is an error that names its own log entry, so that the one
+// entry logged for a failed return keeps the attributes of its origin.
+type describedFailure interface {
+	error
+	logEntry() (msg string, args []any)
 }
 
-func checkIdentity(logger *slog.Logger, identity string, current func() (string, error)) error {
+// logReturn is the only writer of the entry that ends a run whose log is
+// open: an error return gets exactly one Error entry and no stopped entry.
+func logReturn(logger *slog.Logger, err error) {
+	if err == nil {
+		logger.Info("Shared server stopped")
+		return
+	}
+	var described describedFailure
+	if errors.As(err, &described) {
+		msg, args := described.logEntry()
+		logger.Error(msg, args...)
+		return
+	}
+	logger.Error("Shared server failed", "error", err)
+}
+
+// identityCheckError carries the returned error unchanged, so its text and
+// chain stay those of fmt.Errorf; only the log entry is added.
+type identityCheckError struct {
+	err             error
+	identity        string
+	contentIdentity string
+	cause           error
+}
+
+func (e *identityCheckError) Error() string {
+	return e.err.Error()
+}
+
+func (e *identityCheckError) Unwrap() error {
+	return e.err
+}
+
+func (e *identityCheckError) logEntry() (string, []any) {
+	if e.cause != nil {
+		return "Identity self-check failed", []any{"identity", e.identity, "error", e.cause}
+	}
+	return "Identity self-check failed", []any{"identity", e.identity, "content_identity", e.contentIdentity}
+}
+
+func checkIdentity(identity string, current func() (string, error)) error {
 	actual, err := current()
 	if err != nil {
-		logger.Error("Identity self-check failed", "identity", identity, "error", err)
-		return fmt.Errorf("%w: %w", ErrIdentityMismatch, err)
+		return &identityCheckError{err: fmt.Errorf("%w: %w", ErrIdentityMismatch, err), identity: identity, cause: err}
 	}
 	if actual != identity {
-		logger.Error("Identity self-check failed", "identity", identity, "content_identity", actual)
-		return fmt.Errorf("%w: content identity is %s", ErrIdentityMismatch, actual)
+		return &identityCheckError{err: fmt.Errorf("%w: content identity is %s", ErrIdentityMismatch, actual), identity: identity, contentIdentity: actual}
 	}
 	return nil
 }
