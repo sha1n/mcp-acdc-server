@@ -36,6 +36,8 @@ type dumpLine struct {
 // exactly when the setting it reports takes part in the server identity.
 var dumpLines = []dumpLine{
 	valueLine(identityScope, "content_dir", func(s *Settings) any { return s.ContentDir }),
+	valueLine(identityScope, "uri_scheme", func(s *Settings) any { return s.Scheme }),
+	valueLine(identityScope, "cross_ref", func(s *Settings) any { return s.CrossRef }),
 	valueLine(sessionScope, "transport", func(s *Settings) any { return s.Transport }),
 	onlyIf(usesSSE, valueLine(sessionScope, "host", func(s *Settings) any { return s.Host })),
 	onlyIf(usesSSE, valueLine(sessionScope, "port", func(s *Settings) any { return s.Port })),
@@ -99,59 +101,3 @@ func usesAuth(authType string) func(*Settings) bool {
 func enablesUI(s *Settings) bool { return s.UI.Enabled }
 
 func ignoresUI(s *Settings) bool { return s.UI.Enabled && s.Transport == "stdio" }
-
-// SearchSettingsLogValue returns a slog.Value for SearchSettings with masked data if needed
-func SearchSettingsLogValue(s SearchSettings) slog.Value {
-	return slog.GroupValue(
-		slog.Int("max_results", s.MaxResults),
-		slog.Bool("in_memory", s.InMemory),
-		slog.Float64("keywords_boost", s.KeywordsBoost),
-		slog.Float64("heading_boost", s.HeadingBoost),
-		slog.Float64("path_boost", s.PathBoost),
-		slog.Float64("title_boost", s.TitleBoost),
-		slog.Float64("content_boost", s.ContentBoost),
-		slog.String("result_mode", string(s.ResultMode)),
-	)
-}
-
-// AuthSettingsLogValue returns a slog.Value for AuthSettings with masked data
-func AuthSettingsLogValue(s AuthSettings) slog.Value {
-	keys := make([]string, len(s.APIKeys))
-	for i := range s.APIKeys {
-		keys[i] = "****"
-	}
-	return slog.GroupValue(
-		slog.String("type", s.Type),
-		slog.Any("basic", BasicAuthSettingsLogValue(s.Basic)),
-		slog.Any("api_keys", keys),
-	)
-}
-
-// BasicAuthSettingsLogValue returns a slog.Value for BasicAuthSettings with masked data
-func BasicAuthSettingsLogValue(s BasicAuthSettings) slog.Value {
-	return slog.GroupValue(
-		slog.String("username", s.Username),
-		slog.String("password", "****"),
-	)
-}
-
-// UISettingsLogValue returns a slog.Value for UISettings
-func UISettingsLogValue(s UISettings) slog.Value {
-	return slog.GroupValue(
-		slog.Bool("enabled", s.Enabled),
-		slog.Int("max_results", s.MaxResults),
-	)
-}
-
-// SettingsLogValue returns a slog.Value for Settings with masked data
-func SettingsLogValue(s Settings) slog.Value {
-	return slog.GroupValue(
-		slog.String("content_dir", s.ContentDir),
-		slog.String("transport", s.Transport),
-		slog.String("host", s.Host),
-		slog.Int("port", s.Port),
-		slog.Any("search", SearchSettingsLogValue(s.Search)),
-		slog.Any("auth", AuthSettingsLogValue(s.Auth)),
-		slog.Any("ui", UISettingsLogValue(s.UI)),
-	)
-}

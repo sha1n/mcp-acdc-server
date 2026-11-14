@@ -5,7 +5,6 @@ import (
 	"context"
 	"log/slog"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -122,74 +121,6 @@ func TestLog(t *testing.T) {
 	}
 }
 
-func TestLogValues(t *testing.T) {
-	s := Settings{
-		ContentDir: "/tmp",
-		Transport:  "stdio",
-		Search: SearchSettings{
-			MaxResults: 10,
-			ResultMode: SearchResultModeReferences,
-		},
-		Auth: AuthSettings{
-			Type: AuthTypeBasic,
-			Basic: BasicAuthSettings{
-				Username: "user",
-				Password: "secret-password",
-			},
-			APIKeys: []string{"key1", "key2"},
-		},
-	}
-
-	t.Run("SettingsLogValue", func(t *testing.T) {
-		val := SettingsLogValue(s)
-		assert.Equal(t, slog.KindGroup, val.Kind())
-		attrs := val.Group()
-		attrMap := make(map[string]slog.Value)
-		for _, a := range attrs {
-			attrMap[a.Key] = a.Value
-		}
-		assert.Equal(t, "/tmp", attrMap["content_dir"].String())
-		assert.Equal(t, "stdio", attrMap["transport"].String())
-	})
-
-	t.Run("SearchSettingsLogValue", func(t *testing.T) {
-		val := SearchSettingsLogValue(s.Search)
-		assert.Equal(t, slog.KindGroup, val.Kind())
-		attrs := val.Group()
-		attrMap := make(map[string]slog.Value)
-		for _, a := range attrs {
-			attrMap[a.Key] = a.Value
-		}
-		assert.Equal(t, int64(10), attrMap["max_results"].Int64())
-		assert.Equal(t, "references", attrMap["result_mode"].String())
-	})
-
-	t.Run("AuthSettingsLogValue", func(t *testing.T) {
-		val := AuthSettingsLogValue(s.Auth)
-		assert.Equal(t, slog.KindGroup, val.Kind())
-		attrs := val.Group()
-		attrMap := make(map[string]slog.Value)
-		for _, a := range attrs {
-			attrMap[a.Key] = a.Value
-		}
-		assert.Equal(t, "basic", attrMap["type"].String())
-		keys := attrMap["api_keys"].Any().([]string)
-		assert.Equal(t, []string{"****", "****"}, keys)
-	})
-
-	t.Run("BasicAuthSettingsLogValue", func(t *testing.T) {
-		val := BasicAuthSettingsLogValue(s.Auth.Basic)
-		assert.Equal(t, slog.KindGroup, val.Kind())
-		attrs := val.Group()
-		attrMap := make(map[string]slog.Value)
-		for _, a := range attrs {
-			attrMap[a.Key] = a.Value
-		}
-		assert.Equal(t, "user", attrMap["username"].String())
-		assert.Equal(t, "****", attrMap["password"].String())
-	})
-}
-
 func TestLog_IncludesHeadingAndPathBoosts(t *testing.T) {
 	captured := make(map[string]any)
 	logger := slog.New(&mapHandler{attrs: captured})
@@ -202,19 +133,6 @@ func TestLog_IncludesHeadingAndPathBoosts(t *testing.T) {
 
 	assert.Equal(t, 2.5, captured["Config: search.heading_boost"])
 	assert.Equal(t, 1.25, captured["Config: search.path_boost"])
-}
-
-func TestSearchSettingsLogValue_IncludesHeadingAndPathBoosts(t *testing.T) {
-	attrs := SearchSettingsLogValue(SearchSettings{HeadingBoost: 2.5, PathBoost: 1.25}).Group()
-
-	found := make(map[string]float64)
-	for _, attr := range attrs {
-		if attr.Value.Kind() == slog.KindFloat64 {
-			found[attr.Key] = attr.Value.Float64()
-		}
-	}
-	assert.Equal(t, 2.5, found["heading_boost"])
-	assert.Equal(t, 1.25, found["path_boost"])
 }
 
 // Custom handler for testing LogValue output
@@ -312,26 +230,11 @@ func TestLogWithLogger_LogsUIEnabledWhenDisabled(t *testing.T) {
 	assert.Equal(t, false, captured["Config: ui.enabled"])
 }
 
-func TestSettingsLogValue_IncludesUIGroup(t *testing.T) {
-	attrs := SettingsLogValue(Settings{UI: UISettings{Enabled: true, MaxResults: 42}}).Group()
-
-	var ui slog.Value
-	found := false
-	for _, a := range attrs {
-		if a.Key == "ui" {
-			ui, found = a.Value.Resolve(), true
-		}
-	}
-	require.True(t, found, "SettingsLogValue must include a \"ui\" attribute")
-	require.Equal(t, slog.KindGroup, ui.Kind())
-	uiAttrs := groupAttrs(ui)
-	assert.Equal(t, true, uiAttrs["enabled"].Bool())
-	assert.Equal(t, int64(42), uiAttrs["max_results"].Int64())
-}
-
 func dumpTestSettings(transport string, auth AuthSettings, ui UISettings) *Settings {
 	return &Settings{
 		ContentDir: "/content dir",
+		Scheme:     "docs",
+		CrossRef:   true,
 		Transport:  transport,
 		Host:       "0.0.0.0",
 		Port:       8080,
@@ -381,6 +284,8 @@ func TestLogWithLogger_DumpIsByteIdentical(t *testing.T) {
 				AuthSettings{Type: AuthTypeBasic, Basic: BasicAuthSettings{Username: "alice", Password: "secret"}},
 				UISettings{Enabled: true, MaxResults: 20}),
 			expected: `level=INFO msg="Config: content_dir" value="/content dir"
+level=INFO msg="Config: uri_scheme" value=docs
+level=INFO msg="Config: cross_ref" value=true
 level=INFO msg="Config: transport" value=sse
 level=INFO msg="Config: host" value=0.0.0.0
 level=INFO msg="Config: port" value=8080
@@ -400,6 +305,8 @@ level=INFO msg="Config: ui.max_results" value=20
 				AuthSettings{Type: AuthTypeAPIKey, APIKeys: []string{"k1", "k2"}},
 				UISettings{Enabled: true, MaxResults: 20}),
 			expected: `level=INFO msg="Config: content_dir" value="/content dir"
+level=INFO msg="Config: uri_scheme" value=docs
+level=INFO msg="Config: cross_ref" value=true
 level=INFO msg="Config: transport" value=stdio
 level=INFO msg="Config: server_mode" value=shared
 level=INFO msg="Config: shared_server.connect_wait" value=5s
@@ -417,6 +324,8 @@ level=WARN msg="Web UI requires the sse transport; ui.enabled is ignored"
 				AuthSettings{Type: AuthTypeNone},
 				UISettings{Enabled: false, MaxResults: 20}),
 			expected: `level=INFO msg="Config: content_dir" value="/content dir"
+level=INFO msg="Config: uri_scheme" value=docs
+level=INFO msg="Config: cross_ref" value=true
 level=INFO msg="Config: transport" value=stdio
 level=INFO msg="Config: server_mode" value=shared
 level=INFO msg="Config: shared_server.connect_wait" value=5s
@@ -454,6 +363,8 @@ func TestLogIdentitySettings_DumpsOnlyIdentityRelevantLines(t *testing.T) {
 			got := dumpTestOutput(func(logger *slog.Logger) { LogIdentitySettings(settings, logger) })
 
 			assert.Equal(t, `level=INFO msg="Config: content_dir" value="/content dir"
+level=INFO msg="Config: uri_scheme" value=docs
+level=INFO msg="Config: cross_ref" value=true
 `+dumpTestIdentityLines, got)
 		})
 	}
@@ -489,6 +400,8 @@ func TestLogWithLogger_EdgeValueDumpIsByteIdentical(t *testing.T) {
 			name:     "sse with web UI disabled, zero values and no api keys",
 			settings: &Settings{Transport: "sse", Auth: AuthSettings{Type: AuthTypeAPIKey}},
 			expected: `level=INFO msg="Config: content_dir" value=""
+level=INFO msg="Config: uri_scheme" value=""
+level=INFO msg="Config: cross_ref" value=false
 level=INFO msg="Config: transport" value=sse
 level=INFO msg="Config: host" value=""
 level=INFO msg="Config: port" value=0
@@ -501,6 +414,8 @@ level=INFO msg="Config: ui.enabled" value=false
 			name:     "stdio with ignored web UI, zero values and empty basic credentials",
 			settings: &Settings{Transport: "stdio", Auth: AuthSettings{Type: AuthTypeBasic}, UI: UISettings{Enabled: true}},
 			expected: `level=INFO msg="Config: content_dir" value=""
+level=INFO msg="Config: uri_scheme" value=""
+level=INFO msg="Config: cross_ref" value=false
 level=INFO msg="Config: transport" value=stdio
 ` + dumpTestZeroSessionLines + `level=INFO msg="Config: auth.type" value=basic
 level=INFO msg="Config: auth.basic.username" value=""
@@ -516,6 +431,8 @@ level=WARN msg="Web UI requires the sse transport; ui.enabled is ignored"
 				AuthSettings{Type: AuthTypeNone},
 				UISettings{Enabled: false, MaxResults: 20}),
 			expected: `level=INFO msg="Config: content_dir" value="/content dir"
+level=INFO msg="Config: uri_scheme" value=docs
+level=INFO msg="Config: cross_ref" value=true
 level=INFO msg="Config: transport" value=sse
 level=INFO msg="Config: host" value=0.0.0.0
 level=INFO msg="Config: port" value=8080
@@ -537,11 +454,6 @@ level=INFO msg="Config: ui.enabled" value=false
 	}
 }
 
-// knownUndumpedSettings lists the settings leaves the dump does not report
-// yet. Adding their lines changes the dump output and is tracked by #201;
-// no other leaf may be missing from the dump.
-var knownUndumpedSettings = []string{"uri_scheme", "cross_ref"}
-
 func TestLogWithLogger_DumpsEverySettingsLeaf(t *testing.T) {
 	everyConditionalLine := []*Settings{
 		dumpTestSettings("sse",
@@ -562,17 +474,8 @@ func TestLogWithLogger_DumpsEverySettingsLeaf(t *testing.T) {
 		}
 	}
 
-	leaves := dumpTestSettingsLeaves(reflect.TypeFor[Settings](), "")
-
-	for _, leaf := range leaves {
-		if slices.Contains(knownUndumpedSettings, leaf) {
-			assert.False(t, dumped[leaf], "%s is dumped; remove it from knownUndumpedSettings", leaf)
-			continue
-		}
+	for _, leaf := range dumpTestSettingsLeaves(reflect.TypeFor[Settings](), "") {
 		assert.True(t, dumped[leaf], "settings leaf %s has no dump line", leaf)
-	}
-	for _, leaf := range knownUndumpedSettings {
-		assert.Contains(t, leaves, leaf, "knownUndumpedSettings names %s, which is no settings leaf", leaf)
 	}
 }
 
