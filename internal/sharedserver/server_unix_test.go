@@ -23,7 +23,9 @@ func TestServe_AcceptFailureClosesListenerAndIdleSessions(t *testing.T) {
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil)
 	done := make(chan error, 1)
-	go func() { done <- serve(context.Background(), listener, server, nil, "") }()
+	go func() {
+		done <- startAccepting(context.Background(), listener, socketPath, time.Hour).serve(server, nil, "")
+	}()
 
 	client, err := net.Dial("unix", socketPath)
 	require.NoError(t, err)
@@ -56,12 +58,12 @@ func TestServe_AcceptFailureClosesListenerAndIdleSessions(t *testing.T) {
 }
 
 func TestServe_ContextCancellationReturnsNil(t *testing.T) {
-	listener, _ := bindTestEndpoint(t)
+	listener, socketPath := bindTestEndpoint(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- serve(ctx, listener, mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil), nil, "")
+		done <- startAccepting(ctx, listener, socketPath, time.Hour).serve(mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil), nil, "")
 	}()
 	cancel()
 
