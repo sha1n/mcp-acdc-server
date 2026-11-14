@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -31,6 +32,7 @@ const (
 	awaitTimeout = 15 * time.Second
 	pollInterval = 250 * time.Millisecond
 	stopTimeout  = 5 * time.Second
+	writeTimeout = 5 * time.Second
 )
 
 const modernMeta = `"_meta":{` +
@@ -94,14 +96,18 @@ func (m rpcMessage) answers(id string) bool {
 	return string(m.ID) == id && m.Method == ""
 }
 
+// rawServer talks to the server over net.Pipe rather than io.Pipe because
+// net.Pipe honours write deadlines: a server that stops reading must fail the
+// write, not hang the test goroutine past every other bound.
 type rawServer struct {
-	in      *io.PipeWriter
-	out     *io.PipeWriter
-	lines   chan rpcMessage
-	session *mcp.ServerSession
-	cleanup func()
-	stopped bool
-	nextID  int
+	conn       net.Conn
+	serverConn net.Conn
+	lines      chan rpcMessage
+	done       chan struct{}
+	session    *mcp.ServerSession
+	cleanup    func()
+	stopped    bool
+	nextID     int
 }
 
 func startRawServer(t *testing.T, contentDir string) *rawServer {
@@ -114,28 +120,27 @@ func startRawServer(t *testing.T, contentDir string) *rawServer {
 	components, err := app.CreateServer(context.Background(), settings, "probe")
 	require.NoError(t, err)
 
-	inReader, inWriter := io.Pipe()
-	outReader, outWriter := io.Pipe()
-
-	session, err := components.MCP.Connect(context.Background(), &mcp.IOTransport{Reader: inReader, Writer: outWriter}, nil)
-	require.NoError(t, err)
-
+	clientConn, serverConn := net.Pipe()
 	s := &rawServer{
-		in:      inWriter,
-		out:     outWriter,
-		lines:   make(chan rpcMessage, 64),
-		session: session,
-		cleanup: components.Cleanup,
-		nextID:  100,
+		conn:       clientConn,
+		serverConn: serverConn,
+		lines:      make(chan rpcMessage, 64),
+		done:       make(chan struct{}),
+		cleanup:    components.Cleanup,
+		nextID:     100,
 	}
-	go s.readLines(outReader)
 	t.Cleanup(func() { s.stop(t) })
+
+	session, err := components.MCP.Connect(context.Background(), &mcp.IOTransport{Reader: serverConn, Writer: serverConn}, nil)
+	require.NoError(t, err)
+	s.session = session
+	go s.readLines()
 	return s
 }
 
-func (s *rawServer) readLines(r io.Reader) {
+func (s *rawServer) readLines() {
 	defer close(s.lines)
-	scanner := bufio.NewScanner(r)
+	scanner := bufio.NewScanner(s.conn)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		var msg rpcMessage
@@ -143,14 +148,19 @@ func (s *rawServer) readLines(r io.Reader) {
 			continue
 		}
 		msg.raw = scanner.Text()
-		s.lines <- msg
+		select {
+		case s.lines <- msg:
+		case <-s.done:
+			return
+		}
 	}
 }
 
 func (s *rawServer) send(t *testing.T, line string) {
 	t.Helper()
-	_, err := io.WriteString(s.in, line+"\n")
-	require.NoError(t, err)
+	require.NoError(t, s.conn.SetWriteDeadline(time.Now().Add(writeTimeout)))
+	_, err := io.WriteString(s.conn, line+"\n")
+	require.NoError(t, err, "server did not consume input within %s", writeTimeout)
 }
 
 func (s *rawServer) sendAll(t *testing.T, lines ...string) {
@@ -172,8 +182,6 @@ func (s *rawServer) next(t *testing.T, deadline <-chan time.Time) rpcMessage {
 	}
 }
 
-// awaitListenOutcome returns the first message that settles the listen
-// request: its acknowledgement, or a response (typically an error) to its id.
 func (s *rawServer) awaitListenOutcome(t *testing.T) rpcMessage {
 	t.Helper()
 	deadline := time.After(awaitTimeout)
@@ -226,19 +234,28 @@ func (s *rawServer) stop(t *testing.T) {
 	}
 	s.stopped = true
 
-	_ = s.in.Close()
-	done := make(chan struct{})
+	close(s.done)
+	_ = s.conn.Close()
+	if s.session != nil {
+		s.awaitSessionEnd(t)
+	}
+	_ = s.serverConn.Close()
+	s.cleanup()
+}
+
+func (s *rawServer) awaitSessionEnd(t *testing.T) {
+	t.Helper()
+	ended := make(chan struct{})
 	go func() {
 		_ = s.session.Wait()
-		close(done)
+		close(ended)
 	}()
 	select {
-	case <-done:
+	case <-ended:
 	case <-time.After(stopTimeout):
+		_ = s.session.Close()
 		t.Errorf("server session did not end within %s of input EOF", stopTimeout)
 	}
-	_ = s.out.Close()
-	s.cleanup()
 }
 
 func newContentDir(t *testing.T) string {
