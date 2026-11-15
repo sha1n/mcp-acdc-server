@@ -419,6 +419,56 @@ func TestEstablish_ReportsASessionEndObservedWhileTheSpawnFailureWasClassified(t
 	}
 }
 
+// expiryEndingError ends the session at the moment discovery checks whether
+// the failure is a connect-wait expiry and confirms that it is, so a session
+// end and a classified connect-wait failure meet at the caller's arbitration
+// without a real expiry having to beat the callback that ends the host.
+type expiryEndingError struct {
+	once *sync.Once
+	end  func()
+}
+
+func (e expiryEndingError) Error() string { return "connect wait expired in the candidate" }
+
+func (e expiryEndingError) Is(target error) bool {
+	if target != ErrConnectWaitExpired {
+		return false
+	}
+	e.once.Do(e.end)
+	return true
+}
+
+func TestEstablish_ReportsASessionEndObservedWhileAConnectWaitFailureWasClassified(t *testing.T) {
+	for _, reentry := range []bool{false, true} {
+		for _, way := range sessionEndWays {
+			name := "first attempt/" + way
+			if reentry {
+				name = "re-entry/" + way
+			}
+			t.Run(name, func(t *testing.T) {
+				s := newEndedSession(t)
+				dir := sessionEndTestDir(t)
+				if reentry {
+					dropFirstConnection(t, dir)
+				}
+				cfg := s.config(dir)
+				cfg.Spawn = func(string) error { return expiryEndingError{once: &sync.Once{}, end: s.end(way)} }
+
+				att, err := establish(s.ctx, cfg, s.input.ended)
+
+				require.Nil(t, att)
+				var failure *connectionSetupError
+				require.False(t, errors.As(err, &failure), "a session end classified as a %v failure", err)
+				if way == "stdin EOF" {
+					require.ErrorIs(t, err, errSessionEnded)
+				} else {
+					require.ErrorIs(t, err, context.Canceled)
+				}
+			})
+		}
+	}
+}
+
 func TestEndWithoutAttach_ReturnsAnUnclassifiedFailureWithoutFallingBack(t *testing.T) {
 	s := newEndedSession(t)
 	cfg := s.config(sessionEndTestDir(t))
