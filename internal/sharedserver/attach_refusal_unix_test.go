@@ -13,7 +13,9 @@ import (
 )
 
 func TestAttach_ARefusedAdmissionClosesTheConnectionWithoutAReadyLineOrLogEntry(t *testing.T) {
+	deadline := time.Now().Add(serveTestDeadline)
 	a := newAttributedAttach(t)
+	require.NoError(t, a.client.SetDeadline(deadline))
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	asked := make(chan context.Context, 1)
@@ -30,7 +32,7 @@ func TestAttach_ARefusedAdmissionClosesTheConnectionWithoutAReadyLineOrLogEntry(
 	assert.Empty(t, string(received), "a refused connection must get no ready line")
 	select {
 	case <-a.done:
-	case <-time.After(serveTestDeadline):
+	case <-time.After(time.Until(deadline)):
 		t.Fatal("attach did not return")
 	}
 	assert.Equal(t, ctx, <-asked, "admission must be decided in the attach context")
