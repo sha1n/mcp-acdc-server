@@ -23,9 +23,11 @@ type lineGatedOutput struct {
 	once    sync.Once
 }
 
-func gateHostOutputAt(t *testing.T, cfg *sessionproxy.Config, line string) *lineGatedOutput {
+// gateHostOutputAt runs inside the fixture's configure, before the fixture
+// registers its runner join: the caller registers release after the fixture
+// returns, so the gate opens before that join.
+func gateHostOutputAt(cfg *sessionproxy.Config, line string) *lineGatedOutput {
 	o := &lineGatedOutput{next: cfg.Stdout, gated: line, entered: make(chan struct{}, 1), gate: make(chan struct{})}
-	t.Cleanup(o.release)
 	cfg.Stdout = o
 	return o
 }
@@ -62,8 +64,9 @@ func TestRun_SessionEndWhileAnAnnouncementWriteBlocksEndsTheSession(t *testing.T
 		t.Run(tt.name, func(t *testing.T) {
 			var output *lineGatedOutput
 			o := startOutage(t, func(cfg *sessionproxy.Config) {
-				output = gateHostOutputAt(t, cfg, announcement(resourcesKind, "7"))
+				output = gateHostOutputAt(cfg, announcement(resourcesKind, "7"))
 			})
+			t.Cleanup(output.release)
 			openStream(t, o.host, o.old, listen("7", resourcesKind, promptsKind), acknowledged("7", resourcesKind, promptsKind))
 			o.crash()
 			recovered := replacementListener(t, o)
