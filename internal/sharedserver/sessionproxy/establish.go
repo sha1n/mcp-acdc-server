@@ -15,12 +15,13 @@ import (
 type failureCause string
 
 const (
-	causeIdentity     failureCause = "identity"
-	causeEndpoint     failureCause = "endpoint"
-	causeSocketPath   failureCause = "socket_path"
-	causeSpawn        failureCause = "spawn"
-	causeConnectWait  failureCause = "connect_wait"
-	causeDroppedTwice failureCause = "dropped_twice"
+	causeIdentity          failureCause = "identity"
+	causeEndpoint          failureCause = "endpoint"
+	causeSocketPath        failureCause = "socket_path"
+	causeSpawn             failureCause = "spawn"
+	causeConnectWait       failureCause = "connect_wait"
+	causeDroppedTwice      failureCause = "dropped_twice"
+	causeDroppedInSequence failureCause = "dropped_in_sequence"
 )
 
 // discoveryError is a failure to reach a shared server before anything was

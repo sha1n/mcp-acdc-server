@@ -47,7 +47,7 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return endWithoutAttach(ctx, cfg, err, input)
 	}
-	s := &session{cfg: cfg, input: input, requests: newInFlight()}
+	s := &session{cfg: cfg, input: input, ledger: newLedger()}
 	return sessionResult(ctx, s.serve(ctx, att))
 }
 
