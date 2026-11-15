@@ -2,6 +2,7 @@ package sessionproxy
 
 import (
 	"bufio"
+	"container/list"
 	"context"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ type session struct {
 	cfg      Config
 	input    *hostInput
 	requests *inFlight
+	listens  *listenStreams
 }
 
 type relayEnd struct {
@@ -44,7 +46,7 @@ func (s *session) relay(ctx context.Context, att *attachment) (*connectionLost, 
 	forwarding, stopForwarding := context.WithCancel(ctx)
 	defer stopForwarding()
 	ends := make(chan relayEnd, 2)
-	toServer := trackingWriter{conn: att.conn, requests: s.requests}
+	toServer := trackingWriter{conn: att.conn, requests: s.requests, listens: s.listens}
 	go func() { ends <- relayEnd{toServer: true, err: s.input.forwardTo(forwarding, toServer)} }()
 	go func() { ends <- relayEnd{err: s.copyLines(att.fromServer)} }()
 	select {
@@ -113,9 +115,16 @@ func (s *session) recover(ctx context.Context, crash *connectionLost) (*attachme
 // resynchronize is the recovery sequence between the ready line and the held
 // messages (spec section 7.3, steps 2 to 6). A step that fails closes the
 // connection and returns a classified failure, which fails the recovery
-// instead of discovering again. No step exists yet.
-func (s *session) resynchronize(context.Context, *attachment) error {
-	return nil
+// instead of discovering again.
+func (s *session) resynchronize(ctx context.Context, att *attachment) error {
+	reissues, err := s.reissueListens(ctx, att)
+	if err == nil {
+		err = s.announceListens(ctx, reissues)
+	}
+	if err != nil {
+		_ = att.conn.Close()
+	}
+	return err
 }
 
 // recoveryFailure ends the session whatever happens while it is reported:
@@ -177,23 +186,31 @@ func (s *session) copyLines(fromServer *bufio.Reader) error {
 			return fmt.Errorf("failed to relay to the host: %w", err)
 		}
 		s.requests.answered(line)
+		s.listens.delivered(line)
 	}
 }
 
-// trackingWriter puts a request in flight before writing it, so a response
-// that arrives while the write returns still finds it, and takes it out again
-// when the line was not fully written.
+// trackingWriter puts a request in flight, or a listen stream in the open
+// set, before writing it, so a line that arrives while the write returns
+// still finds it, and takes it out again when the line was not fully written.
 type trackingWriter struct {
 	conn     net.Conn
 	requests *inFlight
+	listens  *listenStreams
 }
 
 func (w trackingWriter) Write(line []byte) (int, error) {
-	handle := w.requests.track(line)
+	stream, isListen := w.listens.track(line)
+	var request *list.Element
+	if !isListen {
+		request = w.requests.track(line)
+	}
 	n, err := w.conn.Write(line)
 	if err != nil {
-		w.requests.untrack(handle)
+		w.requests.untrack(request)
+		w.listens.untrack(stream)
 		return n, &connectionLost{err: err}
 	}
+	w.listens.sent(line)
 	return n, nil
 }
