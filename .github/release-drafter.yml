@@ -2,57 +2,69 @@ name-template: 'v$RESOLVED_VERSION 🌈'
 tag-template: 'v$RESOLVED_VERSION'
 categories:
   - title: '🚀 Features'
-    labels:
-      - 'feature'
-      - 'enhancement'
+    when:
+      labels:
+        - 'feature'
+        - 'enhancement'
   - title: '🐛 Bug Fixes'
-    labels:
-      - 'fix'
-      - 'bugfix'
-      - 'bug'
+    when:
+      labels:
+        - 'fix'
+        - 'bugfix'
+        - 'bug'
   - title: '📖 Documentation'
-    labels:
-      - 'documentation'
-      - 'docs'
+    when:
+      labels:
+        - 'documentation'
+        - 'docs'
   - title: '🧪 Testing'
-    labels:
-      - 'test'
-      - 'testing'
+    when:
+      labels:
+        - 'test'
+        - 'testing'
   - title: '🧰 Maintenance'
-    labels:
-      - 'chore'
-      - 'refactor'
-      - 'style'
-      - 'perf'
-      - 'build'
-      - 'ci'
+    when:
+      labels:
+        - 'chore'
+        - 'refactor'
+        - 'style'
+        - 'perf'
+        - 'build'
+        - 'ci'
   - title: '📦 Dependency Updates'
-    labels:
-      - 'dependencies'
-      - 'deps'
+    when:
+      labels:
+        - 'dependencies'
+        - 'deps'
+  - type: 'version-resolver'
+    semver-increment: 'major'
+    when:
+      labels:
+        - 'major'
+        - 'breaking'
+  - type: 'version-resolver'
+    semver-increment: 'minor'
+    when:
+      labels:
+        - 'minor'
+        - 'feature'
+        - 'enhancement'
+  - type: 'version-resolver'
+    semver-increment: 'patch'
+    when:
+      labels:
+        - 'patch'
+        - 'fix'
+        - 'bugfix'
+        - 'bug'
+        - 'chore'
+        - 'dependencies'
+        - 'documentation'
+        - 'test'
+  - type: 'version-resolver'
+    semver-increment: 'patch'
 change-template: '- $TITLE @$AUTHOR (#$NUMBER)'
 change-title-escapes: '\<*_&#@'
-version-resolver:
-  major:
-    labels:
-      - 'major'
-      - 'breaking'
-  minor:
-    labels:
-      - 'minor'
-      - 'feature'
-      - 'enhancement'
-  patch:
-    labels:
-      - 'patch'
-      - 'fix'
-      - 'bugfix'
-      - 'bug'
-      - 'chore'
-      - 'dependencies'
-      - 'documentation'
-      - 'test'
-  default: patch
 autolabeler:
   - label: 'major'
     title:
