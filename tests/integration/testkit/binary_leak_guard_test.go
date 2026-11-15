@@ -440,21 +440,23 @@ func TestCheckSharedServerLeaks_ReportsWithoutSignallingAHeldLockItCannotAttribu
 	}
 }
 
-// A holder the log does not name yet, because every run of the log stopped
-// or there is no log at all, is reported once the watchdog expires with no
-// startup entry logged and the lock still held.
+// A holder the log does not name as a live run, because every run of the log
+// stopped or there is no log at all, is reported once the watchdog expires
+// with the lock still held. A stopped last run is not attributed even when
+// its pid is the holder carrying the identity: production logs its stopped
+// entry before releasing the lock, so that holder may yet depart.
 func TestCheckSharedServerLeaks_ReportsAHeldLockWithNoLiveRunWhenTheWatchdogExpires(t *testing.T) {
-	for name, log := range map[string]func(d guardDirs, t *testing.T){
-		"every run stopped": func(d guardDirs, t *testing.T) {
-			d.writeLog(t, startupEntry(1, time.Now()), stoppedEntry(time.Now()))
+	for name, log := range map[string]func(d guardDirs, t *testing.T, holderPID int){
+		"the holder's own run stopped": func(d guardDirs, t *testing.T, holderPID int) {
+			d.writeLog(t, startupEntry(holderPID, time.Now()), stoppedEntry(time.Now()))
 		},
-		"no log": func(guardDirs, *testing.T) {},
+		"no log": func(guardDirs, *testing.T, int) {},
 	} {
 		t.Run(name, func(t *testing.T) {
 			deadline := time.Now().Add(guardTestBudget)
 			d := newGuardDirs(t)
 			holder := startFakeSharedServer(t, deadline, d.lockPath, sharedServerArgs(fakeIdentity)...)
-			log(d, t)
+			log(d, t, holder.pid)
 			reporter := &recordingReporter{}
 
 			d.checkExpiring(t, reporter, 10*time.Minute)
@@ -469,18 +471,21 @@ func TestCheckSharedServerLeaks_ReportsAHeldLockWithNoLiveRunWhenTheWatchdogExpi
 // Taking the lock and logging the startup are separate steps a healthy
 // holder may be descheduled between for longer than any short bound: the
 // guard waits under its watchdog and kills the holder once the log names it.
+//
+// A stopped last run whose pid the holder has reused is not the holder's
+// startup entry, so the guard waits for that entry rather than kill on it.
 func TestCheckSharedServerLeaks_KillsAHolderThatLogsItsStartupWhileTheGuardWaits(t *testing.T) {
-	for name, log := range map[string]func(d guardDirs, t *testing.T){
-		"after a stopped run": func(d guardDirs, t *testing.T) {
-			d.writeLog(t, startupEntry(1, time.Now()), stoppedEntry(time.Now()))
+	for name, log := range map[string]func(d guardDirs, t *testing.T, holderPID int){
+		"after a stopped run of the holder's pid": func(d guardDirs, t *testing.T, holderPID int) {
+			d.writeLog(t, startupEntry(holderPID, time.Now()), stoppedEntry(time.Now()))
 		},
-		"into a log yet to be created": func(guardDirs, *testing.T) {},
+		"into a log yet to be created": func(guardDirs, *testing.T, int) {},
 	} {
 		t.Run(name, func(t *testing.T) {
 			deadline := time.Now().Add(guardTestBudget)
 			d := newGuardDirs(t)
 			holder := startFakeSharedServer(t, deadline, d.lockPath, sharedServerArgs(fakeIdentity)...)
-			log(d, t)
+			log(d, t, holder.pid)
 			reporter := &recordingReporter{}
 			done := d.checkInBackground(t, deadline, reporter)
 			requireStillWaiting(t, done)
@@ -495,20 +500,24 @@ func TestCheckSharedServerLeaks_KillsAHolderThatLogsItsStartupWhileTheGuardWaits
 	}
 }
 
-// A holder that departs while the guard waits for its startup entry, or
-// while the logged pid it could not attribute is gone, was no leak.
+// A holder that departs while the guard waits for its startup entry, while
+// the logged pid it could not attribute is gone, or after logging its own
+// stopped entry and before releasing its lock, was no leak.
 func TestCheckSharedServerLeaks_LeavesAHolderThatDepartsWhileTheGuardWaits(t *testing.T) {
-	for name, log := range map[string]func(d guardDirs, t *testing.T, deadline time.Time){
-		"no log": func(guardDirs, *testing.T, time.Time) {},
-		"the logged pid exited": func(d guardDirs, t *testing.T, deadline time.Time) {
+	for name, log := range map[string]func(d guardDirs, t *testing.T, deadline time.Time, holderPID int){
+		"no log": func(guardDirs, *testing.T, time.Time, int) {},
+		"the logged pid exited": func(d guardDirs, t *testing.T, deadline time.Time, _ int) {
 			d.writeLog(t, startupEntry(startDeadProcess(t, deadline), time.Now()))
+		},
+		"the holder's own run stopped": func(d guardDirs, t *testing.T, _ time.Time, holderPID int) {
+			d.writeLog(t, startupEntry(holderPID, time.Now()), stoppedEntry(time.Now()))
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			deadline := time.Now().Add(guardTestBudget)
 			d := newGuardDirs(t)
 			holder := startFakeSharedServer(t, deadline, d.lockPath, sharedServerArgs(fakeIdentity)...)
-			log(d, t, deadline)
+			log(d, t, deadline, holder.pid)
 			reporter := &recordingReporter{}
 			done := d.checkInBackground(t, deadline, reporter)
 			requireStillWaiting(t, done)
