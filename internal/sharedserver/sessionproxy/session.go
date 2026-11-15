@@ -2,7 +2,6 @@ package sessionproxy
 
 import (
 	"bufio"
-	"container/list"
 	"context"
 	"errors"
 	"fmt"
@@ -18,10 +17,9 @@ func (e *connectionLost) Error() string { return "shared server connection lost:
 // session relays one attachment at a time and recovers onto a new one after
 // each crash, through the same establish as the first connect.
 type session struct {
-	cfg      Config
-	input    *hostInput
-	requests *inFlight
-	listens  *listenStreams
+	cfg    Config
+	input  *hostInput
+	ledger *ledger
 }
 
 type relayEnd struct {
@@ -46,7 +44,7 @@ func (s *session) relay(ctx context.Context, att *attachment) (*connectionLost, 
 	forwarding, stopForwarding := context.WithCancel(ctx)
 	defer stopForwarding()
 	ends := make(chan relayEnd, 2)
-	toServer := trackingWriter{conn: att.conn, requests: s.requests, listens: s.listens}
+	toServer := trackingWriter{conn: att.conn, ledger: s.ledger}
 	go func() { ends <- relayEnd{toServer: true, err: s.input.forwardTo(forwarding, toServer)} }()
 	go func() { ends <- relayEnd{err: s.copyLines(att.fromServer)} }()
 	select {
@@ -90,7 +88,7 @@ func (s *session) settle(ctx context.Context, conn net.Conn, stopForwarding cont
 }
 
 func (s *session) recover(ctx context.Context, crash *connectionLost) (*attachment, error) {
-	lost := s.requests.drain()
+	lost := s.ledger.drain()
 	s.cfg.Logger.Warn("Shared server connection lost, recovering", "error", crash, "in_flight", len(lost))
 	if err := s.answerLost(ctx, lost); err != nil {
 		return nil, err
@@ -175,44 +173,40 @@ func (s *session) writeToHost(ctx context.Context, lines [][]byte) error {
 }
 
 // copyLines drops an incomplete trailing line: only complete lines are
-// forwarded. A response clears its request only once the host has it.
+// forwarded. A line's target is resolved before the host can react to it and
+// its effect is committed only once the host has it.
 func (s *session) copyLines(fromServer *bufio.Reader) error {
 	for {
 		line, err := fromServer.ReadBytes('\n')
 		if err != nil {
 			return &connectionLost{err: err}
 		}
+		effect := s.ledger.resolve(decodeLine(line))
 		if _, err := s.cfg.Stdout.Write(line); err != nil {
 			return fmt.Errorf("failed to relay to the host: %w", err)
 		}
-		decoded := decodeLine(line)
-		s.requests.answered(decoded)
-		s.listens.delivered(decoded)
+		s.ledger.deliver(effect)
 	}
 }
 
-// trackingWriter puts a request in flight, or a listen stream in the open
-// set, before writing it, so a line that arrives while the write returns
-// still finds it, and takes it out again when the line was not fully written.
+// trackingWriter registers a request before writing it, so a line that
+// arrives while the write returns still finds it, and undoes exactly that
+// registration when the line was not fully written. A cancellation's target
+// is resolved before the write for the same reason.
 type trackingWriter struct {
-	conn     net.Conn
-	requests *inFlight
-	listens  *listenStreams
+	conn   net.Conn
+	ledger *ledger
 }
 
 func (w trackingWriter) Write(raw []byte) (int, error) {
 	line := decodeLine(raw)
-	stream, isListen := w.listens.track(line)
-	var request *list.Element
-	if !isListen {
-		request = w.requests.track(line)
-	}
+	cancellation := w.ledger.cancellationTarget(line)
+	request := w.ledger.register(line)
 	n, err := w.conn.Write(raw)
 	if err != nil {
-		w.requests.untrack(request)
-		w.listens.untrack(stream)
+		w.ledger.undo(request)
 		return n, &connectionLost{err: err}
 	}
-	w.listens.sent(line)
+	w.ledger.cancel(cancellation)
 	return n, nil
 }

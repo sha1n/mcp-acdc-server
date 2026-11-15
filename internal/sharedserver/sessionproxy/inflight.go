@@ -2,10 +2,8 @@ package sessionproxy
 
 import (
 	"bytes"
-	"container/list"
 	"encoding/json"
 	"strconv"
-	"sync"
 )
 
 const crashErrorPrefix = `{"jsonrpc":"2.0","id":`
@@ -24,35 +22,6 @@ type requestKey struct {
 	unmatchable bool
 }
 
-type inFlightEntry struct {
-	key requestKey
-	id  json.RawMessage
-}
-
-// inFlight holds the requests written to the shared server whose response
-// has not yet been written to the host, oldest first.
-type inFlight struct {
-	mu      sync.Mutex
-	entries list.List
-}
-
-func newInFlight() *inFlight {
-	return &inFlight{}
-}
-
-// track records line if it is a request with an id. The returned handle
-// undoes it when the line could not be fully written; it is nil for any
-// other line, which is forwarded untracked.
-func (f *inFlight) track(line decodedLine) *list.Element {
-	key, id, ok := requestOf(line)
-	if !ok {
-		return nil
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.entries.PushBack(inFlightEntry{key: key, id: id})
-}
-
 // requestOf reads line as a request with an id: go-sdk reads a line as a
 // request only when its method is a string.
 func requestOf(line decodedLine) (requestKey, json.RawMessage, bool) {
@@ -61,47 +30,6 @@ func requestOf(line decodedLine) (requestKey, json.RawMessage, bool) {
 	}
 	key, ok := keyOf(line.id)
 	return key, line.id, ok
-}
-
-func (f *inFlight) untrack(handle *list.Element) {
-	if handle == nil {
-		return
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.entries.Remove(handle)
-}
-
-// answered clears the oldest request the server line responds to, if any.
-func (f *inFlight) answered(line decodedLine) {
-	if !line.object || line.hasMethod {
-		return
-	}
-	key, ok := keyOf(line.id)
-	if !ok || key.unmatchable {
-		return
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for e := f.entries.Front(); e != nil; e = e.Next() {
-		if e.Value.(inFlightEntry).key == key {
-			f.entries.Remove(e)
-			return
-		}
-	}
-}
-
-// drain empties the set and returns the crash error line for each request
-// in it, in send order, echoing the id bytes the host sent.
-func (f *inFlight) drain() [][]byte {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	var lines [][]byte
-	for e := f.entries.Front(); e != nil; e = e.Next() {
-		lines = append(lines, crashAnswer(e.Value.(inFlightEntry).id))
-	}
-	f.entries.Init()
-	return lines
 }
 
 // crashAnswers returns the crash error line for each request among lines, in

@@ -1,12 +1,9 @@
 package sessionproxy
 
 import (
-	"bytes"
-	"container/list"
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync"
 )
 
 const (
@@ -15,144 +12,6 @@ const (
 	cancelledMethod     = "notifications/cancelled"
 	subscriptionIDField = "io.modelcontextprotocol/subscriptionId"
 )
-
-// listenStream is an open subscriptions/listen request: it has no response
-// until the stream ends, so it is repaired at a crash instead of failed.
-type listenStream struct {
-	key  requestKey
-	line []byte
-	// acknowledged records that the host saw the stream's acknowledgement,
-	// so the one of a re-issue must not reach it again.
-	acknowledged bool
-}
-
-// listenStreams holds the open listen streams, oldest first.
-type listenStreams struct {
-	mu      sync.Mutex
-	entries list.List
-}
-
-func newListenStreams() *listenStreams {
-	return &listenStreams{}
-}
-
-// track records line if it is a listen request with an id. The handle undoes
-// it when the line could not be fully written.
-func (l *listenStreams) track(line decodedLine) (*list.Element, bool) {
-	if !line.methodIs(listenMethod) {
-		return nil, false
-	}
-	key, ok := keyOf(line.id)
-	if !ok {
-		return nil, false
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.entries.PushBack(&listenStream{key: key, line: bytes.Clone(line.raw)}), true
-}
-
-func (l *listenStreams) untrack(handle *list.Element) {
-	if handle == nil {
-		return
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.entries.Remove(handle)
-}
-
-// sent ends the stream a host cancellation written to the shared server
-// targets.
-func (l *listenStreams) sent(line decodedLine) {
-	if l.empty() || !line.methodIs(cancelledMethod) {
-		return
-	}
-	var params struct {
-		RequestID json.RawMessage `json:"requestId"`
-	}
-	if json.Unmarshal(line.params, &params) != nil {
-		return
-	}
-	if key, ok := keyOf(params.RequestID); ok {
-		l.remove(key)
-	}
-}
-
-// delivered applies a server line written to the host: an acknowledgement
-// marks its stream, a response ends it.
-func (l *listenStreams) delivered(line decodedLine) {
-	if l.empty() {
-		return
-	}
-	ack, isAck := acknowledgementOf(line)
-	l.deliveredAs(line, ack, isAck)
-}
-
-// deliveredAs is delivered for a line whose acknowledgement the caller has
-// already read.
-func (l *listenStreams) deliveredAs(line decodedLine, ack acknowledgement, isAck bool) {
-	if isAck {
-		l.markAcknowledged(ack.key)
-		return
-	}
-	if !line.object || line.hasMethod {
-		return
-	}
-	if key, ok := keyOf(line.id); ok {
-		l.remove(key)
-	}
-}
-
-func (l *listenStreams) open() []*listenStream {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	var streams []*listenStream
-	for e := l.entries.Front(); e != nil; e = e.Next() {
-		streams = append(streams, e.Value.(*listenStream))
-	}
-	return streams
-}
-
-func (l *listenStreams) isOpen(stream *listenStream) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	for e := l.entries.Front(); e != nil; e = e.Next() {
-		if e.Value == stream {
-			return true
-		}
-	}
-	return false
-}
-
-func (l *listenStreams) empty() bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.entries.Len() == 0
-}
-
-func (l *listenStreams) remove(key requestKey) {
-	if key.unmatchable {
-		return
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	for e := l.entries.Front(); e != nil; e = e.Next() {
-		if e.Value.(*listenStream).key == key {
-			l.entries.Remove(e)
-			return
-		}
-	}
-}
-
-func (l *listenStreams) markAcknowledged(key requestKey) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	for e := l.entries.Front(); e != nil; e = e.Next() {
-		if stream := e.Value.(*listenStream); stream.key == key && !stream.acknowledged {
-			stream.acknowledged = true
-			return
-		}
-	}
-}
 
 // acknowledgement is what the shared server agreed for a listen stream, keyed
 // by the subscription id it stamps (the listen request id as go-sdk reads it).
@@ -188,7 +47,7 @@ func acknowledgementOf(line decodedLine) (acknowledgement, bool) {
 // reissue is one open listen stream re-sent to the new shared server; ack
 // is its acknowledgement there, nil until it arrives.
 type reissue struct {
-	stream *listenStream
+	stream *occurrence
 	ack    *acknowledgement
 }
 
@@ -198,7 +57,7 @@ type reissue struct {
 // host as the relay would forward them.
 func (s *session) reissueListens(ctx context.Context, att *attachment) ([]*reissue, error) {
 	var reissues []*reissue
-	for _, stream := range s.listens.open() {
+	for _, stream := range s.ledger.open() {
 		reissues = append(reissues, &reissue{stream: stream})
 	}
 	if len(reissues) == 0 {
@@ -237,7 +96,7 @@ func droppedDuringReissue(err error) error {
 
 func (s *session) awaitingAcknowledgement(reissues []*reissue) bool {
 	for _, r := range reissues {
-		if r.ack == nil && s.listens.isOpen(r.stream) {
+		if r.ack == nil && s.ledger.isOutstanding(r.stream) {
 			return true
 		}
 	}
@@ -245,30 +104,40 @@ func (s *session) awaitingAcknowledgement(reissues []*reissue) bool {
 }
 
 // applyReissueLine discards the acknowledgement of a re-issue the host
-// already saw acknowledged; every other line reaches the host.
+// already saw acknowledged; every other line reaches the host. A re-issue's
+// acknowledgement goes to the oldest re-issue still open and unacknowledged
+// with its subscription id: one the server ended during the step is no
+// candidate.
 func (s *session) applyReissueLine(ctx context.Context, reissues []*reissue, raw []byte) error {
 	line := decodeLine(raw)
 	ack, isAck := acknowledgementOf(line)
-	if r := acknowledgedReissue(reissues, ack, isAck); r != nil {
+	r := s.acknowledgedReissue(reissues, ack, isAck)
+	if r != nil && r.stream.acknowledged {
 		r.ack = &ack
-		if r.stream.acknowledged {
-			return nil
-		}
+		return nil
+	}
+	var effect delivery
+	if r != nil {
+		effect.target = r.stream
+	} else {
+		effect = s.ledger.resolveAs(line, ack, isAck)
 	}
 	if err := s.writeToHost(ctx, [][]byte{raw}); err != nil {
 		return err
 	}
-	s.requests.answered(line)
-	s.listens.deliveredAs(line, ack, isAck)
+	if r != nil {
+		r.ack = &ack
+	}
+	s.ledger.deliver(effect)
 	return nil
 }
 
-func acknowledgedReissue(reissues []*reissue, ack acknowledgement, isAck bool) *reissue {
+func (s *session) acknowledgedReissue(reissues []*reissue, ack acknowledgement, isAck bool) *reissue {
 	if !isAck {
 		return nil
 	}
 	for _, r := range reissues {
-		if r.ack == nil && r.stream.key == ack.key {
+		if r.ack == nil && r.stream.key == ack.key && s.ledger.isOutstanding(r.stream) {
 			return r
 		}
 	}
@@ -281,7 +150,7 @@ func acknowledgedReissue(reissues []*reissue, ack acknowledgement, isAck bool) *
 func (s *session) announceListens(ctx context.Context, reissues []*reissue) error {
 	var lines [][]byte
 	for _, r := range reissues {
-		if r.ack == nil || !s.listens.isOpen(r.stream) {
+		if r.ack == nil || !s.ledger.isOutstanding(r.stream) {
 			continue
 		}
 		if r.ack.resources {
