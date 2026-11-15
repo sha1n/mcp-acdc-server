@@ -41,6 +41,7 @@ func TestRunWithDeps_SharedServerIdentityEnvironmentVariableHasNoEffect(t *testi
 	RegisterFlags(flags)
 	require.NoError(t, flags.Set("content-dir", t.TempDir()))
 	require.NoError(t, flags.Set("transport", "stdio"))
+	require.NoError(t, flags.Set("server-mode", "session"))
 
 	stdioUsed := false
 	params := RunParams{

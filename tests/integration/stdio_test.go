@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The server mode settings are inert: stdio and SSE launches serve exactly as
-// they did before the settings existed, with or without them.
+// The server mode settings are inert on SSE: a launch serves exactly as it
+// did before the settings existed, with or without them.
 var serverModeFlagVariants = []struct {
 	name  string
 	flags map[string]string
@@ -32,12 +32,13 @@ var serverModeFlagVariants = []struct {
 	}},
 }
 
+// The testkit launches stdio as a per-session server, where the shared server
+// settings are inert.
 func TestStdioServer(t *testing.T) {
-	for _, variant := range serverModeFlagVariants {
-		t.Run(variant.name, func(t *testing.T) {
-			testStdioServer(t, variant.flags)
-		})
-	}
+	testStdioServer(t, map[string]string{
+		"shared-server-connect-wait": "10s",
+		"shared-server-linger":       "2m",
+	})
 }
 
 func testStdioServer(t *testing.T, serverModeFlags map[string]string) {
