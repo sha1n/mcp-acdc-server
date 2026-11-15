@@ -76,13 +76,16 @@ func (b *barrierTestAcceptor) holdListenerDescriptor(t *testing.T) func() {
 	releaseOnce := func() {
 		once.Do(func() {
 			close(release)
-			<-finished
+			if err := <-finished; err != nil {
+				t.Errorf("the listener descriptor hold failed: %v", err)
+			}
 		})
 	}
 	t.Cleanup(releaseOnce)
 	select {
 	case <-held:
 	case err := <-finished:
+		finished <- err
 		t.Fatalf("the listener descriptor could not be held: %v", err)
 	case <-time.After(time.Until(b.deadline)):
 		t.Fatal("the listener descriptor was never held")
