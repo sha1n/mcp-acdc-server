@@ -109,6 +109,30 @@ func TestSessionRecovery_NonObjectHostLineIsForwardedAndNeverGetsASynthesizedErr
 	assert.Zero(t, h.FallbackWarnings())
 }
 
+// go-sdk reads a request only when its method is a string, so it rejects
+// this line and ends the session. The line is not a request, so the session
+// proxy must not answer id 17 with the connection-lost error.
+func TestSessionRecovery_LineWithANonStringMethodIsForwardedAndNeverGetsASynthesizedError(t *testing.T) {
+	deadline := time.Now().Add(testkit.SharedServerDeadline)
+	h := testkit.NewSharedServerHarness(t)
+	l := h.Launch(recoveryLaunchArgs(newSessionProxyContentDir(t))...)
+	first := attachRecords(t, l, 1, deadline)[0]
+
+	l.WriteLine(`{"jsonrpc":"2.0","id":17,"method":7}`)
+
+	awaitServerLogRecords(t, first["log"], slogtext.Record{"msg": sessionEndedWithErrorMessage, "session": first["session"]}, 1, deadline)
+	second := attachRecords(t, l, 2, deadline)[1]
+	assert.NotEqual(t, first["session"], second["session"], "the session recovers with a new session identifier")
+	assert.Equal(t, first["log"], second["log"], "the session recovers onto the same shared server")
+	warnings := stderrRecords(t, l, slogtext.Record{"level": "WARN", "msg": crashWarningMessage})
+	require.Len(t, warnings, 1)
+	assert.Equal(t, "0", warnings[0]["in_flight"], "the line with a non-string method is not in flight")
+
+	requireNextLineAnswersALaterRequest(t, l, "18")
+	assert.Equal(t, 1, h.Builds(), "the session recovers onto the same shared server")
+	assert.Zero(t, h.FallbackWarnings())
+}
+
 func readResponsesByID(t *testing.T, l *testkit.LaunchUnderTest, n int) map[string]rawResponse {
 	t.Helper()
 	responses := make(map[string]rawResponse, n)

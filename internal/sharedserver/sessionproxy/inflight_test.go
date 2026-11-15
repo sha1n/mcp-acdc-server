@@ -84,7 +84,6 @@ func TestInFlight_AnswersAnUnansweredRequestWithItsOriginalIdBytes(t *testing.T)
 		{name: "string with escape", line: `{"jsonrpc":"2.0","id":"A","method":"x"}`, id: `"A"`},
 		{name: "whitespace around members", line: `{ "id" : 3 , "method" : "x" }`, id: `3`},
 		{name: "no jsonrpc member", line: `{"id":4,"method":"x"}`, id: `4`},
-		{name: "method that is not a string", line: `{"jsonrpc":"2.0","id":5,"method":7}`, id: `5`},
 		{name: "CRLF terminated", line: "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"x\"}\r", id: `6`},
 	}
 	for _, tc := range cases {
@@ -112,6 +111,11 @@ func TestInFlight_DoesNotTrackALineThatIsNotARequestWithAnId(t *testing.T) {
 		{name: "object id", line: `{"jsonrpc":"2.0","id":{},"method":"tools/call"}`},
 		{name: "array id", line: `{"jsonrpc":"2.0","id":[1],"method":"tools/call"}`},
 		{name: "id key in another case", line: `{"jsonrpc":"2.0","ID":1,"method":"tools/call"}`},
+		{name: "number method", line: `{"jsonrpc":"2.0","id":5,"method":7}`},
+		{name: "null method", line: `{"jsonrpc":"2.0","id":5,"method":null}`},
+		{name: "boolean method", line: `{"jsonrpc":"2.0","id":5,"method":true}`},
+		{name: "object method", line: `{"jsonrpc":"2.0","id":5,"method":{}}`},
+		{name: "array method", line: `{"jsonrpc":"2.0","id":5,"method":["tools/call"]}`},
 		{name: "host response", line: `{"jsonrpc":"2.0","id":1,"result":{}}`},
 		{name: "host error response", line: `{"jsonrpc":"2.0","id":1,"error":{"code":-1,"message":"no"}}`},
 		{name: "batch", line: `[{"jsonrpc":"2.0","id":1,"method":"tools/call"}]`},
