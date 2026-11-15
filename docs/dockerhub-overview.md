@@ -32,6 +32,8 @@ docker run -i --rm \
   sha1n/mcp-acdc-server:latest
 ```
 
+Under stdio the container's process is a session proxy that starts a detached shared server inside the same container. That shared server ends with the container, so it is shared only by sessions started with `docker exec` in that container. Add `-e ACDC_MCP_SERVER_MODE=session` to run one server process per container. See [Server Mode](https://github.com/sha1n/mcp-acdc-server/blob/master/docs/configuration.md#server-mode).
+
 > **Important:** Since 0.8.0, the on-disk content convention moved from `mcp-metadata.yaml`, `mcp-prompts/`, and `mcp-resources/` to a single `.acdc/` directory; the server refuses to start on the old layout. See [Migrating](https://github.com/sha1n/mcp-acdc-server/blob/master/docs/authoring-resources.md#migrating).
 
 ### Zero-config content
@@ -84,6 +86,9 @@ Every setting is available as a CLI flag or an `ACDC_MCP_*` environment variable
 | `ACDC_MCP_PORT` | Bind port (SSE only) | `8080` |
 | `ACDC_MCP_URI_SCHEME` | Resource URI scheme, e.g. `acdc://guides/setup` | `acdc` |
 | `ACDC_MCP_CROSS_REF` | Rewrite relative Markdown links into resource URIs | `false` |
+| `ACDC_MCP_SERVER_MODE` | `shared` or `session` (stdio only) | `shared` |
+| `ACDC_MCP_SHARED_SERVER_CONNECT_WAIT` | How long a session tries to reach or start a shared server | `5s` |
+| `ACDC_MCP_SHARED_SERVER_LINGER` | How long a shared server keeps running with no attached session | `30s` |
 
 ### Search
 

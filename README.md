@@ -160,6 +160,18 @@ Rows marked **SSE** are read only under `--transport sse`. The `stdio` transport
 
 The credential flags (`--auth-basic-username`, `--auth-basic-password`, `--auth-api-keys`) and the four remaining boost factors (`heading`, `title`, `path`, `content`) are listed in the [Configuration Reference](docs/configuration.md).
 
+## Server mode
+
+On macOS and Linux, stdio launches that share a server identity (same settings, binary version and startup content) share one catalog and search index. Each launch is a session proxy that relays its session to a detached shared server, started on demand by the first launch and stopped after the linger (default `30s`) once no session is attached. A shared server crash is recovered without ending the session, and if no shared server can be used the launch continues as a per-session server. Windows launches and `--transport sse` are unchanged.
+
+| Flag | Environment Variable | Default |
+|------|---------------------|---------|
+| `--server-mode` | `ACDC_MCP_SERVER_MODE` | `shared`; on Windows every launch behaves as `session` |
+| `--shared-server-connect-wait` | `ACDC_MCP_SHARED_SERVER_CONNECT_WAIT` | `5s` |
+| `--shared-server-linger` | `ACDC_MCP_SHARED_SERVER_LINGER` | `30s` |
+
+Opt out with `--server-mode session`. See [Server Mode](docs/configuration.md#server-mode) for the processes, files and logs it creates and its known limitations.
+
 ## Client registration
 
 Because `--content-dir` defaults to the working directory and `.acdc/config.yaml` is optional, the server can be registered once with no content directory. A client that launches the stdio server from the repository root then gets an index of whichever repository it runs in:
