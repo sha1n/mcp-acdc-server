@@ -152,15 +152,10 @@ func checkSharedServerLeaks(r LeakReporter, g leakGuard, watchdog time.Duration)
 		reportErr(r, err)
 		return
 	}
-	ep, err := endpoint.OpenEndpoint(g.endpointDir)
-	if err != nil {
-		reportErr(r, err)
-		return
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), watchdog)
 	defer cancel()
 	for _, identity := range identities {
-		g.checkIdentity(ctx, r, ep, identity)
+		g.checkIdentity(ctx, r, identity)
 	}
 }
 
@@ -178,7 +173,7 @@ func (g leakGuard) identities() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	locks, err := namesWithSuffix(g.endpointDir, ".lock")
+	locks, err := namesWithSuffix(g.endpointDir, lockSuffix)
 	if err != nil {
 		return nil, err
 	}
@@ -204,12 +199,24 @@ func namesWithSuffix(dir, suffix string) ([]string, error) {
 	return names, nil
 }
 
+const lockSuffix = ".lock"
+
+// lockPath is the lock file path production's Endpoint.LockPath names. The
+// guard cannot use it: an Endpoint is obtained only by OpenEndpoint, which
+// creates the directory, and the guard is an observer that creates nothing.
+func (g leakGuard) lockPath(identity string) (string, error) {
+	if !endpoint.ValidIdentity(identity) {
+		return "", fmt.Errorf("invalid shared server identity %q", identity)
+	}
+	return filepath.Join(g.endpointDir, identity+lockSuffix), nil
+}
+
 // checkIdentity reads the log after trying the lock, so a run whose holder
 // the try found is in what it reads, unless that holder has yet to log its
 // startup.
-func (g leakGuard) checkIdentity(ctx context.Context, r LeakReporter, ep endpoint.Endpoint, identity string) {
+func (g leakGuard) checkIdentity(ctx context.Context, r LeakReporter, identity string) {
 	logPath := filepath.Join(g.logDir, identity+".log")
-	lockPath, err := ep.LockPath(identity)
+	lockPath, err := g.lockPath(identity)
 	if err != nil {
 		r.Errorf("leak guard: %s: %v", logPath, err)
 		return
