@@ -42,11 +42,10 @@ func (s attachedSession) signalServer(t *testing.T, sig syscall.Signal) {
 }
 
 // requireNextRequestRecovers sends a request only after the proxy has
-// reported the crash, so the request is held by the recovery instead of
-// being in flight at the crash, and requires its success on a new run of
-// the same log, reached by the session's second attach. It returns the
-// crashed run as read once the new run holds the lock, when the crashed
-// process can no longer write to the log.
+// reported the crash, so the request is never in flight at the crash, and
+// requires its success on a new run of the same log, reached by the
+// session's second attach. It returns the crashed run as read once the new
+// run holds the lock, when the crashed process can no longer write to the log.
 func (s attachedSession) requireNextRequestRecovers(t *testing.T, deadline time.Time) (crashed, recovered testkit.ServerRun) {
 	t.Helper()
 	_, err := s.launch.AwaitStderrRecord(slogtext.Record{"level": "WARN", "msg": "Shared server connection lost, recovering"}, deadline)
