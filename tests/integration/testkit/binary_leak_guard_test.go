@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -226,12 +227,49 @@ func (d guardDirs) guard(maxLinger time.Duration) leakGuard {
 	return leakGuard{logDir: d.logDir, endpointDir: d.endpointDir, maxLinger: maxLinger, grace: time.Second}
 }
 
-func (d guardDirs) check(r LeakReporter, maxLinger time.Duration) {
-	checkSharedServerLeaks(r, d.guard(maxLinger), leakGuardWatchdog)
+func (d guardDirs) check(t *testing.T, r LeakReporter, maxLinger time.Duration) {
+	t.Helper()
+	d.checkUnchanged(t, func() { checkSharedServerLeaks(r, d.guard(maxLinger), leakGuardWatchdog) })
 }
 
-func (d guardDirs) checkExpiring(r LeakReporter, maxLinger time.Duration) {
-	checkSharedServerLeaks(r, d.guard(maxLinger), expiringWatchdog)
+func (d guardDirs) checkExpiring(t *testing.T, r LeakReporter, maxLinger time.Duration) {
+	t.Helper()
+	d.checkUnchanged(t, func() { checkSharedServerLeaks(r, d.guard(maxLinger), expiringWatchdog) })
+}
+
+// checkUnchanged runs a guard invocation and proves it an observer: it
+// creates, removes and modifies nothing in either directory.
+func (d guardDirs) checkUnchanged(t *testing.T, invoke func()) {
+	t.Helper()
+	before := treeOf(t, d.logDir, d.endpointDir)
+	invoke()
+	assert.Equal(t, before, treeOf(t, d.logDir, d.endpointDir), "the leak guard changed a directory it inspects")
+}
+
+type treeEntry struct {
+	mode    fs.FileMode
+	size    int64
+	modTime time.Time
+}
+
+// treeOf records every path under roots; an unreadable or absent root is
+// recorded as such rather than failing, since several tests make one so.
+func treeOf(t *testing.T, roots ...string) map[string]treeEntry {
+	t.Helper()
+	tree := map[string]treeEntry{}
+	for _, root := range roots {
+		_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				tree[path] = treeEntry{mode: fs.ModeIrregular}
+				return nil
+			}
+			info, err := entry.Info()
+			require.NoError(t, err)
+			tree[path] = treeEntry{mode: info.Mode(), size: info.Size(), modTime: info.ModTime()}
+			return nil
+		})
+	}
+	return tree
 }
 
 // checkInBackground runs the guard and returns once it waits on a held lock
@@ -309,7 +347,7 @@ func TestCheckSharedServerLeaks_LeavesTheLoggedProcessWhenTheLockIsFree(t *testi
 	d.writeLog(t, startupEntry(process.pid, time.Now().Add(-time.Hour)))
 	reporter := &recordingReporter{}
 
-	d.check(reporter, time.Second)
+	d.check(t, reporter, time.Second)
 
 	process.requireAlive(t, deadline)
 	assert.Empty(t, reporter.failures)
@@ -334,7 +372,7 @@ func TestCheckSharedServerLeaks_KillsTheLockHolderOfTheLoggedPidAndIdentity(t *t
 			d.writeLog(t, startupEntry(server.pid, c.started))
 			reporter := &recordingReporter{}
 
-			d.check(reporter, c.maxLinger)
+			d.check(t, reporter, c.maxLinger)
 
 			d.requireLockFree(t)
 			server.requireExited(t, deadline)
@@ -358,7 +396,7 @@ func TestCheckSharedServerLeaks_ReportsALiveServerPastTheLingerOfItsOwnExpiryEnt
 	d.writeLog(t, startupEntry(server.pid, started), expiryEntry(started.Add(time.Second), "1s"))
 	reporter := &recordingReporter{}
 
-	d.check(reporter, 10*time.Minute)
+	d.check(t, reporter, 10*time.Minute)
 
 	server.requireExited(t, deadline)
 	require.Len(t, reporter.failures, 1)
@@ -389,7 +427,7 @@ func TestCheckSharedServerLeaks_ReportsWithoutSignallingAHeldLockItCannotAttribu
 			d.writeLog(t, startupEntry(pid, time.Now()))
 			reporter := &recordingReporter{}
 
-			d.checkExpiring(reporter, 10*time.Minute)
+			d.checkExpiring(t, reporter, 10*time.Minute)
 
 			holder.requireAlive(t, deadline)
 			if process != nil {
@@ -419,7 +457,7 @@ func TestCheckSharedServerLeaks_ReportsAHeldLockWithNoLiveRunWhenTheWatchdogExpi
 			log(d, t)
 			reporter := &recordingReporter{}
 
-			d.checkExpiring(reporter, 10*time.Minute)
+			d.checkExpiring(t, reporter, 10*time.Minute)
 
 			holder.requireAlive(t, deadline)
 			require.Len(t, reporter.failures, 1)
@@ -495,11 +533,36 @@ func TestCheckSharedServerLeaks_ReportsALogDirectoryItCannotRead(t *testing.T) {
 	}
 	reporter := &recordingReporter{}
 
-	d.check(reporter, 10*time.Minute)
+	d.check(t, reporter, 10*time.Minute)
 
 	holder.requireAlive(t, deadline)
 	require.NotEmpty(t, reporter.failures)
 	assert.Contains(t, reporter.failures[0], d.logDir)
+}
+
+// With nothing else to check, an enumeration error is the only evidence the
+// guard could not inspect a directory, so it must be reported as such.
+func TestCheckSharedServerLeaks_ReportsADirectoryItCannotListWithNothingElseToCheck(t *testing.T) {
+	for name, unreadable := range map[string]func(guardDirs) string{
+		"log directory":      func(d guardDirs) string { return d.logDir },
+		"endpoint directory": func(d guardDirs) string { return d.endpointDir },
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := newGuardDirs(t)
+			dir := unreadable(d)
+			require.NoError(t, os.Chmod(dir, 0))
+			t.Cleanup(func() { require.NoError(t, os.Chmod(dir, 0o700)) })
+			if _, err := os.ReadDir(dir); err == nil {
+				t.Skip("a mode 000 directory is readable to this user")
+			}
+			reporter := &recordingReporter{}
+
+			d.check(t, reporter, time.Minute)
+
+			require.Len(t, reporter.failures, 1)
+			assert.Contains(t, reporter.failures[0], "could not list "+dir)
+		})
+	}
 }
 
 func TestCheckSharedServerLeaks_NothingToCheckWithoutLogOrEndpointDirectory(t *testing.T) {
@@ -512,12 +575,43 @@ func TestCheckSharedServerLeaks_NothingToCheckWithoutLogOrEndpointDirectory(t *t
 	assert.NoDirExists(t, filepath.Join(root, "endpoint"))
 }
 
+func TestCheckSharedServerLeaks_ReportsAMissingLockOfALogWithoutCreatingTheEndpointDirectory(t *testing.T) {
+	root := t.TempDir()
+	logDir, endpointDir := filepath.Join(root, "logs"), filepath.Join(root, "endpoint")
+	require.NoError(t, os.Mkdir(logDir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(logDir, fakeIdentity+".log"), []byte(startupEntry(1, time.Now())), 0o600))
+	before := treeOf(t, root)
+	reporter := &recordingReporter{}
+
+	checkSharedServerLeaks(reporter, leakGuard{logDir: logDir, endpointDir: endpointDir, grace: time.Second}, leakGuardWatchdog)
+
+	require.Len(t, reporter.failures, 1)
+	assert.Contains(t, reporter.failures[0], "could not try the lock")
+	assert.Contains(t, reporter.failures[0], endpointDir)
+	assert.NoDirExists(t, endpointDir)
+	assert.Equal(t, before, treeOf(t, root))
+}
+
+func TestLeakGuard_LockPathIsTheLockPathOfProduction(t *testing.T) {
+	d := newGuardDirs(t)
+	ep, err := endpoint.OpenEndpoint(d.endpointDir)
+	require.NoError(t, err)
+	for _, identity := range []string{fakeIdentity, otherIdentity, "not an identity", "../" + fakeIdentity, ""} {
+		want, wantErr := ep.LockPath(identity)
+
+		got, err := d.guard(time.Minute).lockPath(identity)
+
+		assert.Equal(t, want, got, identity)
+		assert.Equal(t, wantErr != nil, err != nil, identity)
+	}
+}
+
 func TestCheckSharedServerLeaks_ReportsALockItCannotTake(t *testing.T) {
 	d := newGuardDirs(t)
 	d.writeLog(t, startupEntry(1, time.Now()))
 	reporter := &recordingReporter{}
 
-	d.check(reporter, time.Second)
+	d.check(t, reporter, time.Second)
 
 	require.Len(t, reporter.failures, 1)
 	assert.Contains(t, reporter.failures[0], d.lockPath)
@@ -530,7 +624,7 @@ func TestCheckSharedServerLeaks_ReportsALingerExpiryAfterTheDeadline(t *testing.
 	d.writeLog(t, startupEntry(1, started), expiryEntry(started.Add(time.Minute), "1s"), stoppedEntry(started.Add(time.Minute)))
 	reporter := &recordingReporter{}
 
-	d.check(reporter, 10*time.Minute)
+	d.check(t, reporter, 10*time.Minute)
 
 	require.Len(t, reporter.failures, 1)
 	assert.Contains(t, reporter.failures[0], "after its linger deadline")
