@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -246,9 +247,6 @@ func TestRun_FailedRecoveryAnswersEachHeldRequestForEveryCause(t *testing.T) {
 		{name: "spawn failure", cause: "spawn", wraps: spawnErr, configure: func(cfg *sessionproxy.Config) {
 			cfg.Spawn = func(string) error { return spawnErr }
 		}},
-		{name: "connect wait expired", cause: "connect_wait", wraps: sessionproxy.ErrConnectWaitExpired, configure: func(cfg *sessionproxy.Config) {
-			cfg.ConnectWait = time.Second
-		}},
 		{name: "replacement drops before its ready line twice", cause: "dropped_twice", replace: func(o *outageFixture) {
 			droppingListener(o.t, o.socketPath, "")
 		}},
@@ -379,6 +377,109 @@ func TestRun_FailedRecoveryStillFailsWhenCancelledWhileAnswering(t *testing.T) {
 
 	err := failedRecoveryError(t, o.host.result(), "identity")
 	assert.ErrorIs(t, err, context.Canceled, "the answers were cut short by the cancellation")
+}
+
+// gatedHostOutput holds every write until opened, as a host that is slow to
+// read, and reports each write as it starts.
+type gatedHostOutput struct {
+	entered chan struct{}
+	gate    chan struct{}
+	once    sync.Once
+	lines   chan string
+}
+
+func newGatedHostOutput(t *testing.T) *gatedHostOutput {
+	o := &gatedHostOutput{entered: make(chan struct{}, 16), gate: make(chan struct{}), lines: make(chan string, 16)}
+	t.Cleanup(o.open)
+	return o
+}
+
+func (o *gatedHostOutput) Write(p []byte) (int, error) {
+	o.entered <- struct{}{}
+	<-o.gate
+	o.lines <- string(p)
+	return len(p), nil
+}
+
+func (o *gatedHostOutput) open() { o.once.Do(func() { close(o.gate) }) }
+
+func (o *gatedHostOutput) awaitEntered(t *testing.T) {
+	t.Helper()
+	select {
+	case <-o.entered:
+	case <-time.After(proxyTestDeadline):
+		t.Fatal("the session proxy never wrote to the host")
+	}
+}
+
+// written returns the lines whose writes have returned so far.
+func (o *gatedHostOutput) written() []string {
+	var lines []string
+	for {
+		select {
+		case line := <-o.lines:
+			lines = append(lines, line)
+		default:
+			return lines
+		}
+	}
+}
+
+// rejectedAnsweringCutoff is the time bound on answering that was rejected:
+// a host that is slow to read is still owed every answer.
+const rejectedAnsweringCutoff = 200 * time.Millisecond
+
+func TestRun_FailedRecoveryWaitsForASlowHostToTakeEveryAnswer(t *testing.T) {
+	output := newGatedHostOutput(t)
+	o := startOutage(t, func(cfg *sessionproxy.Config) { cfg.Stdout = output })
+	o.crash()
+	o.hold(request("1"), request(`"two"`))
+	o.release("", errors.New("manifest unreadable"))
+	output.awaitEntered(t)
+
+	select {
+	case err := <-o.host.done:
+		o.host.done <- err
+		t.Fatalf("the session proxy returned while the host was still reading its answers: %v", err)
+	case <-time.After(5 * rejectedAnsweringCutoff):
+	}
+	output.open()
+
+	err := failedRecoveryError(t, o.host.result(), "identity")
+	assert.Equal(t, []string{crashError("1"), crashError(`"two"`)}, output.written(),
+		"every held request was answered before the return")
+	assert.NotErrorIs(t, err, context.DeadlineExceeded)
+	o.requireNoFailureLine()
+}
+
+// noLaterWrite bounds the observation that nothing more is written: a write
+// started after the return would start at once.
+const noLaterWrite = 500 * time.Millisecond
+
+func TestRun_FailedRecoveryStartsNoAnswerAfterACancellationEndsIt(t *testing.T) {
+	output := newGatedHostOutput(t)
+	o := startOutage(t, func(cfg *sessionproxy.Config) { cfg.Stdout = output })
+	o.crash()
+	o.hold(request("1"), request("2"))
+	o.release("", errors.New("manifest unreadable"))
+	output.awaitEntered(t)
+
+	o.host.cancel()
+	err := failedRecoveryError(t, o.host.result(), "identity")
+	assert.ErrorIs(t, err, context.Canceled)
+	output.open()
+
+	select {
+	case line := <-output.lines:
+		assert.Equal(t, crashError("1"), line, "the write entered before the cancellation completes")
+	case <-time.After(proxyTestDeadline):
+		t.Fatal("the entered write never completed")
+	}
+	select {
+	case <-output.entered:
+		t.Fatal("an answer write started after the session proxy returned")
+	case <-time.After(noLaterWrite):
+	}
 }
 
 func TestRun_StdinEOFDuringTheConnectWaitOfARecoveryEndsTheSessionWithoutWaiting(t *testing.T) {

@@ -11,14 +11,17 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// The connect wait bounds the first connect too, so the launch attaches to a
-// shared server that is already listening and its first dial succeeds at
-// once. The recovery's connect wait starts only when the gate releases it,
-// after the test holds the lock and every outage line is held, so it can only
-// expire.
+// The configured connect wait bounds the first connect too, so it is
+// generous: the launch attaches to a shared server that is already listening
+// well within it, however slow the first dial is. The recovery's connect wait
+// starts only when the gate releases it, after the test holds the lock and
+// every outage line is held, so it can only expire; the test deadline allows
+// for that expiry.
+const failedRecoveryConnectWait = 10 * time.Second
+
 func TestSessionFailedRecovery_ConnectWaitExpiryAnswersEveryHeldRequestInHeldOrder(t *testing.T) {
-	deadline := time.Now().Add(testkit.SharedServerDeadline)
-	args := recoveryLaunchArgs(newSessionProxyContentDir(t), "--shared-server-connect-wait", "2s")
+	deadline := time.Now().Add(testkit.SharedServerDeadline + failedRecoveryConnectWait)
+	args := recoveryLaunchArgs(newSessionProxyContentDir(t), "--shared-server-connect-wait", failedRecoveryConnectWait.String())
 	h := testkit.NewSharedServerHarness(t)
 	id, _ := h.HoldSharedServer(args)
 	l, gate := h.LaunchGatingRecovery(args...)
