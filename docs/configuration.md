@@ -281,7 +281,7 @@ The launch never fails because of the server mode. If, before its session is att
 
 #### Document refresh
 
-Documents refresh exactly as before: a shared server re-checks the content on `search`, `read` and resource reads, at most once every 2 seconds, rebuilds the index in place and sends `notifications/resources/list_changed`.
+Documents refresh exactly as before, as described in [Content Refresh](SPECIFICATIONS.md#content-refresh): a shared server re-checks the content on `search`, `read` and resource reads, at most once every 2 seconds; when the content changed it rebuilds the index in place, and when the resource set changed it sends `notifications/resources/list_changed`.
 
 #### Manifest and prompt edits
 
@@ -339,7 +339,7 @@ Every limitation below comes from sharing or proxying and is avoided by [opting 
 
 #### Also on a per-session server
 
-- `resources/list` triggers no refresh check, so its listing can lag until another call (`search`, `read`, a resource read) runs; this is unchanged behaviour on every server. Only a session's first `resources/list` after it is attached is guaranteed to be current. To get a current listing, make one of those calls before calling `resources/list` again.
+- `resources/list` triggers no refresh check, so its listing can lag until another call (`search`, `read`, a resource read) triggers a refresh; this is unchanged behaviour on every server. Those calls check the content at most once every 2 seconds ([Content Refresh](SPECIFICATIONS.md#content-refresh)): after that interval has elapsed since the previous check, one of them triggers a refresh, and a `resources/list` made after it reflects the refreshed catalog. A failed refresh keeps the previous catalog, and a later call retries. On a shared server, attaching a session also checks the content, without waiting for the interval, so the session's first `resources/list` reflects the content at its attach unless that refresh fails.
 - Content fixed at startup is never reloaded in place: a running session keeps the `instructions`, server name, tool descriptions, index include and exclude rules and prompts it started with; only a [recovery](#recovery) moves it to the current manifest and prompts. To pick up an edit to these, start a new session.
 
 #### Test coverage (contributors)
