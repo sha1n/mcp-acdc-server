@@ -162,7 +162,7 @@ The credential flags (`--auth-basic-username`, `--auth-basic-password`, `--auth-
 
 ## Server mode
 
-On macOS and Linux, stdio launches that share a server identity (same settings, binary version and startup content) share one catalog and search index. Each launch is a session proxy that relays its session to a detached shared server, started on demand by the first launch and stopped after the linger (default `30s`) once no session is attached. A shared server crash is recovered without ending the session, and if no shared server can be used the launch continues as a per-session server. Windows launches and `--transport sse` are unchanged.
+On macOS and Linux, stdio launches that share a server identity (same settings, binary version and startup content) share one catalog and search index. Each launch is a session proxy that relays its session to a detached shared server, started on demand by the first launch and stopped after the linger (default `30s`) once no session is attached. After a shared server crash the session proxy attempts recovery without ending the session, and if no shared server can be used the launch continues as a per-session server. Windows launches and `--transport sse` are unchanged.
 
 | Flag | Environment Variable | Default |
 |------|---------------------|---------|
