@@ -39,10 +39,11 @@ func TestSessionProxy_ReapsLosingCandidates(t *testing.T) {
 	env.ReplaceBinary(t, wrapper)
 
 	var spawns []recordedSpawn
-	require.Eventually(t, func() bool {
+	spawned := assert.Eventually(t, func() bool {
 		spawns = readRecordedSpawns(t, spawnsFile)
 		return len(spawns) >= 2
-	}, time.Until(deadline), 20*time.Millisecond, "the proxy did not keep spawning candidates; stderr:\n%s", launch.Stderr())
+	}, time.Until(deadline), 20*time.Millisecond)
+	require.True(t, spawned, "the proxy did not keep spawning candidates; stderr:\n%s", launch.Stderr())
 	proxy := spawns[0].parent
 	require.Eventually(t, func() bool { return allExited(t, spawns[:2]) }, time.Until(deadline), 20*time.Millisecond,
 		"the recorded candidates %v never lost the held lock and exited", spawns[:2])
@@ -57,8 +58,8 @@ func TestSessionProxy_ReapsLosingCandidates(t *testing.T) {
 
 type recordedSpawn struct{ pid, parent int }
 
-// writeSpawnRecordingWrapper copies the real binary aside and writes a
-// wrapper that appends "pid ppid" to spawnsFile before exec'ing it.
+// The wrapper execs the real binary so the recorded pid and parent remain
+// those of the candidate itself.
 func writeSpawnRecordingWrapper(t *testing.T, env *testkit.BinaryEnv) (wrapper, spawnsFile string) {
 	t.Helper()
 	real := filepath.Join(env.Root, "real-acdc-mcp")
