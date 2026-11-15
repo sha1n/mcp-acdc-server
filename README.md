@@ -37,9 +37,9 @@ The design targets four costs that an agent pays when it reads documentation:
 - **Retrieval instead of file walking.** An agent that has no index either reads whole files or greps for a literal string. `search` matches stemmed terms with an edit distance of 1 across five fields — source title, path labels, heading path, content, and keywords — so a query does not have to repeat the document's wording.
 - **Chunk-level results instead of whole documents.** Search returns the section that matched, not the file that contains it. A section is bounded at every heading and soft-split at 4,000 code points, so a hit costs a section rather than a document. `read` can still fetch the full document when the agent decides it needs it.
 - **Citable URIs.** Every result carries a stable `<scheme>://path#fragment` URI and a line range. The agent can quote a source and fetch exactly the same text again later.
-- **No restart after an edit.** The catalog and index re-check the content root on `search`, `read`, and resource reads, debounced to once every 2 seconds, and rebuild when the content actually changed. A document edited mid-session is visible to the next call.
+- **No restart after an edit.** The catalog and index re-check the content root on `search`, `read`, and resource reads, debounced to once every 2 seconds, and rebuild when the content actually changed. A document edited mid-session becomes visible to a call made once that interval has elapsed (see [Content Refresh](docs/SPECIFICATIONS.md#content-refresh)).
 
-The server does not persist an index across restarts, and it does not fetch remote content. It serves what is in the content root at the time of the call.
+The server does not persist an index across restarts, and it does not fetch remote content. It serves what was in the content root at its latest refresh.
 
 ## Installation
 
