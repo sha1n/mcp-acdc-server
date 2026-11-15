@@ -45,10 +45,14 @@ type lineResult struct {
 func (h *SharedServerHarness) Launch(args ...string) *LaunchUnderTest {
 	h.t.Helper()
 	l := StartLaunch(h.t, h.SessionProxyParams(args), h.Binary, args...)
+	h.addLaunch(l)
+	return l
+}
+
+func (h *SharedServerHarness) addLaunch(l *LaunchUnderTest) {
 	h.launchesMu.Lock()
 	defer h.launchesMu.Unlock()
 	h.launches = append(h.launches, l)
-	return l
 }
 
 // Launches returns every launch started with Launch so far.
