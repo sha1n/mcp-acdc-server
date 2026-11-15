@@ -4,6 +4,7 @@ package binary
 
 import (
 	"encoding/json"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -14,19 +15,57 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The binary is replaced by a stub before the server is killed, so every
-// respawn of the recovery yields no server. The identity hashes the
-// executable, so the recovery dials the stub's identity, which the stub
-// records; the test then ends the recovery itself by serving that socket path
-// with a listener that drops every connection before the ready line. The
-// connect wait never expires.
+const failedRecoveryErrorLine = "Error: failed to recover the shared server connection (dropped_twice)"
+
 func TestBinary_AFailedRecoveryAnswersTheHeldRequestAndExitsWithOneErrorLine(t *testing.T) {
 	deadline := time.Now().Add(binaryTestBudget)
+
+	launch, _ := failRecoveryWithAHeldRequest(t, deadline, (*testkit.BinaryEnv).Start)
+
+	stderr := launch.Stderr()
+	assert.Len(t, stderrLinesWithPrefix(stderr, "Error: "), 1, stderr)
+	assert.Len(t, stderrLinesWithPrefix(stderr, failedRecoveryErrorLine), 1, stderr)
+	assert.NotContains(t, stderr, "level=ERROR")
+}
+
+// One pipe carries both streams here, so the order of the lines in it is the
+// order of the writes; the test above attributes them to their streams.
+func TestBinary_AFailedRecoveryAnswersTheHeldRequestBeforeWritingItsErrorLine(t *testing.T) {
+	deadline := time.Now().Add(binaryTestBudget)
+
+	launch, answer := failRecoveryWithAHeldRequest(t, deadline, (*testkit.BinaryEnv).StartInterleaved)
+
+	output := strings.Split(launch.Output(), "\n")
+	answerAt, errorAt := -1, -1
+	for i, line := range output {
+		switch {
+		case line == answer:
+			answerAt = i
+		case strings.HasPrefix(line, "Error: "):
+			require.Equal(t, -1, errorAt, "more than one error line:\n%s", launch.Output())
+			errorAt = i
+		}
+	}
+	require.NotEqual(t, -1, answerAt, "the answer is not in the output:\n%s", launch.Output())
+	require.NotEqual(t, -1, errorAt, "no error line in the output:\n%s", launch.Output())
+	assert.True(t, strings.HasPrefix(output[errorAt], failedRecoveryErrorLine), output[errorAt])
+	assert.Less(t, answerAt, errorAt, "the held request is answered before the error line is written:\n%s", launch.Output())
+}
+
+// failRecoveryWithAHeldRequest replaces the binary by a stub before the
+// server is killed, so every respawn of the recovery yields no server. The
+// identity hashes the executable, so the recovery dials the stub's identity,
+// which the stub records; the test then ends the recovery itself by serving
+// that socket path with a listener that drops every connection before the
+// ready line. The connect wait never expires. It returns the exited launch
+// and the held request's answer, its only stdout line after the handshake.
+func failRecoveryWithAHeldRequest(t *testing.T, deadline time.Time, start func(*testkit.BinaryEnv, testing.TB, ...string) *testkit.BinaryLaunch) (*testkit.BinaryLaunch, string) {
+	t.Helper()
 	env := testkit.NewBinaryEnv(t, acdcBinary)
 	env.UseBinaryCopy(t)
 	stub, spawnedIdentity, err := testkit.WriteRecordingStub(env.Root)
 	require.NoError(t, err)
-	launch := env.Start(t, sharedLaunchArgs(testkit.CreateTestContentDir(t, nil),
+	launch := start(env, t, sharedLaunchArgs(testkit.CreateTestContentDir(t, nil),
 		"--shared-server-linger", "10m", "--shared-server-connect-wait", "10m")...)
 	handshake(t, launch, deadline)
 	session, logPath := awaitIsolatedAttach(t, env, launch, deadline)
@@ -56,8 +95,5 @@ func TestBinary_AFailedRecoveryAnswersTheHeldRequestAndExitsWithOneErrorLine(t *
 	code, err := launch.Wait(deadline)
 	require.NoError(t, err)
 	assert.Equal(t, 1, code)
-	stderr := launch.Stderr()
-	assert.Len(t, stderrLinesWithPrefix(stderr, "Error: "), 1, stderr)
-	assert.Len(t, stderrLinesWithPrefix(stderr, "Error: failed to recover the shared server connection (dropped_twice)"), 1, stderr)
-	assert.NotContains(t, stderr, "level=ERROR")
+	return launch, answer
 }

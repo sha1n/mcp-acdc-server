@@ -118,6 +118,7 @@ type BinaryLaunch struct {
 	stdin    io.WriteCloser
 	lines    chan string
 	stderr   *lockedLines
+	output   *lockedLines
 	done     chan struct{}
 	exitCode int
 	waitErr  error
@@ -127,39 +128,91 @@ type BinaryLaunch struct {
 // the test if it is still running.
 func (e *BinaryEnv) Start(t testing.TB, args ...string) *BinaryLaunch {
 	t.Helper()
-	cmd := exec.Command(e.Binary, args...)
-	cmd.Env = e.env
-	cmd.Dir = e.Root
-	l := &BinaryLaunch{cmd: cmd, lines: make(chan string, 64), stderr: &lockedLines{}, done: make(chan struct{})}
-	cmd.Stderr = l.stderr
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		t.Fatalf("stdin pipe: %v", err)
-	}
-	stdout, err := cmd.StdoutPipe()
+	l := e.newLaunch(args)
+	l.cmd.Stderr = l.stderr
+	stdout, err := l.cmd.StdoutPipe()
 	if err != nil {
 		t.Fatalf("stdout pipe: %v", err)
 	}
-	l.stdin = stdin
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("failed to start %s: %v", e.Binary, err)
-	}
-	go l.pump(stdout)
-	t.Cleanup(l.kill)
+	l.start(t, stdout, nil, l.relayStdoutLine)
 	return l
 }
 
-func (l *BinaryLaunch) pump(stdout io.Reader) {
+// StartInterleaved launches the binary as Start does, but with stdout and
+// stderr on one OS pipe, so Output keeps the order of the writes across
+// both streams. The streams are told apart by content: ReadLine returns the
+// JSON-RPC lines, Stderr the others.
+func (e *BinaryEnv) StartInterleaved(t testing.TB, args ...string) *BinaryLaunch {
+	t.Helper()
+	l := e.newLaunch(args)
+	output, outputWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("output pipe: %v", err)
+	}
+	l.cmd.Stdout, l.cmd.Stderr = outputWriter, outputWriter
+	l.start(t, output, outputWriter, l.classifyOutputLine)
+	return l
+}
+
+func (e *BinaryEnv) newLaunch(args []string) *BinaryLaunch {
+	cmd := exec.Command(e.Binary, args...)
+	cmd.Env = e.env
+	cmd.Dir = e.Root
+	return &BinaryLaunch{cmd: cmd, lines: make(chan string, 64), stderr: &lockedLines{}, output: &lockedLines{}, done: make(chan struct{})}
+}
+
+// start closes childEnd, the parent's copy of a pipe end the child writes, so
+// that the read end ends with the child.
+func (l *BinaryLaunch) start(t testing.TB, stdout io.ReadCloser, childEnd io.Closer, onLine func(string)) {
+	t.Helper()
+	stdin, err := l.cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("stdin pipe: %v", err)
+	}
+	l.stdin = stdin
+	err = l.cmd.Start()
+	if childEnd != nil {
+		_ = childEnd.Close()
+	}
+	if err != nil {
+		_ = stdout.Close()
+		t.Fatalf("failed to start %s: %v", l.cmd.Path, err)
+	}
+	go l.pump(stdout, onLine)
+	t.Cleanup(l.kill)
+}
+
+func (l *BinaryLaunch) pump(stdout io.ReadCloser, onLine func(string)) {
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
-		l.lines <- scanner.Text()
+		onLine(scanner.Text())
 	}
 	close(l.lines)
+	_ = stdout.Close()
 	err := l.cmd.Wait()
 	l.exitCode = l.cmd.ProcessState.ExitCode()
 	l.waitErr = err
 	close(l.done)
+}
+
+func (l *BinaryLaunch) relayStdoutLine(line string) {
+	l.lines <- line
+}
+
+func (l *BinaryLaunch) classifyOutputLine(line string) {
+	_, _ = l.output.Write([]byte(line + "\n"))
+	if strings.HasPrefix(line, "{") {
+		l.lines <- line
+		return
+	}
+	_, _ = l.stderr.Write([]byte(line + "\n"))
+}
+
+// Output returns, in write order, what a StartInterleaved process has
+// written to stdout and stderr so far.
+func (l *BinaryLaunch) Output() string {
+	return l.output.String()
 }
 
 func (l *BinaryLaunch) kill() {
