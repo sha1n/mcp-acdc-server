@@ -28,6 +28,7 @@ type recordingHostLines struct {
 	entered chan struct{}
 	gate    chan struct{}
 	once    sync.Once
+	opened  sync.Once
 	mu      sync.Mutex
 	written []string
 }
@@ -56,6 +57,9 @@ func (r *recordingHostLines) Write(p []byte) (int, error) {
 	}
 	return len(p), nil
 }
+
+// release is idempotent and registered like attachGate.release.
+func (r *recordingHostLines) release() { r.opened.Do(func() { close(r.gate) }) }
 
 func (r *recordingHostLines) lines() []string {
 	r.mu.Lock()
@@ -107,6 +111,7 @@ func TestRun_ServerLineReadAfterTheSessionEndedDuringTheReplayIsNotRelayed(t *te
 			deadline := time.After(proxyTestDeadline)
 			host, configure := recordHostLines()
 			l := startLegacyOutage(t, bothListChanges, configure)
+			t.Cleanup(host.release)
 
 			recovered := l.recoverOnto(request("7"))
 			require.Equal(t, initializeRequest, recovered.readLine())
@@ -116,7 +121,7 @@ func TestRun_ServerLineReadAfterTheSessionEndedDuringTheReplayIsNotRelayed(t *te
 			host.awaitEntered(t, deadline)
 			tc.end(t, l)
 			require.NoError(t, l.host.result())
-			close(host.gate)
+			host.release()
 
 			awaitNoGoroutineIn(t, "sessionproxy.(*session).awaitReplayed", deadline)
 			assert.Equal(t, []string{replayLogA}, host.lines(), "line-b was relayed after the session ended")

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -23,6 +24,7 @@ type attachGate struct {
 	attaches *atomic.Int32
 	entered  chan struct{}
 	gate     chan struct{}
+	opened   sync.Once
 }
 
 func gateRecoveryAttach() (*attachGate, func(*sessionproxy.Config)) {
@@ -41,6 +43,11 @@ func (g *attachGate) Handle(ctx context.Context, record slog.Record) error {
 	return g.Handler.Handle(ctx, record)
 }
 
+// release is idempotent. Tests also register it with t.Cleanup after
+// startLegacyOutage, so a test that fails while the runner is held opens the
+// gate before the fixture's cleanup joins the runner (cleanups run LIFO).
+func (g *attachGate) release() { g.opened.Do(func() { close(g.gate) }) }
+
 func (g *attachGate) awaitEntered(t *testing.T) {
 	t.Helper()
 	select {
@@ -53,11 +60,12 @@ func (g *attachGate) awaitEntered(t *testing.T) {
 func TestRun_DropBeforeTheInitializeIsReplayedFailsTheRecovery(t *testing.T) {
 	gate, configure := gateRecoveryAttach()
 	l := startLegacyOutage(t, bothListChanges, configure)
+	t.Cleanup(gate.release)
 
 	recovered := l.recoverOnto(request("7"))
 	gate.awaitEntered(t)
 	recovered.crash()
-	close(gate.gate)
+	gate.release()
 
 	l.requireFailedWithoutRediscovery("dropped_in_sequence")
 	assert.Contains(t, l.host.result().Error(), "initialize")

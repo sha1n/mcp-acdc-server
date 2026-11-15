@@ -103,8 +103,17 @@ func (l *legacyOutage) replace(held ...string) *fakeSharedConn {
 	}
 	listener, err := net.Listen("unix", l.socketPath)
 	require.NoError(l.t, err)
-	l.t.Cleanup(func() { _ = listener.Close() })
+	accepting := make(chan struct{})
+	l.t.Cleanup(func() {
+		_ = listener.Close()
+		select {
+		case <-accepting:
+		case <-time.After(proxyTestDeadline):
+			l.t.Error("the replacement listener never stopped accepting")
+		}
+	})
 	go func() {
+		defer close(accepting)
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
@@ -312,6 +321,7 @@ type gatedLines struct {
 	entered chan struct{}
 	gate    chan struct{}
 	once    sync.Once
+	opened  sync.Once
 }
 
 func gateHostLine(marker string) (*gatedLines, func(*sessionproxy.Config)) {
@@ -333,6 +343,9 @@ func (g *gatedLines) Write(p []byte) (int, error) {
 	}
 	return g.host.Write(p)
 }
+
+// release is idempotent and registered like attachGate.release.
+func (g *gatedLines) release() { g.opened.Do(func() { close(g.gate) }) }
 
 func (g *gatedLines) awaitEntered(t *testing.T) {
 	t.Helper()
@@ -358,7 +371,7 @@ func TestRun_DropDuringTheLegacyReplayFailsTheRecovery(t *testing.T) {
 			recovered.write(serverLogMessage + l.result)
 			gate.awaitEntered(t)
 			recovered.crash()
-			close(gate.gate)
+			gate.release()
 			assert.Equal(t, serverLogMessage, l.host.readLine())
 		}},
 		{name: "before the setLevel response", setLevel: true, drop: func(t *testing.T, l *legacyOutage, _ *gatedLines, recovered *fakeSharedConn) {
@@ -373,6 +386,7 @@ func TestRun_DropDuringTheLegacyReplayFailsTheRecovery(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			gate, configure := gateHostLine("rebuilt")
 			l := startLegacyOutage(t, bothListChanges, configure)
+			t.Cleanup(gate.release)
 			if tc.setLevel {
 				l.answerOnOld(setLevel("1", "debug"), "1")
 			}
