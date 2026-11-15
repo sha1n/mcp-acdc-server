@@ -195,6 +195,11 @@ func TestSessionAcceptor_AnAttachedSessionOutlivesAListenerCloseThatHasNotComple
 	b.requireDialRefused(t)
 }
 
+// Detection of an early drop is scheduling-dependent: no observable event
+// follows the cancelled handler's decision, so the peek can precede a wrong
+// close. It never fails on correct code; the attached-session test is the
+// deterministic guard of the ordering. Without a production seam no
+// deterministic construction exists.
 func TestSessionAcceptor_AConnectionWaitingForTheBuildIsDroppedOnlyOnceAcceptingHasStopped(t *testing.T) {
 	tests := []struct {
 		name string
@@ -232,6 +237,11 @@ func TestSessionAcceptor_AConnectionWaitingForTheBuildIsDroppedOnlyOnceAccepting
 	}
 }
 
+// Detection of a missing or misplaced admission read is scheduling-dependent:
+// session cancellation can close the transport before a wrong ready write, so
+// the empty read also matches wrong code. It never fails on correct code; the
+// attached-session test is the deterministic guard of the ordering. Without a
+// production seam no deterministic construction exists.
 func TestSessionAcceptor_AConnectionRevalidatedWhileShutdownBeginsGetsNoReadyLine(t *testing.T) {
 	served := make(chan error, 1)
 	b := startBarrierTestAcceptor(t, func(*sessionAcceptor) { assert.NoError(t, <-served) })
