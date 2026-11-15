@@ -151,25 +151,52 @@ func TestAwaitAttach_ReportsTheCandidateExitWhileAnAcceptedPeerWithholdsItsReady
 	}
 }
 
-func TestTryAttach_ClosesItsConnectionWhenCancelledDuringTheReadyRead(t *testing.T) {
-	listener, socketPath := listenUnixInShortDir(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	result := make(chan *attachedSession, 1)
-	go func() { result <- tryAttach(ctx, socketPath) }()
-	peer := acceptWithin(t, listener, SharedServerDeadline)
+// The connection is established before readReadyLine starts, so no dial can
+// absorb the cancellation: whether it lands before or during the read, only
+// the close-on-cancel releases a read of a peer that never writes.
+func TestReadReadyLine_ClosesItsConnectionWhenItsContextEndsWhileThePeerWithholdsItsReadyLine(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		cancelBefore bool
+	}{
+		{name: "cancelled before the read", cancelBefore: true},
+		{name: "cancelled after the call", cancelBefore: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conn, peer := connectedUnixPair(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			if tc.cancelBefore {
+				cancel()
+			}
+			result := make(chan *attachedSession, 1)
+			go func() { result <- readReadyLine(ctx, conn) }()
 
-	cancel()
+			cancel()
 
-	select {
-	case held := <-result:
-		assert.Nil(t, held)
-	case <-time.After(SharedServerDeadline):
-		t.Fatalf("cancellation did not release the ready-line read within %s", SharedServerDeadline)
+			select {
+			case held := <-result:
+				assert.Nil(t, held)
+			case <-time.After(SharedServerDeadline):
+				t.Fatalf("the context's end did not release the ready-line read within %s", SharedServerDeadline)
+			}
+			require.NoError(t, peer.SetReadDeadline(time.Now().Add(SharedServerDeadline)))
+			_, err := peer.Read(make([]byte, 1))
+			assert.ErrorIs(t, err, io.EOF)
+		})
 	}
-	require.NoError(t, peer.SetReadDeadline(time.Now().Add(SharedServerDeadline)))
-	_, err := peer.Read(make([]byte, 1))
-	assert.ErrorIs(t, err, io.EOF)
+}
+
+// connectedUnixPair returns a fully established client connection and its
+// accepted peer, both closed in cleanup. A real socket is used rather than
+// net.Pipe so the read under test is the kernel socket read tryAttach does.
+func connectedUnixPair(t *testing.T) (client, peer *net.UnixConn) {
+	t.Helper()
+	listener, socketPath := listenUnixInShortDir(t)
+	client, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: socketPath, Net: "unix"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+	return client, acceptWithin(t, listener, SharedServerDeadline)
 }
 
 // listenUnixInShortDir closes its listener in cleanup, so a failing test

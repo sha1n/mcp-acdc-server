@@ -106,14 +106,19 @@ func holdFailure(end *candidateEnd) error {
 	}
 }
 
-// tryAttach closes its connection when ctx ends, which also ends a read of a
-// ready line that is never written.
 func tryAttach(ctx context.Context, socketPath string) *attachedSession {
 	var dialer net.Dialer
 	conn, err := dialer.DialContext(ctx, "unix", socketPath)
 	if err != nil {
 		return nil
 	}
+	return readReadyLine(ctx, conn)
+}
+
+// readReadyLine owns conn and closes it when ctx ends, which also ends a read
+// of a ready line that is never written. context.AfterFunc runs at once on a
+// ctx that is already done, so a cancellation before the read is honoured too.
+func readReadyLine(ctx context.Context, conn net.Conn) *attachedSession {
 	closeOnEnd := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	reader := bufio.NewReader(conn)
 	line, err := reader.ReadBytes('\n')
