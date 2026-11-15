@@ -40,7 +40,8 @@ func newInFlight() *inFlight {
 	return &inFlight{}
 }
 
-// track records line if it is a request with an id. The returned handle
+// track records line if it is a request with an id: go-sdk reads a line as
+// a request only when its method is a string. The returned handle
 // undoes it when the line could not be fully written; it is nil for any
 // other line, which is forwarded untracked.
 func (f *inFlight) track(line []byte) *list.Element {
@@ -48,7 +49,7 @@ func (f *inFlight) track(line []byte) *list.Element {
 	if !ok {
 		return nil
 	}
-	if _, isRequest := members["method"]; !isRequest {
+	if !isString(members["method"]) {
 		return nil
 	}
 	key, ok := keyOf(members["id"])
@@ -120,6 +121,12 @@ func objectMembers(line []byte) (map[string]json.RawMessage, bool) {
 		return nil, false
 	}
 	return members, true
+}
+
+// isString needs only the first byte: objectMembers has already validated
+// the whole value.
+func isString(value json.RawMessage) bool {
+	return len(value) > 0 && value[0] == '"'
 }
 
 func keyOf(id json.RawMessage) (requestKey, bool) {
