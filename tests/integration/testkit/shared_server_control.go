@@ -5,6 +5,8 @@ package testkit
 import (
 	"context"
 	"encoding/json"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -65,11 +67,10 @@ type HeldSearches struct {
 // HeldSearchQuery unanswered. It must be called before the first spawn.
 func (h *SharedServerHarness) HoldSearches() *HeldSearches {
 	h.t.Helper()
-	if h.Spawns() != 0 {
-		h.t.Fatal("HoldSearches must be called before the first spawn")
-	}
-	h.heldSearches = &HeldSearches{h: h, received: make(chan struct{}, heldSearchBacklog)}
-	return h.heldSearches
+	h.requireNoSpawn("HoldSearches")
+	held := &HeldSearches{h: h, received: make(chan struct{}, heldSearchBacklog)}
+	h.receiving = append(h.receiving, held.middleware)
+	return held
 }
 
 // AwaitReceived returns once a shared server has received one more held
@@ -107,4 +108,60 @@ func isHeldSearch(method string, req mcp.Request) bool {
 		Query string `json:"query"`
 	}
 	return json.Unmarshal(call.Params.Arguments, &args) == nil && args.Query == HeldSearchQuery
+}
+
+func (h *SharedServerHarness) requireNoSpawn(caller string) {
+	h.t.Helper()
+	if h.Spawns() != 0 {
+		h.t.Fatalf("%s must be called before the first spawn", caller)
+	}
+}
+
+// BuildGate holds the builds of a harness after the ones it lets through.
+type BuildGate struct {
+	h        *SharedServerHarness
+	held     chan struct{}
+	released chan struct{}
+	release  sync.Once
+}
+
+// GateBuildsAfter holds every build of h after the first passed builds until
+// Release, so a session connecting to such a shared server waits for its
+// ready line. Release runs when the test ends. It must be called before the
+// first spawn.
+func (h *SharedServerHarness) GateBuildsAfter(passed int) *BuildGate {
+	h.t.Helper()
+	h.requireNoSpawn("GateBuildsAfter")
+	g := &BuildGate{h: h, held: make(chan struct{}, heldSearchBacklog), released: make(chan struct{})}
+	var builds atomic.Int32
+	h.buildGate = func(ctx context.Context) error {
+		if builds.Add(1) <= int32(passed) {
+			return nil
+		}
+		g.held <- struct{}{}
+		select {
+		case <-g.released:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	h.t.Cleanup(g.Release)
+	return g
+}
+
+// AwaitHeld returns once one more build than earlier calls returned for is
+// held, failing the test if none is within SharedServerDeadline.
+func (g *BuildGate) AwaitHeld() {
+	g.h.t.Helper()
+	select {
+	case <-g.held:
+	case <-time.After(SharedServerDeadline):
+		g.h.t.Fatalf("no build was held within %s", SharedServerDeadline)
+	}
+}
+
+// Release lets every held and later build proceed.
+func (g *BuildGate) Release() {
+	g.release.Do(func() { close(g.released) })
 }

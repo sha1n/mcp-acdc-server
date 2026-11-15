@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/app"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/endpoint"
@@ -47,9 +48,9 @@ type SharedServerHarness struct {
 	// buildGate runs in every build after it is counted; a non-nil error is
 	// returned instead of building. It is set only before the first spawn.
 	buildGate func(context.Context) error
-	// heldSearches, when set, is installed in every build; it is set only
-	// before the first spawn.
-	heldSearches *HeldSearches
+	// receiving is installed in every build; it is set only before the
+	// first spawn.
+	receiving []mcp.Middleware
 
 	candidatesMu sync.Mutex
 	candidates   []*runningCandidate
@@ -249,8 +250,8 @@ func (h *SharedServerHarness) sharedServerParams(built *atomic.Bool) app.RunPara
 			}
 		}
 		components, err := createServer(ctx, logger, settings, version)
-		if err == nil && h.heldSearches != nil {
-			components.MCP.AddReceivingMiddleware(h.heldSearches.middleware)
+		if err == nil {
+			components.MCP.AddReceivingMiddleware(h.receiving...)
 		}
 		return components, err
 	}
