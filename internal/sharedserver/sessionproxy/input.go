@@ -13,11 +13,14 @@ import (
 // attaches it holds every complete line, in order, so a host that writes ahead
 // does not block while the shared server starts. Once attached it hands each
 // line over directly, so a shared server that stops reading pushes back on the
-// host instead of growing the held lines.
+// host instead of growing the held lines. A crash detaches it, and it holds
+// again until the next attach.
 type hostInput struct {
 	mu       sync.Mutex
 	held     [][]byte
 	attached bool
+	detached chan struct{}
+	heldSent func(held int)
 	readErr  error
 	tail     []byte
 	live     chan []byte
@@ -74,49 +77,88 @@ func (in *hostInput) isStopped() bool {
 	}
 }
 
+// deliver holds a line whose hand-off a detach interrupted, unless the input
+// was attached again in the meantime.
 func (in *hostInput) deliver(line []byte) bool {
-	in.mu.Lock()
-	if in.isStopped() {
+	for {
+		in.mu.Lock()
+		if in.isStopped() {
+			in.mu.Unlock()
+			return false
+		}
+		if !in.attached {
+			in.held = append(in.held, line)
+			in.mu.Unlock()
+			return true
+		}
+		detached := in.detached
 		in.mu.Unlock()
-		return false
-	}
-	if !in.attached {
-		in.held = append(in.held, line)
-		in.mu.Unlock()
-		return true
-	}
-	in.mu.Unlock()
-	select {
-	case in.live <- line:
-		return true
-	case <-in.stopped:
-		return false
+		select {
+		case in.live <- line:
+			return true
+		case <-detached:
+		case <-in.stopped:
+			return false
+		}
 	}
 }
 
 // attach ends holding: the lines held so far are returned, in order, and every
-// later line goes through live.
+// later line goes through live until detach.
 func (in *hostInput) attach() [][]byte {
-	in.mu.Lock()
-	defer in.mu.Unlock()
-	in.attached = true
-	held := in.held
-	in.held = nil
+	held, _ := in.attachForwarding()
 	return held
 }
 
+func (in *hostInput) attachForwarding() ([][]byte, func(int)) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	in.attached = true
+	in.detached = make(chan struct{})
+	held := in.held
+	in.held = nil
+	heldSent := in.heldSent
+	in.heldSent = nil
+	return held, heldSent
+}
+
+// detach resumes holding; a line already waiting for the forwarder is held
+// too.
+func (in *hostInput) detach() {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	if in.attached {
+		in.attached = false
+		close(in.detached)
+	}
+}
+
+// onHeldSent registers a call for the next forwardTo once it has written the
+// held lines.
+func (in *hostInput) onHeldSent(heldSent func(held int)) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	in.heldSent = heldSent
+}
+
 // forwardTo writes the held lines, then live ones, until host stdin ends,
-// which is a normal end of the session.
+// which is a normal end of the session, or until ctx ends. Host input is held
+// again from its return on, however late the forwarder started.
 func (in *hostInput) forwardTo(ctx context.Context, w io.Writer) error {
-	if err := writeLines(w, in.attach()); err != nil {
+	held, heldSent := in.attachForwarding()
+	defer in.detach()
+	if err := in.writeLines(w, held); err != nil {
 		return err
+	}
+	if heldSent != nil {
+		heldSent(len(held))
 	}
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case line := <-in.live:
-			if err := writeLines(w, [][]byte{line}); err != nil {
+			if err := in.writeLines(w, [][]byte{line}); err != nil {
 				return err
 			}
 		case <-in.ended:
@@ -134,13 +176,23 @@ func (in *hostInput) endErr() error {
 	return fmt.Errorf("failed to read host input: %w", in.readErr)
 }
 
-func writeLines(w io.Writer, lines [][]byte) error {
-	for _, line := range lines {
+// writeLines holds again, ahead of everything held, the lines from the one
+// whose write failed: a line not fully written is not in flight, so the next
+// shared server gets it.
+func (in *hostInput) writeLines(w io.Writer, lines [][]byte) error {
+	for i, line := range lines {
 		if _, err := w.Write(line); err != nil {
+			in.requeue(lines[i:])
 			return fmt.Errorf("failed to relay to the shared server: %w", err)
 		}
 	}
 	return nil
+}
+
+func (in *hostInput) requeue(lines [][]byte) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	in.held = append(append([][]byte(nil), lines...), in.held...)
 }
 
 // remainder yields the incomplete line read before host stdin ended, once,

@@ -109,7 +109,9 @@ func TestRun_DropsIncompleteSharedServerOutputAtEOF(t *testing.T) {
 	conn.write(readyLine(t) + complete + "{\"id\":2,\"res")
 	require.NoError(t, conn.conn.Close())
 
-	require.ErrorIs(t, awaitRunResult(t, done), io.EOF)
+	server.nextConn()
+	require.NoError(t, hostWriter.Close())
+	require.NoError(t, awaitRunResult(t, done))
 	assert.Equal(t, complete, stdout.String())
 }
 

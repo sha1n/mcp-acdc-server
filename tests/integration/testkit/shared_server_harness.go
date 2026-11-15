@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/app"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/endpoint"
@@ -47,6 +48,12 @@ type SharedServerHarness struct {
 	// buildGate runs in every build after it is counted; a non-nil error is
 	// returned instead of building. It is set only before the first spawn.
 	buildGate func(context.Context) error
+	// receiving is installed in every build; it is set only before the
+	// first spawn.
+	receiving []mcp.Middleware
+
+	candidatesMu sync.Mutex
+	candidates   []*runningCandidate
 
 	launchesMu sync.Mutex
 	launches   []*LaunchUnderTest
@@ -189,10 +196,13 @@ func (h *SharedServerHarness) spawnCandidate(args []string) func(string) (*candi
 		var built atomic.Bool
 		params := h.sharedServerParams(&built)
 		end := &candidateEnd{ended: make(chan struct{})}
+		ctx, cancel := context.WithCancel(h.ctx)
+		h.addCandidate(&runningCandidate{cancel: cancel, end: end})
 		h.servers.Add(1)
 		go func() {
 			defer h.servers.Done()
-			err := app.RunWithDeps(h.ctx, params, flags, h.Binary)
+			defer cancel()
+			err := app.RunWithDeps(ctx, params, flags, h.Binary)
 			end.exit = SharedServerExit{Built: built.Load(), Err: err}
 			h.recordExit(end.exit)
 			close(end.ended)
@@ -239,7 +249,11 @@ func (h *SharedServerHarness) sharedServerParams(built *atomic.Bool) app.RunPara
 				return app.Components{}, err
 			}
 		}
-		return createServer(ctx, logger, settings, version)
+		components, err := createServer(ctx, logger, settings, version)
+		if err == nil {
+			components.MCP.AddReceivingMiddleware(h.receiving...)
+		}
+		return components, err
 	}
 	params.EndpointDir = h.endpointDir
 	params.LogDir = h.logDir

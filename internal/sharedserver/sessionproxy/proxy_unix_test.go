@@ -380,7 +380,7 @@ func TestRun_CancellationEndsTheSessionWellInside500ms(t *testing.T) {
 	}
 }
 
-func TestRun_FailsWhenTheConnectionDropsAfterAttach(t *testing.T) {
+func TestRun_RecoversWhenTheConnectionDropsAfterAttach(t *testing.T) {
 	dir := proxyTestEndpointDir(t)
 	server := newFakeSharedServer(t, dir)
 	host := startProxy(t, sessionproxy.Config{EndpointDir: fixedEndpointDir(dir), Spawn: server.spawn})
@@ -389,5 +389,13 @@ func TestRun_FailsWhenTheConnectionDropsAfterAttach(t *testing.T) {
 
 	require.NoError(t, conn.conn.Close())
 
-	require.Error(t, host.result())
+	recovered := server.nextConn()
+	recovered.sendReady()
+	host.write("{\"id\":1,\"method\":\"ping\"}\n")
+	assert.Equal(t, "{\"id\":1,\"method\":\"ping\"}\n", recovered.readLine())
+	select {
+	case err := <-host.done:
+		t.Fatalf("the session ended at the drop: %v", err)
+	default:
+	}
 }

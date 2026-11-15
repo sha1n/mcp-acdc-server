@@ -62,6 +62,7 @@ func collectColdStartEvidence(h *testkit.SharedServerHarness, designedBuilds int
 		builds:         h.Builds(),
 		spawns:         h.Spawns(),
 		fallbacks:      fallbackRecords(launches),
+		crashes:        crashWarnings(launches),
 	}
 	if len(e.fallbacks) == 0 && e.builds <= designedBuilds {
 		return e
@@ -85,6 +86,14 @@ func fallbackRecords(launches []*testkit.LaunchUnderTest) []fallbackRecord {
 		}
 	}
 	return fallbacks
+}
+
+func crashWarnings(launches []*testkit.LaunchUnderTest) int {
+	crashes := 0
+	for _, l := range launches {
+		crashes += strings.Count(l.Stderr(), fmt.Sprintf("msg=%q", crashWarningMessage))
+	}
+	return crashes
 }
 
 // identityLogs reads every <id>.log in dir. Rotation needs a log far larger

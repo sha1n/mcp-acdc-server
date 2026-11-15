@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/sha1n/mcp-acdc-server/internal/testutil/slogtext"
 	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,6 +45,7 @@ func TestSessionProxy_StdinEOFAfterAttachEndsTheSessionCleanly(t *testing.T) {
 
 	require.NoError(t, l.Wait(testkit.SharedServerDeadline))
 	assert.Zero(t, h.FallbackWarnings(), "the session was attached to a shared server")
+	assert.Empty(t, stderrRecords(t, l, slogtext.Record{"msg": crashWarningMessage}), "the session stayed on its first connection")
 }
 
 func TestSessionProxy_SignalEndsTheSessionPromptlyInEveryPhase(t *testing.T) {

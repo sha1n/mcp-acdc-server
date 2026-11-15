@@ -3,14 +3,12 @@
 package sessionproxy
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
-	"os"
 	"time"
 )
 
@@ -32,8 +30,10 @@ type Config struct {
 }
 
 // Run returns nil when the session ends normally, on host stdin EOF or on
-// cancellation of ctx, and an error when the shared server connection breaks
-// after attach. When discovery fails it returns the result of cfg.Fallback.
+// cancellation of ctx. A shared server connection that breaks after attach is
+// recovered onto a shared server for the identity computed again; Run returns
+// an error when that recovery fails. When discovery fails at first connect it
+// returns the result of cfg.Fallback.
 // It never waits on the shared server or on host stdio to return, since
 // neither can be interrupted.
 func Run(ctx context.Context, cfg Config) error {
@@ -46,8 +46,8 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return endWithoutAttach(ctx, cfg, err, input)
 	}
-	defer func() { _ = att.conn.Close() }()
-	return sessionResult(ctx, relay(ctx, att.conn, att.fromServer, input, cfg.Stdout))
+	s := &session{cfg: cfg, input: input, requests: newInFlight()}
+	return sessionResult(ctx, s.serve(ctx, att))
 }
 
 // endWithoutAttach checks the session end again at the fallback decision:
@@ -77,25 +77,6 @@ func sessionResult(ctx context.Context, err error) error {
 	return err
 }
 
-func relay(ctx context.Context, conn net.Conn, fromServer *bufio.Reader, input *hostInput, stdout io.Writer) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	toServer := make(chan error, 1)
-	toHost := make(chan error, 1)
-	go func() { toServer <- input.forwardTo(ctx, conn) }()
-	go func() { toHost <- copyLines(stdout, fromServer) }()
-	select {
-	case <-ctx.Done():
-		return nil
-	case err := <-toServer:
-		return err
-	case err := <-toHost:
-		return err
-	case <-input.ended:
-		return finishInput(ctx, conn, toServer, input)
-	}
-}
-
 // eofWriteLimit bounds delivering the lines read before host stdin ended: a
 // shared server that stopped reading must not hold the exit beyond the 500 ms
 // of spec sections 5.6 and 6.5.
@@ -103,32 +84,25 @@ const eofWriteLimit = 200 * time.Millisecond
 
 // finishInput delivers every line read before host stdin ended, as a
 // per-session server reads up to EOF; only a write the shared server does not
-// take within eofWriteLimit is cut off.
-func finishInput(ctx context.Context, conn net.Conn, toServer <-chan error, input *hostInput) error {
+// take within eofWriteLimit is cut off. The session has ended, so a broken
+// connection is not recovered.
+func finishInput(ctx context.Context, conn net.Conn, ends <-chan relayEnd, input *hostInput) error {
 	if err := conn.SetWriteDeadline(time.Now().Add(eofWriteLimit)); err != nil {
 		return fmt.Errorf("failed to bound the final relay to the shared server: %w", err)
 	}
-	select {
-	case <-ctx.Done():
-		return nil
-	case err := <-toServer:
-		if errors.Is(err, os.ErrDeadlineExceeded) {
-			return input.endErr()
-		}
-		return err
-	}
-}
-
-// copyLines drops an incomplete trailing line: only complete lines are
-// forwarded.
-func copyLines(dst io.Writer, src *bufio.Reader) error {
 	for {
-		line, err := src.ReadBytes('\n')
-		if err != nil {
-			return fmt.Errorf("shared server connection lost: %w", err)
-		}
-		if _, err := dst.Write(line); err != nil {
-			return fmt.Errorf("failed to relay to the host: %w", err)
+		select {
+		case <-ctx.Done():
+			return nil
+		case end := <-ends:
+			if !end.toServer {
+				continue
+			}
+			var lost *connectionLost
+			if errors.As(end.err, &lost) {
+				return input.endErr()
+			}
+			return end.err
 		}
 	}
 }

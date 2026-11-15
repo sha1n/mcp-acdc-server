@@ -8,8 +8,10 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/sha1n/mcp-acdc-server/internal/testutil/slogtext"
 	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,9 +57,10 @@ func TestSessionProxy_IncompleteLineAtStdinEOFEndsTheSessionWithoutOutputAsAPerS
 		assert.Empty(t, string(l.ReadToEOF()), name)
 		launch.assertExit(t, l.Wait(testkit.SharedServerDeadline))
 	}
+	assert.Empty(t, stderrRecords(t, proxy, slogtext.Record{"msg": crashWarningMessage}), "the proxy session stayed on its first connection")
 }
 
-func TestSessionProxy_InvalidLineEndsOnlyItsSessionAndIsLoggedByTheSharedServer(t *testing.T) {
+func TestSessionProxy_InvalidLineEndsOnlyItsSharedServerSessionWhichRecoversAndIsLoggedByTheSharedServer(t *testing.T) {
 	const invalid = `{"jsonrpc":"2.0","id":1,}`
 	contentDir := newSessionProxyContentDir(t)
 	sharedArgs := testkit.SharedLaunchArgs(contentDir)
@@ -74,10 +77,20 @@ func TestSessionProxy_InvalidLineEndsOnlyItsSessionAndIsLoggedByTheSharedServer(
 		first = connectAndListTools(t, h.Launch(sharedArgs...))
 	})
 	logPath := h.DialSharedServer(h.Identity(sharedArgs)).Ready.Log
+	deadline := time.Now().Add(testkit.SharedServerDeadline)
 	second := h.Launch(sharedArgs...)
+	before := attachRecords(t, second, 1, deadline)[0]
 	second.WriteLine(invalid)
 
-	require.Error(t, second.Wait(testkit.SharedServerDeadline))
+	after := attachRecords(t, second, 2, deadline)[1]
+	assert.NotEqual(t, before["session"], after["session"], "the session recovers with a new session identifier")
+	assert.Equal(t, before["log"], after["log"], "the session recovers onto the same shared server")
+	second.WriteLine(modernSearch("3", "authentication"))
+	resp := decodeRawResponse(t, second.ReadLine())
+	assert.JSONEq(t, "3", string(resp.ID), "the invalid line gets no synthesized error")
+	assert.Nil(t, resp.Error, "a later request succeeds")
+	assert.Len(t, stderrRecords(t, second, slogtext.Record{"msg": crashWarningMessage}), 1, "the invalid line is not delivered again")
+	assert.Equal(t, 1, h.Builds(), "the session recovers onto the same shared server")
 	h.Eventually(func() bool {
 		content, err := os.ReadFile(logPath)
 		return err == nil && strings.Contains(string(content), perSessionErr.Error())
