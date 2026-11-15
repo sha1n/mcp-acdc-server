@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -105,15 +106,25 @@ func TestRun_StopsConsumingHostInputOnceItReturns(t *testing.T) {
 			cancel()
 			return awaitRunResult(t, done)
 		}},
-		{name: "connection lost after attach", run: func(t *testing.T, stdin *scriptedStdin) error {
+		{name: "recovery fails after attach", run: func(t *testing.T, stdin *scriptedStdin) error {
 			dir := proxyTestEndpointDir(t)
 			server := newFakeSharedServer(t, dir)
-			done := runProxy(t, context.Background(), sessionproxy.Config{EndpointDir: fixedEndpointDir(dir), Stdin: stdin, Spawn: server.spawn})
+			identityErr := errors.New("unreadable content")
+			var computed atomic.Int32
+			identity := func() (string, error) {
+				if computed.Add(1) == 1 {
+					return proxyTestIdentity, nil
+				}
+				return "", identityErr
+			}
+			done := runProxy(t, context.Background(), sessionproxy.Config{EndpointDir: fixedEndpointDir(dir), Identity: identity, Stdin: stdin, Spawn: server.spawn})
 			stdin.awaitRead(t)
 			conn := server.nextConn()
 			conn.sendReady()
 			require.NoError(t, conn.conn.Close())
-			return awaitRunResult(t, done)
+			err := awaitRunResult(t, done)
+			require.ErrorIs(t, err, identityErr)
+			return err
 		}},
 	}
 	for _, tt := range tests {
