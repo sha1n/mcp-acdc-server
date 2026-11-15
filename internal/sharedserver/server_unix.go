@@ -173,15 +173,15 @@ func bind(ep endpoint.Endpoint, identity string) (*net.UnixListener, error) {
 	return listener, nil
 }
 
-func attach(ctx context.Context, logger *slog.Logger, conn *net.UnixConn, server *mcp.Server, revalidate func(context.Context), logPath string) {
+func attach(ctx context.Context, logger *slog.Logger, conn *net.UnixConn, server *mcp.Server, admit func(context.Context) bool, logPath string) {
 	defer func() { _ = conn.Close() }()
 	stopOnCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stopOnCancel()
 
 	session := NewSessionID()
 	sessionCtx := withSession(ctx, session)
-	if revalidate != nil {
-		revalidate(ctx)
+	if admit != nil && !admit(ctx) {
+		return
 	}
 	readyLine, err := EncodeReadyLine(session, logPath)
 	if err != nil {

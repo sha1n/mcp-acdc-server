@@ -49,8 +49,9 @@ func (w *acceptWake) consume() bool {
 type sessionAcceptor struct {
 	// ctx scopes accepting and the build: shutdown begins when it is
 	// cancelled. sessionCtx ends the sessions, and the run context never
-	// cancels it directly: it is cancelled only after accepting has stopped,
+	// cancels it directly: it is cancelled only once accepting has stopped,
 	// so a proxy that lost its session can only dial a closed listener.
+	// Its Done is therefore the accepting-stopped barrier.
 	ctx         context.Context
 	cancel      context.CancelFunc
 	sessionCtx  context.Context
@@ -59,6 +60,7 @@ type sessionAcceptor struct {
 	logger      *slog.Logger
 	lingeredOut bool
 	listener    *net.UnixListener
+	closeOnce   sync.Once
 	endpoint    endpoint.Endpoint
 	identity    string
 	linger      *sessionLinger
@@ -96,12 +98,19 @@ func startAccepting(ctx context.Context, logger *slog.Logger, listener *net.Unix
 // serves.
 func (a *sessionAcceptor) run() {
 	a.err = a.acceptLoop()
-	_ = a.listener.Close()
+	a.closeListener()
 	a.cancel()
 	a.linger.stop()
 	a.endSessions()
 	a.sessions.Wait()
 	close(a.stopped)
+}
+
+// closeListener is the only close of the listener. A repeated Close returns
+// before the first one has released the descriptor, so a second caller waits
+// for the first instead; until then a dial can still reach the socket.
+func (a *sessionAcceptor) closeListener() {
+	a.closeOnce.Do(func() { _ = a.listener.Close() })
 }
 
 func (a *sessionAcceptor) buildContext() context.Context {
@@ -137,7 +146,7 @@ func (a *sessionAcceptor) abandon(buildErr error) error {
 }
 
 func (a *sessionAcceptor) acceptLoop() error {
-	stopAccepting := context.AfterFunc(a.ctx, func() { _ = a.listener.Close() })
+	stopAccepting := context.AfterFunc(a.ctx, a.closeListener)
 	defer stopAccepting()
 
 	for {
@@ -164,7 +173,7 @@ func (a *sessionAcceptor) acceptLoop() error {
 // closeAndUnlink runs while the lock is still held, so the socket it removes
 // cannot belong to a successor. A connection still in the backlog is reset.
 func (a *sessionAcceptor) closeAndUnlink() {
-	_ = a.listener.Close()
+	a.closeListener()
 	// A socket that cannot be removed is stale and is replaced by the next
 	// lock holder at bind. Run validated the path before taking the lock.
 	if socketPath, err := a.endpoint.SocketPath(a.identity); err == nil {
@@ -178,17 +187,35 @@ func (a *sessionAcceptor) handle(conn *net.UnixConn) {
 	select {
 	case <-a.built:
 	case <-a.ctx.Done():
-		_ = conn.Close()
+		a.dropOnceAcceptingStopped(conn)
 		return
 	}
-	// Both cases can be ready at once; a connection of a shared server that
-	// is shutting down must not get a ready line. It is dropped only after
-	// accepting has stopped, so the peer's one retry is refused instead of
-	// being accepted and dropped as well.
-	if a.server == nil || a.ctx.Err() != nil {
-		<-a.sessionCtx.Done()
-		_ = conn.Close()
+	if a.server == nil {
+		a.dropOnceAcceptingStopped(conn)
 		return
 	}
-	attach(a.sessionCtx, a.logger, conn, a.server, a.revalidate, a.logPath)
+	attach(a.sessionCtx, a.logger, conn, a.server, a.admit, a.logPath)
+}
+
+// admit is the one admission decision, made after revalidation and just
+// before the ready line. A shutdown that begins after it found the run
+// uncancelled began after the admission, and that session is ended like any
+// other attached session.
+func (a *sessionAcceptor) admit(ctx context.Context) bool {
+	if a.revalidate != nil && a.ctx.Err() == nil {
+		a.revalidate(ctx)
+	}
+	if a.ctx.Err() == nil {
+		return true
+	}
+	<-a.sessionCtx.Done()
+	return false
+}
+
+// dropOnceAcceptingStopped closes a connection that gets no ready line only
+// after accepting has stopped, so the peer's one retry is refused instead of
+// being accepted and dropped as well.
+func (a *sessionAcceptor) dropOnceAcceptingStopped(conn *net.UnixConn) {
+	<-a.sessionCtx.Done()
+	_ = conn.Close()
 }
