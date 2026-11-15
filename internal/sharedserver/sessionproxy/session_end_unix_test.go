@@ -232,11 +232,6 @@ func failingPhaseCases() []sessionEndCase {
 				prepare(t, dir)
 				cfg.Spawn = func(string) error { end(); return errors.New("exec failed") }
 			}},
-			sessionEndCase{name: attempt.name + "/connect wait", configure: func(t *testing.T, dir string, end func(), cfg *Config) {
-				prepare(t, dir)
-				cfg.ConnectWait = 10 * time.Millisecond
-				cfg.Spawn = func(string) error { end(); return nil }
-			}},
 		)
 	}
 	return append(cases, sessionEndCase{name: "second drop", configure: func(t *testing.T, dir string, end func(), _ *Config) {
@@ -305,6 +300,50 @@ func TestEstablish_ReportsTheSessionEndInsteadOfAPhaseFailureThatFollowedIt(t *t
 			})
 		}
 	}
+}
+
+// No finite connect wait can be relied on to outlast the callback that ends
+// the host, so a connect-wait failure meets a session end only at the
+// boundary that arbitrates between them.
+func TestEndedOr_ReportsTheSessionEndInsteadOfAConnectWaitFailure(t *testing.T) {
+	for _, way := range sessionEndWays {
+		t.Run(way, func(t *testing.T) {
+			s := newEndedSession(t)
+			s.end(way)()
+			expired := &connectionSetupError{cause: causeConnectWait, err: ErrConnectWaitExpired}
+
+			err := endedOr(s.ctx, s.input.ended, expired)
+
+			var failure *connectionSetupError
+			require.False(t, errors.As(err, &failure), "a session end classified as a %v failure", err)
+			if way == "stdin EOF" {
+				require.ErrorIs(t, err, errSessionEnded)
+			} else {
+				require.ErrorIs(t, err, context.Canceled)
+			}
+		})
+	}
+}
+
+func TestSessionWithoutAttach_FallsBackWhenTheConnectWaitExpiresWhileTheHostIsLive(t *testing.T) {
+	s := newEndedSession(t)
+	cfg := s.config(sessionEndTestDir(t))
+	cfg.ConnectWait = 20 * time.Millisecond
+	cfg.Fallback = func(context.Context, io.ReadCloser) error {
+		s.fallbacks.Add(1)
+		return nil
+	}
+
+	att, err := establish(s.ctx, cfg, s.input.ended)
+
+	require.Nil(t, att)
+	var failure *connectionSetupError
+	require.True(t, errors.As(err, &failure), "an expiry with a live host is a discovery failure: %v", err)
+	assert.Equal(t, causeConnectWait, failure.cause)
+	require.ErrorIs(t, err, ErrConnectWaitExpired)
+	require.NoError(t, endWithoutAttach(s.ctx, cfg, err, s.input))
+	assert.Equal(t, int32(1), s.fallbacks.Load(), "a live host falls back once")
+	assert.Equal(t, int32(1), s.warnings.Load(), "the fallback warns once")
 }
 
 func (s *endedSession) end(way string) func() {
