@@ -12,44 +12,62 @@ import (
 	"net"
 	"os"
 	"time"
-
-	"github.com/sha1n/mcp-acdc-server/internal/sharedserver"
-	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/endpoint"
 )
 
 type Config struct {
-	EndpointDir string
+	EndpointDir func() (string, error)
 	// Identity is computed only after host stdin is being held.
 	Identity    func() (string, error)
 	ConnectWait time.Duration
 	// Spawn starts a candidate shared server for the identity. It must not
 	// wait for the candidate: dialing is the only way to learn it is ready.
-	Spawn  func(identity string) error
-	Logger *slog.Logger
-	Stdin  io.Reader
-	Stdout io.Writer
+	Spawn func(identity string) error
+	// Fallback serves the session as a per-session server when no shared
+	// server could be reached before anything was relayed. Its input yields
+	// the host input held during discovery, then live host input.
+	Fallback func(ctx context.Context, input io.ReadCloser) error
+	Logger   *slog.Logger
+	Stdin    io.Reader
+	Stdout   io.Writer
 }
 
 // Run returns nil when the session ends normally, on host stdin EOF or on
-// cancellation of ctx, and an error when discovery fails or the shared server
-// connection breaks. It never waits on the shared server or on host stdio to
-// return, since neither can be interrupted.
+// cancellation of ctx, and an error when the shared server connection breaks
+// after attach. When discovery fails it returns the result of cfg.Fallback.
+// It never waits on the shared server or on host stdio to return, since
+// neither can be interrupted.
 func Run(ctx context.Context, cfg Config) error {
+	if cfg.Fallback == nil {
+		return errors.New("session proxy requires a fallback per-session server")
+	}
 	input := readHostInput(cfg.Stdin)
 	defer input.stop()
-	conn, err := discover(ctx, cfg, input.ended)
+	att, err := establish(ctx, cfg, input.ended)
 	if err != nil {
-		return sessionResult(ctx, err)
+		return endWithoutAttach(ctx, cfg, err, input)
 	}
-	defer func() { _ = conn.Close() }()
+	defer func() { _ = att.conn.Close() }()
+	return sessionResult(ctx, relay(ctx, att.conn, att.fromServer, input, cfg.Stdout))
+}
 
-	fromServer := bufio.NewReader(conn)
-	ready, err := awaitReady(ctx, fromServer, input.ended)
-	if err != nil {
-		return sessionResult(ctx, err)
+// endWithoutAttach checks the session end again at the fallback decision:
+// host EOF may be read after discovery returned its failure, and a host that
+// ended is never handed to a per-session server.
+func endWithoutAttach(ctx context.Context, cfg Config, err error, input *hostInput) error {
+	if sessionEnd(ctx, input.ended) != nil {
+		return nil
 	}
-	logAttached(cfg.Logger, ready)
-	return sessionResult(ctx, relay(ctx, conn, fromServer, input, cfg.Stdout))
+	var failure *discoveryError
+	if errors.As(err, &failure) {
+		return fallBack(ctx, cfg, failure, input)
+	}
+	return sessionResult(ctx, err)
+}
+
+func fallBack(ctx context.Context, cfg Config, failure *discoveryError, input *hostInput) error {
+	cfg.Logger.Warn("Shared server unavailable, continuing as a per-session server",
+		"cause", string(failure.cause), "error", failure)
+	return cfg.Fallback(ctx, input.handOver())
 }
 
 func sessionResult(ctx context.Context, err error) error {
@@ -57,84 +75,6 @@ func sessionResult(ctx context.Context, err error) error {
 		return nil
 	}
 	return err
-}
-
-func discover(ctx context.Context, cfg Config, abort <-chan struct{}) (net.Conn, error) {
-	identity, err := computeIdentity(ctx, cfg.Identity, abort)
-	if err != nil {
-		return nil, err
-	}
-	ep, err := endpoint.OpenEndpoint(cfg.EndpointDir)
-	if err != nil {
-		return nil, err
-	}
-	socketPath, err := ep.SocketPath(identity)
-	if err != nil {
-		return nil, err
-	}
-	var dialer net.Dialer
-	return discovery{
-		dial:        func(ctx context.Context) (net.Conn, error) { return dialer.DialContext(ctx, "unix", socketPath) },
-		spawn:       func() error { return cfg.Spawn(identity) },
-		clock:       realClock{},
-		connectWait: cfg.ConnectWait,
-		logger:      cfg.Logger,
-	}.connect(ctx, abort)
-}
-
-// computeIdentity does not wait for an identity walk once the session ends:
-// the walk cannot be interrupted and may cover a large content tree.
-func computeIdentity(ctx context.Context, compute func() (string, error), abort <-chan struct{}) (string, error) {
-	phase, cancel := untilAborted(ctx, abort)
-	defer cancel(nil)
-	var identity string
-	err := supervise(phase, func() error {
-		var err error
-		identity, err = compute()
-		return err
-	})
-	if phase.Err() != nil {
-		return "", context.Cause(phase)
-	}
-	if err != nil {
-		return "", fmt.Errorf("failed to compute the server identity: %w", err)
-	}
-	return identity, nil
-}
-
-// awaitReady has no limit of its own: the shared server may still be building
-// its index, and the host's initialize timeout governs that wait.
-func awaitReady(ctx context.Context, fromServer *bufio.Reader, abort <-chan struct{}) (sharedserver.ReadyLine, error) {
-	type decoded struct {
-		ready sharedserver.ReadyLine
-		err   error
-	}
-	result := make(chan decoded, 1)
-	go func() {
-		line, err := fromServer.ReadBytes('\n')
-		if err != nil {
-			result <- decoded{err: fmt.Errorf("shared server connection dropped before the ready line: %w", err)}
-			return
-		}
-		ready, err := sharedserver.DecodeReadyLine(line)
-		result <- decoded{ready: ready, err: err}
-	}()
-	select {
-	case r := <-result:
-		return r.ready, r.err
-	case <-ctx.Done():
-		return sharedserver.ReadyLine{}, ctx.Err()
-	case <-abort:
-		return sharedserver.ReadyLine{}, errSessionEnded
-	}
-}
-
-func logAttached(logger *slog.Logger, ready sharedserver.ReadyLine) {
-	if ready.Log == "" {
-		logger.Warn("Attached to the shared server, which has no log file", "session", ready.Session)
-		return
-	}
-	logger.Info("Attached to the shared server", "session", ready.Session, "log", ready.Log)
 }
 
 func relay(ctx context.Context, conn net.Conn, fromServer *bufio.Reader, input *hostInput, stdout io.Writer) error {

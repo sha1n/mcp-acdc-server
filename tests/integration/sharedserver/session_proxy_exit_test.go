@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,16 +27,23 @@ func TestSessionProxy_StdinEOFDuringDiscoveryEndsTheSessionPromptly(t *testing.T
 	l.CloseStdin()
 
 	require.NoError(t, l.Wait(prompterExit))
+	assert.Zero(t, h.FallbackWarnings(), "the session ended in discovery, not as a fallback per-session server")
 }
 
 func TestSessionProxy_StdinEOFAfterAttachEndsTheSessionCleanly(t *testing.T) {
-	h := testkit.NewSharedServerHarness(t)
-	l := h.Launch(testkit.SharedLaunchArgs(newSessionProxyContentDir(t))...)
-	session := connectAndListTools(t, l)
+	args := testkit.SharedLaunchArgs(newSessionProxyContentDir(t))
+	var l *testkit.LaunchUnderTest
+	var session *mcp.ClientSession
+
+	h := runWinningColdStart(t, func(t *testing.T, h *testkit.SharedServerHarness) {
+		l = h.Launch(args...)
+		session = connectAndListTools(t, l)
+	})
 
 	require.NoError(t, session.Close())
 
 	require.NoError(t, l.Wait(testkit.SharedServerDeadline))
+	assert.Zero(t, h.FallbackWarnings(), "the session was attached to a shared server")
 }
 
 func TestSessionProxy_SignalEndsTheSessionPromptlyInEveryPhase(t *testing.T) {

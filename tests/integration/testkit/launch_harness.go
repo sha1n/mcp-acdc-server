@@ -8,13 +8,16 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/app"
+	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,6 +30,9 @@ type LaunchUnderTest struct {
 	stderr *lockedBuffer
 	done   chan struct{}
 	err    error
+	// identity is computed before the launch starts: content edited later
+	// in the test must not change the identity the launch ran with.
+	identity string
 }
 
 type lineResult struct {
@@ -38,7 +44,32 @@ type lineResult struct {
 // servers.
 func (h *SharedServerHarness) Launch(args ...string) *LaunchUnderTest {
 	h.t.Helper()
-	return StartLaunch(h.t, h.SessionProxyParams(args), h.Binary, args...)
+	l := StartLaunch(h.t, h.SessionProxyParams(args), h.Binary, args...)
+	h.launchesMu.Lock()
+	defer h.launchesMu.Unlock()
+	h.launches = append(h.launches, l)
+	return l
+}
+
+// Launches returns every launch started with Launch so far.
+func (h *SharedServerHarness) Launches() []*LaunchUnderTest {
+	h.launchesMu.Lock()
+	defer h.launchesMu.Unlock()
+	return slices.Clone(h.launches)
+}
+
+// FallbackWarnings counts the fallback warnings written so far by every
+// launch started with Launch. A session answers only after its warning is
+// written, so once a session has been answered a zero count means no launch
+// that has answered was served by a fallback per-session server.
+func (h *SharedServerHarness) FallbackWarnings() int {
+	h.launchesMu.Lock()
+	defer h.launchesMu.Unlock()
+	count := 0
+	for _, l := range h.launches {
+		count += len(l.FallbackWarnings())
+	}
+	return count
 }
 
 // StartLaunch runs the runner with params and args. It owns the host streams
@@ -56,11 +87,12 @@ func startLaunch(t testing.TB, params app.RunParams, binary identity.Binary, gat
 	hostIn, launchIn := io.Pipe()
 	launchOut, hostOut := io.Pipe()
 	l := &LaunchUnderTest{
-		t:      t,
-		stdin:  launchIn,
-		stdout: bufio.NewReader(launchOut),
-		stderr: &lockedBuffer{},
-		done:   make(chan struct{}),
+		t:        t,
+		stdin:    launchIn,
+		stdout:   bufio.NewReader(launchOut),
+		stderr:   &lockedBuffer{},
+		done:     make(chan struct{}),
+		identity: launchIdentity(flags, binary),
 	}
 	params.Stdin = hostIn
 	params.Stdout = hostOut
@@ -176,6 +208,22 @@ func (l *LaunchUnderTest) Ended() bool {
 
 // Stderr returns what the launch has written to its stderr so far.
 func (l *LaunchUnderTest) Stderr() string { return l.stderr.String() }
+
+// SharedServerIdentity returns the server identity of the launch's content
+// when it started, or "" when its settings do not load.
+func (l *LaunchUnderTest) SharedServerIdentity() string { return l.identity }
+
+func launchIdentity(flags *pflag.FlagSet, binary identity.Binary) string {
+	settings, err := config.LoadSettingsWithFlags(flags)
+	if err != nil {
+		return ""
+	}
+	id, err := identity.Compute(settings, binary)
+	if err != nil {
+		return ""
+	}
+	return id
+}
 
 func (l *LaunchUnderTest) waitWithin(d time.Duration) (bool, error) {
 	select {

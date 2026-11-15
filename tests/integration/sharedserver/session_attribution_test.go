@@ -206,20 +206,26 @@ func TestSessionAttribution_ProxyStderrNamesTheReadyLineSessionAndTheLogPath(t *
 
 func TestSessionAttribution_ProxyStderrWarnsWhenTheSharedServerHasNoLogFile(t *testing.T) {
 	args := testkit.SharedLaunchArgs(newSessionProxyContentDir(t))
-	var l *testkit.LaunchUnderTest
-	runWinningColdStart(t, func(t *testing.T, h *testkit.SharedServerHarness) {
-		readOnly := t.TempDir()
-		require.NoError(t, os.Chmod(readOnly, 0o500))
-		t.Cleanup(func() {
-			if err := os.Chmod(readOnly, 0o700); err != nil {
-				t.Errorf("failed to restore %s: %v", readOnly, err)
-			}
-		})
-		h.LogDir = filepath.Join(readOnly, "logs")
-		l = h.Launch(args...)
-		connectAndListTools(t, l)
+	h := testkit.NewSharedServerHarness(t)
+	readOnly := t.TempDir()
+	require.NoError(t, os.Chmod(readOnly, 0o500))
+	t.Cleanup(func() {
+		if err := os.Chmod(readOnly, 0o700); err != nil {
+			t.Errorf("failed to restore %s: %v", readOnly, err)
+		}
 	})
+	h.LogDir = filepath.Join(readOnly, "logs")
+	// Without a log there is no evidence to classify a lost cold start, so
+	// the shared server is held attached before the launch and cannot be lost.
+	h.HoldSharedServer(args)
+	spawns, builds := h.Spawns(), h.Builds()
+
+	l := h.Launch(args...)
+	connectAndListTools(t, l)
 
 	assert.Len(t, proxyNoLogLine.FindAllString(l.Stderr(), -1), 1, l.Stderr())
 	assert.Empty(t, proxyAttachLine.FindAllString(l.Stderr(), -1), l.Stderr())
+	assert.Empty(t, l.FallbackWarnings(), "the launch must attach to the held shared server")
+	assert.Equal(t, spawns, h.Spawns(), "the launch must not spawn beyond the held shared server")
+	assert.Equal(t, builds, h.Builds(), "the launch must not build beyond the held shared server")
 }

@@ -7,10 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/content"
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver"
 	"github.com/sha1n/mcp-acdc-server/internal/testutil/slogtext"
@@ -55,38 +53,6 @@ func editPrompt(t *testing.T, contentDir string) {
 	t.Helper()
 	cp := content.NewContentProvider(contentDir)
 	require.NoError(t, os.WriteFile(filepath.Join(cp.PromptsDir, "prompt.md"), []byte(promptNamed(editedPromptName)), 0o644))
-}
-
-// runWinningColdStarts generalises runWinningColdStart to attempts that cold
-// start builds shared servers by design: every build beyond those must be a
-// candidate that lingered out before any session reached it (#196).
-func runWinningColdStarts(t *testing.T, builds int, attempt coldStartAttempt) *testkit.SharedServerHarness {
-	t.Helper()
-	deadline := time.Now().Add(testkit.SharedServerDeadline)
-	for attempts := 1; ; attempts++ {
-		h := testkit.NewSharedServerHarness(t)
-		attempt(t, h)
-		if h.Builds() <= builds {
-			return h
-		}
-		requireLostColdStarts(t, h, builds)
-		require.True(t, time.Now().Before(deadline), "no attempt built only %d shared servers in %d attempts", builds, attempts)
-	}
-}
-
-func requireLostColdStarts(t *testing.T, h *testkit.SharedServerHarness, builds int) {
-	t.Helper()
-	lingeredOut := 0
-	for _, exit := range h.SharedServerExits() {
-		if !exit.Built {
-			continue
-		}
-		require.NoError(t, exit.Err, "a lost attempt's candidate must end as a normal linger exit")
-		require.GreaterOrEqual(t, exit.ExitedAt.Sub(exit.SpawnedAt), config.MinSharedServerLinger,
-			"a lost attempt's candidate exited before the linger elapsed")
-		lingeredOut++
-	}
-	require.Equal(t, h.Builds()-builds, lingeredOut, "every extra build follows a candidate that lingered out")
 }
 
 func promptNames(t *testing.T, ctx context.Context, session *mcp.ClientSession) []string {

@@ -44,14 +44,18 @@ type SharedServerHarness struct {
 	servers sync.WaitGroup
 	exitsMu sync.Mutex
 	exits   []SharedServerExit
+	// buildGate runs in every build after it is counted; a non-nil error is
+	// returned instead of building. It is set only before the first spawn.
+	buildGate func(context.Context) error
+
+	launchesMu sync.Mutex
+	launches   []*LaunchUnderTest
 }
 
 // SharedServerExit is how one spawned candidate ended.
 type SharedServerExit struct {
-	Built     bool
-	Err       error
-	SpawnedAt time.Time
-	ExitedAt  time.Time
+	Built bool
+	Err   error
 }
 
 // NewSharedServerHarness stops every shared server it spawned when the test
@@ -160,26 +164,43 @@ func (h *SharedServerHarness) HoldLock(id string) (release func()) {
 // production re-exec it starts the same launch plus the hidden identity flag,
 // here as a goroutine running the runner.
 func (h *SharedServerHarness) SpawnSharedServer(args []string) func(string) error {
-	args = slices.Clone(args)
+	spawn := h.spawnCandidate(args)
 	return func(id string) error {
+		_, err := spawn(id)
+		return err
+	}
+}
+
+// candidateEnd is how the one candidate it was returned for ended, once ended
+// is closed; that candidate's exit is recorded before then.
+type candidateEnd struct {
+	ended chan struct{}
+	exit  SharedServerExit
+}
+
+func (h *SharedServerHarness) spawnCandidate(args []string) func(string) (*candidateEnd, error) {
+	args = slices.Clone(args)
+	return func(id string) (*candidateEnd, error) {
 		h.spawns.Add(1)
 		flags, err := newLaunchFlags(append(slices.Clone(args), "--shared-server-identity", id))
 		if err != nil {
-			return err
+			return nil, err
 		}
 		var built atomic.Bool
 		params := h.sharedServerParams(&built)
-		spawnedAt := time.Now()
+		end := &candidateEnd{ended: make(chan struct{})}
 		h.servers.Add(1)
 		go func() {
 			defer h.servers.Done()
 			err := app.RunWithDeps(h.ctx, params, flags, h.Binary)
-			h.recordExit(SharedServerExit{Built: built.Load(), Err: err, SpawnedAt: spawnedAt, ExitedAt: time.Now()})
+			end.exit = SharedServerExit{Built: built.Load(), Err: err}
+			h.recordExit(end.exit)
+			close(end.ended)
 			if err != nil {
 				h.t.Logf("shared server %s stopped with: %v", id, err)
 			}
 		}()
-		return nil
+		return end, nil
 	}
 }
 
@@ -213,6 +234,11 @@ func (h *SharedServerHarness) sharedServerParams(built *atomic.Bool) app.RunPara
 	params.CreateServer = func(ctx context.Context, logger *slog.Logger, settings *config.Settings, version string) (app.Components, error) {
 		built.Store(true)
 		h.builds.Add(1)
+		if h.buildGate != nil {
+			if err := h.buildGate(ctx); err != nil {
+				return app.Components{}, err
+			}
+		}
 		return createServer(ctx, logger, settings, version)
 	}
 	params.EndpointDir = h.endpointDir

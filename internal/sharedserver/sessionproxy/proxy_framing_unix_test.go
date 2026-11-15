@@ -32,7 +32,7 @@ func TestRun_RelaysUnusualLineBytesVerbatim(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := proxyTestEndpointDir(t)
 			server := newFakeSharedServer(t, dir)
-			host := startProxy(t, sessionproxy.Config{EndpointDir: dir, Spawn: server.spawn})
+			host := startProxy(t, sessionproxy.Config{EndpointDir: fixedEndpointDir(dir), Spawn: server.spawn})
 			conn := server.nextConn()
 			conn.sendReady()
 
@@ -60,7 +60,7 @@ func readyLine(t *testing.T) string {
 func TestRun_ConsumesAReadyLineSplitAcrossWrites(t *testing.T) {
 	dir := proxyTestEndpointDir(t)
 	server := newFakeSharedServer(t, dir)
-	host := startProxy(t, sessionproxy.Config{EndpointDir: dir, Spawn: server.spawn})
+	host := startProxy(t, sessionproxy.Config{EndpointDir: fixedEndpointDir(dir), Spawn: server.spawn})
 	conn := server.nextConn()
 	ready := readyLine(t)
 	const response = "{\"id\":1,\"result\":{}}\n"
@@ -75,7 +75,7 @@ func TestRun_ConsumesAReadyLineSplitAcrossWrites(t *testing.T) {
 func TestRun_RelaysAResponseDeliveredTogetherWithTheReadyLine(t *testing.T) {
 	dir := proxyTestEndpointDir(t)
 	server := newFakeSharedServer(t, dir)
-	host := startProxy(t, sessionproxy.Config{EndpointDir: dir, Spawn: server.spawn})
+	host := startProxy(t, sessionproxy.Config{EndpointDir: fixedEndpointDir(dir), Spawn: server.spawn})
 	conn := server.nextConn()
 	const response = "{\"id\":1,\"result\":{}}\n"
 
@@ -93,11 +93,12 @@ func TestRun_DropsIncompleteSharedServerOutputAtEOF(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- sessionproxy.Run(context.Background(), sessionproxy.Config{
-			EndpointDir: dir,
+			EndpointDir: fixedEndpointDir(dir),
 			Identity:    func() (string, error) { return proxyTestIdentity, nil },
 			ConnectWait: proxyTestDeadline,
 			Spawn:       server.spawn,
 			Logger:      slog.New(slog.DiscardHandler),
+			Fallback:    unexpectedFallback(t),
 			Stdin:       stdin,
 			Stdout:      &stdout,
 		})
@@ -129,7 +130,7 @@ func TestRun_AttachesWithOnlyTheSocketPresentAndCreatesNoOtherFile(t *testing.T)
 	require.NoError(t, server.spawn(proxyTestIdentity))
 	require.Equal(t, []string{filepath.Base(server.socketPath)}, endpointEntries(t, dir))
 
-	host := startProxy(t, sessionproxy.Config{EndpointDir: dir, Spawn: server.spawn})
+	host := startProxy(t, sessionproxy.Config{EndpointDir: fixedEndpointDir(dir), Spawn: server.spawn})
 	conn := server.nextConn()
 	conn.sendReady()
 	host.write("{\"id\":1}\n")
@@ -149,7 +150,7 @@ func TestRun_AttachesAlongsideAnUnreadableLockFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(lockPath, nil, 0o000))
 	require.NoError(t, server.spawn(proxyTestIdentity))
 
-	host := startProxy(t, sessionproxy.Config{EndpointDir: dir, Spawn: server.spawn})
+	host := startProxy(t, sessionproxy.Config{EndpointDir: fixedEndpointDir(dir), Spawn: server.spawn})
 	conn := server.nextConn()
 	conn.sendReady()
 	host.write("{\"id\":1}\n")
