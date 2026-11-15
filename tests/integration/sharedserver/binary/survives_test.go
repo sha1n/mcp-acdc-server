@@ -64,6 +64,7 @@ func TestBinary_LeakGuardKillsALiveSharedServer(t *testing.T) {
 	handshake(t, launch, deadline)
 	session, logPath, err := launch.AwaitAttach(deadline)
 	require.NoError(t, err)
+	assert.Equal(t, env.LogDir(), filepath.Dir(logPath))
 	endSession(t, launch, deadline)
 	run := awaitServerRun(t, logPath, "attached:"+session, deadline)
 	require.NoError(t, syscall.Kill(run.PID, 0), "precondition: the shared server is alive")
