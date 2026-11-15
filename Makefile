@@ -160,7 +160,7 @@ run-ui: go-build-current
 	$(GOBIN)/$(PROGRAMNAME) --transport sse --ui-enabled --content-dir $(GOBASE)/examples/sample-content
 
 .PHONY: go-build
-go-build: go-get go-build-linux-amd64 go-build-linux-arm64 go-build-linux-arm go-build-darwin-amd64 go-build-darwin-arm64 go-build-windows-amd64 go-build-windows-arm
+go-build: go-get go-build-linux-amd64 go-build-linux-arm64 go-build-linux-arm go-build-darwin-amd64 go-build-darwin-arm64 go-build-windows-amd64
 
 .PHONY: go-build-linux-amd64
 go-build-linux-amd64:
@@ -191,11 +191,6 @@ go-build-darwin-arm64:
 go-build-windows-amd64:
 	@echo "  >  Building windows amd64 binaries..."
 	@GOOS=$(GOOS_WINDOWS) GOARCH=$(GOARCH_AMD64) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-$(GOOS_WINDOWS)-$(GOARCH_AMD64).exe $(GOBASE)/cmd/acdc-mcp
-
-.PHONY: go-build-windows-arm
-go-build-windows-arm:
-	@echo "  >  Building windows arm binaries..."
-	@GOOS=$(GOOS_WINDOWS) GOARCH=$(GOARCH_ARM) GOBIN=$(GOBIN) go build $(MODFLAGS) $(LDFLAGS) -o $(GOBIN)/$(PROGRAMNAME)-$(GOOS_WINDOWS)-$(GOARCH_ARM).exe $(GOBASE)/cmd/acdc-mcp
 
 .PHONY: go-generate
 go-generate:
