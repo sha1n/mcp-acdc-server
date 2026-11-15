@@ -152,7 +152,7 @@ type guardDirs struct {
 
 func newGuardDirs(t *testing.T) guardDirs {
 	t.Helper()
-	d := guardDirs{logDir: t.TempDir(), endpointDir: t.TempDir()}
+	d := guardDirs{logDir: t.TempDir(), endpointDir: filepath.Join(t.TempDir(), "endpoint")}
 	ep, err := endpoint.OpenEndpoint(d.endpointDir)
 	require.NoError(t, err)
 	d.lockPath, err = ep.LockPath(fakeIdentity)
