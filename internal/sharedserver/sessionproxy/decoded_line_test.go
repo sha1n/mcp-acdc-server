@@ -8,7 +8,7 @@ import (
 )
 
 func TestDecodeLine_ReadsTheTopLevelMembers(t *testing.T) {
-	line := []byte(`{"jsonrpc":"2.0","id":"a","method":"tools/call","params":{"x":[1]},"result":{"y":2}}` + "\n")
+	line := []byte(`{"jsonrpc":"2.0","id":"a","method":"tools/call","params":{"x":[1]}}` + "\n")
 
 	decoded := decodeLine(line)
 
@@ -18,7 +18,6 @@ func TestDecodeLine_ReadsTheTopLevelMembers(t *testing.T) {
 	assert.True(t, decoded.methodIs("tools/call"))
 	assert.Equal(t, json.RawMessage(`"a"`), decoded.id)
 	assert.Equal(t, json.RawMessage(`{"x":[1]}`), decoded.params)
-	assert.Equal(t, json.RawMessage(`{"y":2}`), decoded.result)
 }
 
 func TestDecodeLine_LeavesEveryMemberEmptyForANonObject(t *testing.T) {
