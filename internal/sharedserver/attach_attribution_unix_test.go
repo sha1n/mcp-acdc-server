@@ -188,7 +188,7 @@ func TestAttach_CancellationBeforeTheReadyLineIsNotLogged(t *testing.T) {
 	}
 	go func() {
 		defer close(a.done)
-		attach(ctx, a.logger, a.serverConn, a.server, cancelBeforeReady, "/var/log/acdc.log")
+		attach(ctx, a.logger, a.serverConn, a.server, func(ctx context.Context) bool { cancelBeforeReady(ctx); return true }, "/var/log/acdc.log")
 	}()
 
 	logs := a.awaitLogs(t)
@@ -328,7 +328,7 @@ func TestAttach_PeerClosingBeforeTheReadyLineLogsNothing(t *testing.T) {
 	}
 	go func() {
 		defer close(a.done)
-		attach(ctx, a.logger, a.serverConn, a.server, closePeerBeforeReady, "/var/log/acdc.log")
+		attach(ctx, a.logger, a.serverConn, a.server, func(ctx context.Context) bool { closePeerBeforeReady(ctx); return true }, "/var/log/acdc.log")
 	}()
 
 	logs := a.awaitLogs(t)
