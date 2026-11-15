@@ -21,7 +21,7 @@ func TestListenStreams_IgnoresServerLinesThatNameNoStream(t *testing.T) {
 			l := newListenStreams()
 			sendListen(t, l, listenLine("1"))
 
-			l.delivered([]byte(line))
+			l.delivered(decodeLine([]byte(line)))
 
 			streams := l.open()
 			require.Len(t, streams, 1)
@@ -40,7 +40,7 @@ func TestListenStreams_IgnoresHostCancellationsThatNameNoStream(t *testing.T) {
 			l := newListenStreams()
 			sendListen(t, l, listenLine("1"))
 
-			l.sent([]byte(line))
+			l.sent(decodeLine([]byte(line)))
 
 			assert.Len(t, l.open(), 1)
 		})
@@ -50,8 +50,8 @@ func TestListenStreams_IgnoresHostCancellationsThatNameNoStream(t *testing.T) {
 func TestListenStreams_WithoutAnOpenStreamLinesChangeNothing(t *testing.T) {
 	l := newListenStreams()
 
-	l.sent(cancelLine("1"))
-	l.delivered(ackLine("1"))
+	l.sent(decodeLine(cancelLine("1")))
+	l.delivered(decodeLine(ackLine("1")))
 
 	assert.Empty(t, l.open())
 }
