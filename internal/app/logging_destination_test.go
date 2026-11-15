@@ -39,6 +39,7 @@ func loggingDestinationFlags(t *testing.T, contentDir string) *pflag.FlagSet {
 	RegisterFlags(flags)
 	require.NoError(t, flags.Set("content-dir", contentDir))
 	require.NoError(t, flags.Set("transport", "stdio"))
+	require.NoError(t, flags.Set("server-mode", "session"))
 	return flags
 }
 

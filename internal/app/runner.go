@@ -27,8 +27,7 @@ type RunParams struct {
 	LogDir            func() (string, error)
 	Stderr            io.Writer
 	// SpawnSharedServer starts a candidate shared server for an identity
-	// without waiting for it. Nil keeps every stdio launch a per-session
-	// server.
+	// without waiting for it.
 	SpawnSharedServer func(identity string) error
 	Stdin             io.Reader
 	Stdout            io.Writer
@@ -37,15 +36,16 @@ type RunParams struct {
 // DefaultRunParams returns production dependencies
 func DefaultRunParams() RunParams {
 	return RunParams{
-		LoadSettings:   config.LoadSettingsWithFlags,
-		ValidSettings:  config.ValidateSettings,
-		StartSSEServer: StartSSEServer,
-		CreateServer:   CreateServer,
-		EndpointDir:    sharedserver.DefaultEndpointDir,
-		LogDir:         sharedserver.DefaultLogDir,
-		Stderr:         os.Stderr,
-		Stdin:          os.Stdin,
-		Stdout:         os.Stdout,
+		LoadSettings:      config.LoadSettingsWithFlags,
+		ValidSettings:     config.ValidateSettings,
+		StartSSEServer:    StartSSEServer,
+		CreateServer:      CreateServer,
+		EndpointDir:       sharedserver.DefaultEndpointDir,
+		LogDir:            sharedserver.DefaultLogDir,
+		Stderr:            os.Stderr,
+		SpawnSharedServer: spawnSharedServer,
+		Stdin:             os.Stdin,
+		Stdout:            os.Stdout,
 	}
 }
 
@@ -75,7 +75,7 @@ func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, bi
 	logger.Info("Starting MCP Acdc server", "version", binary.Version)
 	config.LogWithLogger(settings, logger)
 
-	if attemptsDiscovery(logger, runtime.GOOS, params, settings) {
+	if attemptsDiscovery(logger, runtime.GOOS, settings) {
 		return runSessionProxy(ctx, logger, params, settings, binary)
 	}
 

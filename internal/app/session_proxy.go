@@ -15,12 +15,9 @@ import (
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/sessionproxy"
 )
 
-// attemptsDiscovery gates the session proxy on a spawn seam, so that until a
-// production spawn exists every stdio launch stays a per-session server.
-func attemptsDiscovery(logger *slog.Logger, goos string, params RunParams, settings *config.Settings) bool {
+func attemptsDiscovery(logger *slog.Logger, goos string, settings *config.Settings) bool {
 	return settings.Transport == "stdio" &&
-		effectiveServerMode(logger, goos, settings.ServerMode) == config.ServerModeShared &&
-		params.SpawnSharedServer != nil
+		effectiveServerMode(logger, goos, settings.ServerMode) == config.ServerModeShared
 }
 
 func runSessionProxy(ctx context.Context, logger *slog.Logger, params RunParams, settings *config.Settings, binary identity.Binary) error {
@@ -29,6 +26,9 @@ func runSessionProxy(ctx context.Context, logger *slog.Logger, params RunParams,
 	}
 	if params.Stdin == nil || params.Stdout == nil {
 		return errors.New("session proxy requires host stdin and stdout")
+	}
+	if params.SpawnSharedServer == nil {
+		return errors.New("session proxy requires a shared server spawn")
 	}
 
 	ctx, cancel := context.WithCancel(ctx)

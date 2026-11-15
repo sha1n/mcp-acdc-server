@@ -236,6 +236,11 @@ func NewTestFlags(t testing.TB, contentDir string, opts *FlagOptions) *pflag.Fla
 	_ = flags.Set("port", fmt.Sprintf("%d", resolved.Port))
 	_ = flags.Set("content-dir", contentDir)
 	_ = flags.Set("transport", resolved.Transport)
+	if resolved.Transport == "stdio" {
+		// A stdio launch here is a per-session server over in-memory pipes;
+		// the shared mode default would make it a session proxy.
+		_ = flags.Set("server-mode", "session")
+	}
 	_ = flags.Set("auth-type", resolved.AuthType)
 	_ = flags.Set("host", resolved.Host)
 	if resolved.Scheme != "" {

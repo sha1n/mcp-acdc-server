@@ -54,7 +54,7 @@ func TestSessionAttribution_PerSessionStdioLogsRequestsWithoutASession(t *testin
 	ctx, cancel := context.WithTimeout(context.Background(), testkit.SharedServerDeadline)
 	defer cancel()
 	l := testkit.StartLaunch(t, app.DefaultRunParams(), identity.Binary{Version: "test"},
-		"--content-dir", newSessionProxyContentDir(t), "--transport", "stdio")
+		"--content-dir", newSessionProxyContentDir(t), "--transport", "stdio", "--server-mode", "session")
 
 	session := l.Connect(ctx)
 	requireSearchResult(t, ctx, session)
