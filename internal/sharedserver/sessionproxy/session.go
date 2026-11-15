@@ -103,7 +103,7 @@ func (s *session) recover(ctx context.Context, crash *connectionLost) (*attachme
 		})
 		return att, nil
 	}
-	var failure *discoveryError
+	var failure *connectionSetupError
 	if !errors.As(err, &failure) || sessionEnd(ctx, s.input.ended) != nil {
 		return nil, endedOr(ctx, s.input.ended, err)
 	}
@@ -115,7 +115,14 @@ func (s *session) recover(ctx context.Context, crash *connectionLost) (*attachme
 // connection and returns a classified failure, which fails the recovery
 // instead of discovering again.
 func (s *session) resynchronize(ctx context.Context, att *attachment) error {
-	reissues, err := s.reissueListens(ctx, att)
+	err := s.replayHandshake(ctx, att)
+	var reissues []*reissue
+	if err == nil {
+		reissues, err = s.reissueListens(ctx, att)
+	}
+	if err == nil {
+		err = s.announceListChanges(ctx)
+	}
 	if err == nil {
 		err = s.announceListens(ctx, reissues)
 	}
@@ -136,7 +143,7 @@ func (e *recoveryFailure) Unwrap() error { return e.err }
 // failRecovery answers every held request, since none of them can reach a
 // shared server any more, and drops the other held lines. The host has only
 // the context to cut those answers short: every one is owed before the exit.
-func (s *session) failRecovery(ctx context.Context, failure *discoveryError) error {
+func (s *session) failRecovery(ctx context.Context, failure *connectionSetupError) error {
 	err := fmt.Errorf("failed to recover the shared server connection (%s): %w", failure.cause, failure)
 	if answerErr := s.writeToHost(ctx, crashAnswers(s.input.abandon())); answerErr != nil {
 		err = fmt.Errorf("%w; %w", err, answerErr)
@@ -202,9 +209,11 @@ func (w trackingWriter) Write(raw []byte) (int, error) {
 	line := decodeLine(raw)
 	cancellation := w.ledger.cancellationTarget(line)
 	request := w.ledger.register(line)
+	initialized := w.ledger.recordInitialized(line)
 	n, err := w.conn.Write(raw)
 	if err != nil {
 		w.ledger.undo(request)
+		w.ledger.undoInitialized(initialized)
 		return n, &connectionLost{err: err}
 	}
 	w.ledger.cancel(cancellation)

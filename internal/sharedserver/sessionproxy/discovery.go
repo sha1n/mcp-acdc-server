@@ -79,7 +79,7 @@ func (d discovery) spawnFailure(phase context.Context, err error) error {
 	if phase.Err() != nil {
 		return context.Cause(phase)
 	}
-	return &discoveryError{cause: causeSpawn, err: fmt.Errorf("failed to spawn a shared server: %w", err)}
+	return &connectionSetupError{cause: causeSpawn, err: fmt.Errorf("failed to spawn a shared server: %w", err)}
 }
 
 // untilAborted ends with errSessionEnded as its cause once abort closes.

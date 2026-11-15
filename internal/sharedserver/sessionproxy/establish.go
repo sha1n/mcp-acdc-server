@@ -22,18 +22,21 @@ const (
 	causeConnectWait       failureCause = "connect_wait"
 	causeDroppedTwice      failureCause = "dropped_twice"
 	causeDroppedInSequence failureCause = "dropped_in_sequence"
+	causeProtocolVersion   failureCause = "protocol_version"
 )
 
-// discoveryError is a failure to reach a shared server before anything was
-// relayed, so the session can still be served some other way.
-type discoveryError struct {
+// connectionSetupError is a classified failure to establish a shared server
+// connection or to resynchronize it during a recovery. At the first connect
+// nothing was relayed yet, so the session can still be served some other
+// way; during a recovery it fails the recovery.
+type connectionSetupError struct {
 	cause failureCause
 	err   error
 }
 
-func (e *discoveryError) Error() string { return e.err.Error() }
+func (e *connectionSetupError) Error() string { return e.err.Error() }
 
-func (e *discoveryError) Unwrap() error { return e.err }
+func (e *connectionSetupError) Unwrap() error { return e.err }
 
 var errBrokeBeforeReady = errors.New("shared server connection broke before the ready line")
 
@@ -54,7 +57,7 @@ func establish(ctx context.Context, cfg Config, abort <-chan struct{}) (*attachm
 	cfg.Logger.Debug("Discovering the shared server again", "error", err)
 	att, err = attachOnce(ctx, cfg, abort)
 	if errors.Is(err, errBrokeBeforeReady) {
-		return nil, &discoveryError{cause: causeDroppedTwice, err: err}
+		return nil, &connectionSetupError{cause: causeDroppedTwice, err: err}
 	}
 	return att, err
 }
@@ -92,7 +95,7 @@ func discover(ctx context.Context, cfg Config, abort <-chan struct{}) (net.Conn,
 		logger:      cfg.Logger,
 	}.connect(ctx, abort)
 	if errors.Is(err, ErrConnectWaitExpired) {
-		return nil, &discoveryError{cause: causeConnectWait, err: err}
+		return nil, &connectionSetupError{cause: causeConnectWait, err: err}
 	}
 	return conn, err
 }
@@ -100,7 +103,7 @@ func discover(ctx context.Context, cfg Config, abort <-chan struct{}) (net.Conn,
 func computeIdentity(compute func() (string, error)) (string, error) {
 	identity, err := compute()
 	if err != nil {
-		return "", &discoveryError{cause: causeIdentity, err: fmt.Errorf("failed to compute the server identity: %w", err)}
+		return "", &connectionSetupError{cause: causeIdentity, err: fmt.Errorf("failed to compute the server identity: %w", err)}
 	}
 	return identity, nil
 }
@@ -108,15 +111,15 @@ func computeIdentity(compute func() (string, error)) (string, error) {
 func prepareSocketPath(endpointDir func() (string, error), identity string) (string, error) {
 	dir, err := endpointDir()
 	if err != nil {
-		return "", &discoveryError{cause: causeEndpoint, err: fmt.Errorf("failed to resolve the endpoint directory: %w", err)}
+		return "", &connectionSetupError{cause: causeEndpoint, err: fmt.Errorf("failed to resolve the endpoint directory: %w", err)}
 	}
 	ep, err := endpoint.OpenEndpoint(dir)
 	if err != nil {
-		return "", &discoveryError{cause: causeEndpoint, err: err}
+		return "", &connectionSetupError{cause: causeEndpoint, err: err}
 	}
 	socketPath, err := ep.SocketPath(identity)
 	if err != nil {
-		return "", &discoveryError{cause: causeSocketPath, err: err}
+		return "", &connectionSetupError{cause: causeSocketPath, err: err}
 	}
 	return socketPath, nil
 }

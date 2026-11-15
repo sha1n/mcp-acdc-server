@@ -277,7 +277,7 @@ func TestEstablish_DoesNotClassifyACancellationReportedByTheEndpointResolver(t *
 
 	_, err := establish(ctx, cfg, make(chan struct{}))
 
-	var failure *discoveryError
+	var failure *connectionSetupError
 	require.False(t, errors.As(err, &failure), "cancellation classified as a discovery failure")
 	require.ErrorIs(t, err, context.Canceled)
 }
@@ -295,7 +295,7 @@ func TestEstablish_ReportsTheSessionEndInsteadOfAPhaseFailureThatFollowedIt(t *t
 				att, err := establish(s.ctx, cfg, s.input.ended)
 
 				require.Nil(t, att)
-				var failure *discoveryError
+				var failure *connectionSetupError
 				require.False(t, errors.As(err, &failure), "a session end classified as a %v failure", err)
 				if way == "stdin EOF" {
 					require.ErrorIs(t, err, errSessionEnded)
@@ -323,7 +323,7 @@ func TestEndWithoutAttach_NeverFallsBackOnceTheHostEndedAfterDiscoveryFailed(t *
 			t.Run(string(cause)+"/"+way, func(t *testing.T) {
 				s := newEndedSession(t)
 				cfg := s.config(sessionEndTestDir(t))
-				failure := &discoveryError{cause: cause, err: errors.New("discovery failed")}
+				failure := &connectionSetupError{cause: cause, err: errors.New("discovery failed")}
 				s.end(way)()
 
 				err := endWithoutAttach(s.ctx, cfg, failure, s.input)
@@ -368,7 +368,7 @@ func TestEstablish_ReportsASessionEndObservedWhileTheSpawnFailureWasClassified(t
 				att, err := establish(s.ctx, cfg, s.input.ended)
 
 				require.Nil(t, att)
-				var failure *discoveryError
+				var failure *connectionSetupError
 				require.False(t, errors.As(err, &failure), "a session end classified as a %v failure", err)
 				if way == "stdin EOF" {
 					require.ErrorIs(t, err, errSessionEnded)

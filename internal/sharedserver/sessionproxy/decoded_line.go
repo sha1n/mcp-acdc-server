@@ -18,6 +18,9 @@ type decodedLine struct {
 	methodIsString bool
 	id             json.RawMessage
 	params         json.RawMessage
+	// result is nil when the member is absent: its presence makes a
+	// response a success.
+	result json.RawMessage
 }
 
 // decodeLine decodes into a map because go-sdk matches member names
@@ -34,6 +37,7 @@ func decodeLine(line []byte) decodedLine {
 	decoded.methodIsString = isString(method) && json.Unmarshal(method, &decoded.method) == nil
 	decoded.id = members["id"]
 	decoded.params = members["params"]
+	decoded.result = members["result"]
 	return decoded
 }
 

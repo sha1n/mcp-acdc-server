@@ -91,7 +91,7 @@ func (s *session) reissueAll(ctx context.Context, att *attachment, reissues []*r
 }
 
 func droppedDuringReissue(err error) error {
-	return &discoveryError{cause: causeDroppedInSequence, err: fmt.Errorf("shared server connection lost during the listen re-issue: %w", err)}
+	return &connectionSetupError{cause: causeDroppedInSequence, err: fmt.Errorf("shared server connection lost during the listen re-issue: %w", err)}
 }
 
 func (s *session) awaitingAcknowledgement(reissues []*reissue) bool {
