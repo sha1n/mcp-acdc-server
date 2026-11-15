@@ -389,7 +389,7 @@ func TestCheckSharedServerLeaks_ReportsWithoutSignallingAHeldLockItCannotAttribu
 			d.writeLog(t, startupEntry(pid, time.Now()))
 			reporter := &recordingReporter{}
 
-			d.check(reporter, 10*time.Minute)
+			d.checkExpiring(reporter, 10*time.Minute)
 
 			holder.requireAlive(t, deadline)
 			if process != nil {
