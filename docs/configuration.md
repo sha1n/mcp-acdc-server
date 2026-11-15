@@ -297,7 +297,7 @@ The one-line opt-out is `--server-mode session` (or `ACDC_MCP_SERVER_MODE=sessio
 
 #### Release
 
-Server mode is introduced in the minor release `v0.9.0`, a feature (`feat:`) release with no breaking marker: no existing flag, variable, config key, tool or protocol behaviour is removed or renamed.
+Server mode is introduced in the minor release `v0.9.0`. The version is resolved from pull request labels, and no pull request carries a major or breaking label. No existing flag, variable, config key, tool or protocol behaviour is removed or renamed. The default stdio behaviour on macOS and Linux changes to shared mode, so the commit that enables it carries a `BREAKING CHANGE:` footer. To keep the previous behaviour, see [Opting out](#opting-out).
 
 ### Known Limitations
 
