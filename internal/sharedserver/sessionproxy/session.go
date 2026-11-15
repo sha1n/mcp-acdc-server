@@ -149,9 +149,14 @@ func (s *session) answerLost(ctx context.Context, lines [][]byte) error {
 	return err
 }
 
+// writeToHost starts no write once ctx ends: the write in progress cannot be
+// interrupted, but the host's stdout belongs to the caller after the return.
 func (s *session) writeToHost(ctx context.Context, lines [][]byte) error {
 	return supervise(ctx, func() error {
 		for _, line := range lines {
+			if ctx.Err() != nil {
+				return context.Cause(ctx)
+			}
 			if _, err := s.cfg.Stdout.Write(line); err != nil {
 				return fmt.Errorf("failed to relay to the host: %w", err)
 			}
