@@ -66,8 +66,9 @@ func Run(ctx context.Context, cfg Config) (err error) {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = listener.Close() }()
 
+	// The acceptor owns the listener from here: every return below waits for
+	// its stop sequence, which closes the listener.
 	sessions := startAccepting(ctx, logger, listener, ep, cfg.Identity, cfg.Linger)
 	server, cleanup, err := cfg.Build(sessions.buildContext(), logger)
 	if err != nil {
