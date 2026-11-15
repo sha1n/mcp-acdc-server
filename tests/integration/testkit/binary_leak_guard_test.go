@@ -4,10 +4,14 @@ package testkit
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"testing"
 	"time"
@@ -198,4 +202,123 @@ func TestCheckSharedServerLeaks_ReportsALingerExpiryAfterTheDeadline(t *testing.
 
 	require.Len(t, reporter.failures, 1)
 	assert.Contains(t, reporter.failures[0], "after its linger deadline")
+}
+
+// inspectionPath is a PATH holding only the real tools named in real and a
+// script per entry of scripts.
+func inspectionPath(t *testing.T, real []string, scripts map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range real {
+		path, err := exec.LookPath(name)
+		require.NoError(t, err)
+		require.NoError(t, os.Symlink(path, filepath.Join(dir, name)))
+	}
+	for name, script := range scripts {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+script+"\n"), 0o700))
+	}
+	return dir
+}
+
+// An overdue server in its own launch directory makes a silent pass a missed
+// leak, so a failed inspection has to be reported, and without proof of
+// ownership the process must not be signalled.
+func requireReportedUnsignalled(t *testing.T, deadline time.Time, server *fakeSharedServer, reporter *recordingReporter, cause string) {
+	t.Helper()
+	server.requireAlive(t, deadline)
+	require.NotEmpty(t, reporter.failures)
+	for _, failure := range reporter.failures {
+		assert.Contains(t, failure, fmt.Sprint(server.pid))
+		assert.Contains(t, failure, fakeIdentity)
+		assert.Contains(t, failure, cause)
+	}
+}
+
+// Only the macOS branch reads the working directory through a tool; the
+// Linux branch reads /proc/<pid>/cwd, which an unprivileged test cannot make
+// unreadable for its own child, so there its failures are covered by
+// TestClassifyLookFailure_TellsAGoneProcessFromAnUninspectableOne.
+func TestCheckSharedServerLeaks_ReportsWithoutSignallingAServerWhoseCwdCannotBeInspected(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		t.Skip("the Linux working directory lookup runs no tool")
+	}
+	deadline := time.Now().Add(guardTestBudget)
+	launchDir := t.TempDir()
+	server := startFakeSharedServer(t, deadline, launchDir, sharedServerArgs(fakeIdentity, "1s")...)
+	server.requireAlive(t, deadline)
+	logDir := writeFakeServerLog(t, server.pid, time.Now().Add(-time.Minute))
+	reporter := &recordingReporter{}
+	t.Setenv("PATH", inspectionPath(t, []string{"ps"}, map[string]string{"lsof": "exit 1"}))
+
+	CheckSharedServerLeaks(reporter, logDir, launchDir, time.Second)
+
+	requireReportedUnsignalled(t, deadline, server, reporter, "lsof")
+}
+
+func TestCheckSharedServerLeaks_ReportsWithoutSignallingAServerWhoseArgumentsCannotBeInspected(t *testing.T) {
+	deadline := time.Now().Add(guardTestBudget)
+	launchDir := t.TempDir()
+	server := startFakeSharedServer(t, deadline, launchDir, sharedServerArgs(fakeIdentity, "1s")...)
+	server.requireAlive(t, deadline)
+	logDir := writeFakeServerLog(t, server.pid, time.Now().Add(-time.Minute))
+	reporter := &recordingReporter{}
+	t.Setenv("PATH", inspectionPath(t, nil, map[string]string{"ps": "exit 1"}))
+
+	CheckSharedServerLeaks(reporter, logDir, launchDir, time.Second)
+
+	requireReportedUnsignalled(t, deadline, server, reporter, "ps")
+}
+
+func TestCheckSharedServerLeaks_ReportsAHungInspectionWithinItsWatchdog(t *testing.T) {
+	deadline := time.Now().Add(guardTestBudget)
+	launchDir := t.TempDir()
+	server := startFakeSharedServer(t, deadline, launchDir, sharedServerArgs(fakeIdentity, "1s")...)
+	server.requireAlive(t, deadline)
+	logDir := writeFakeServerLog(t, server.pid, time.Now().Add(-time.Minute))
+	reporter := &recordingReporter{}
+	// exec leaves the hung tool without a descendant, and sleep ends by
+	// itself should the guard fail to stop it.
+	t.Setenv("PATH", inspectionPath(t, nil, map[string]string{"ps": "exec /bin/sleep 30"}))
+	const watchdog = 500 * time.Millisecond
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		checkSharedServerLeaks(reporter, logDir, launchDir, time.Second, watchdog)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(watchdog + inspectionWaitDelay + 2*time.Second):
+		t.Fatal("the leak guard outlived its watchdog")
+	}
+	requireReportedUnsignalled(t, deadline, server, reporter, context.DeadlineExceeded.Error())
+}
+
+func TestClassifyLookFailure_TellsAGoneProcessFromAnUninspectableOne(t *testing.T) {
+	_, missingLink := os.Readlink(filepath.Join(t.TempDir(), "cwd"))
+	for name, c := range map[string]struct {
+		cause    error
+		departed bool
+		want     ownershipVerdict
+	}{
+		"the process is gone":                       {syscall.ESRCH, false, goneOrForeign},
+		"a missing cwd link":                        {cwdLinkError(missingLink), false, goneOrForeign},
+		"a zombie's missing cwd link":               {cwdLinkError(&fs.PathError{Op: "readlink", Path: "/proc/1/cwd", Err: syscall.ENOENT}), false, goneOrForeign},
+		"a tool failing for a departed process":     {errors.New("exit status 1"), true, goneOrForeign},
+		"an unreadable cwd link":                    {cwdLinkError(&fs.PathError{Op: "readlink", Path: "/proc/1/cwd", Err: syscall.EACCES}), false, uninspectable},
+		"a missing tool":                            {exec.ErrNotFound, false, uninspectable},
+		"a failing tool":                            {errors.New("exit status 1"), false, uninspectable},
+		"a missing interpreter is not a departure":  {&fs.PathError{Op: "fork/exec", Path: "/x/ps", Err: syscall.ENOENT}, false, uninspectable},
+		"a tool that did not answer within a bound": {context.DeadlineExceeded, false, uninspectable},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := classifyLookFailure(c.cause, c.departed)
+
+			assert.Equal(t, c.want, got.verdict)
+			if c.want == uninspectable {
+				assert.ErrorIs(t, got.cause, c.cause)
+			}
+		})
+	}
 }
