@@ -5,6 +5,7 @@ package testkit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,11 +26,47 @@ type runningCandidate struct {
 	end    *candidateEnd
 }
 
-func (h *SharedServerHarness) addCandidate(c *runningCandidate) {
-	h.candidatesMu.Lock()
-	defer h.candidatesMu.Unlock()
-	h.candidates = append(h.candidates, c)
+var errHarnessStopped = errors.New("the shared server harness has stopped: no candidate can be spawned")
+
+// candidateSet is the one owner of the candidates a harness started. The spawn
+// seam stays callable after the harness cleanup began, because a session
+// proxy abandons a supervised spawn when its session ends; once stopped, the
+// set refuses every start, so no start can race the wait for the started ones.
+type candidateSet struct {
+	mu      sync.Mutex
+	stopped bool
+	running []*runningCandidate
+	ended   sync.WaitGroup
 }
+
+func (s *candidateSet) start(c *runningCandidate, run func()) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopped {
+		return errHarnessStopped
+	}
+	s.running = append(s.running, c)
+	s.ended.Go(run)
+	return nil
+}
+
+func (s *candidateSet) takeRunning() []*runningCandidate {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	running := s.running
+	s.running = nil
+	return running
+}
+
+func (s *candidateSet) stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stopped = true
+}
+
+// awaitEnded must follow stop: only then has every start that will ever
+// succeed already happened.
+func (s *candidateSet) awaitEnded() { s.ended.Wait() }
 
 // StopSharedServers ends every shared server candidate spawned so far by
 // cancelling its goroutine (spec 13.3) and returns once each has returned,
@@ -38,10 +75,7 @@ func (h *SharedServerHarness) addCandidate(c *runningCandidate) {
 // SharedServerDeadline.
 func (h *SharedServerHarness) StopSharedServers() {
 	h.t.Helper()
-	h.candidatesMu.Lock()
-	stopping := h.candidates
-	h.candidates = nil
-	h.candidatesMu.Unlock()
+	stopping := h.candidates.takeRunning()
 
 	deadline := time.After(SharedServerDeadline)
 	for _, c := range stopping {
