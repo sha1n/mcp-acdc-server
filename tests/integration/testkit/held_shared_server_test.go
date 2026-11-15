@@ -5,6 +5,8 @@ package testkit
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -122,6 +124,78 @@ func TestHoldSharedServer_ReportsAnExitWhileItsAttachWaitsWithoutAwaitingTheDead
 	assert.Contains(t, got.err.Error(), "ended before a session held it")
 	assert.Contains(t, got.err.Error(), errBuildWithheld.Error())
 	assert.Equal(t, 1, h.Spawns())
+}
+
+func TestAwaitAttach_ReportsTheCandidateExitWhileAnAcceptedPeerWithholdsItsReadyLine(t *testing.T) {
+	listener, socketPath := listenUnixInShortDir(t)
+	end := &candidateEnd{ended: make(chan struct{})}
+	result := make(chan error, 1)
+	// The deadline outlasts the watchdog, so only the candidate's end can
+	// release the ready-line read of a peer that stays open.
+	go func() {
+		_, err := awaitAttach(socketPath, end, time.Now().Add(2*SharedServerDeadline))
+		result <- err
+	}()
+	acceptWithin(t, listener, SharedServerDeadline)
+
+	end.exit = SharedServerExit{Err: errBuildWithheld}
+	close(end.ended)
+
+	select {
+	case err := <-result:
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ended before a session held it")
+		assert.Contains(t, err.Error(), errBuildWithheld.Error())
+	case <-time.After(SharedServerDeadline):
+		t.Fatalf("the candidate's end did not release the ready-line read within %s", SharedServerDeadline)
+	}
+}
+
+func TestTryAttach_ClosesItsConnectionWhenCancelledDuringTheReadyRead(t *testing.T) {
+	listener, socketPath := listenUnixInShortDir(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	result := make(chan *attachedSession, 1)
+	go func() { result <- tryAttach(ctx, socketPath) }()
+	peer := acceptWithin(t, listener, SharedServerDeadline)
+
+	cancel()
+
+	select {
+	case held := <-result:
+		assert.Nil(t, held)
+	case <-time.After(SharedServerDeadline):
+		t.Fatalf("cancellation did not release the ready-line read within %s", SharedServerDeadline)
+	}
+	require.NoError(t, peer.SetReadDeadline(time.Now().Add(SharedServerDeadline)))
+	_, err := peer.Read(make([]byte, 1))
+	assert.ErrorIs(t, err, io.EOF)
+}
+
+// listenUnixInShortDir closes its listener in cleanup, so a failing test
+// cannot leave an attach blocked on a connection it accepted.
+func listenUnixInShortDir(t *testing.T) (*net.UnixListener, string) {
+	t.Helper()
+	// t.TempDir() is not used: its macOS paths exceed the socket path budget.
+	base, err := os.MkdirTemp("/tmp", "acdc-attach-")
+	require.NoError(t, err)
+	t.Cleanup(func() { removeAll(t, base) })
+	socketPath := filepath.Join(base, "s")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	return listener, socketPath
+}
+
+// acceptWithin closes the accepted connection in cleanup and never writes to
+// it, so its peer stays open without a ready line until the test ends.
+func acceptWithin(t *testing.T, listener *net.UnixListener, bound time.Duration) *net.UnixConn {
+	t.Helper()
+	require.NoError(t, listener.SetDeadline(time.Now().Add(bound)))
+	conn, err := listener.AcceptUnix()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn
 }
 
 var errBuildWithheld = errors.New("build withheld by the test")
