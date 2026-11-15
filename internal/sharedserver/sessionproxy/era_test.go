@@ -176,7 +176,7 @@ func TestCompareInitialize_FailsTheRecoveryOnAnotherProtocolVersionOrARejection(
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := compareInitialize(decodeLine(seen), decodeLine(tc.replayed))
-			var failure *discoveryError
+			var failure *connectionSetupError
 			require.True(t, errors.As(err, &failure), "a classified failure, got %v", err)
 			assert.Equal(t, causeProtocolVersion, failure.cause)
 			assert.Contains(t, err.Error(), tc.message)

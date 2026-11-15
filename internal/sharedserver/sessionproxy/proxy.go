@@ -58,14 +58,14 @@ func endWithoutAttach(ctx context.Context, cfg Config, err error, input *hostInp
 	if sessionEnd(ctx, input.ended) != nil {
 		return nil
 	}
-	var failure *discoveryError
+	var failure *connectionSetupError
 	if errors.As(err, &failure) {
 		return fallBack(ctx, cfg, failure, input)
 	}
 	return sessionResult(ctx, err)
 }
 
-func fallBack(ctx context.Context, cfg Config, failure *discoveryError, input *hostInput) error {
+func fallBack(ctx context.Context, cfg Config, failure *connectionSetupError, input *hostInput) error {
 	cfg.Logger.Warn("Shared server unavailable, continuing as a per-session server",
 		"cause", string(failure.cause), "error", failure)
 	return cfg.Fallback(ctx, input.handOver())

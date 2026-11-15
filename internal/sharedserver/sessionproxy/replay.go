@@ -89,7 +89,7 @@ func answers(line decodedLine, key requestKey) bool {
 }
 
 func droppedInSequence(method string, err error) error {
-	return &discoveryError{cause: causeDroppedInSequence, err: fmt.Errorf("shared server connection lost while replaying %s: %w", method, err)}
+	return &connectionSetupError{cause: causeDroppedInSequence, err: fmt.Errorf("shared server connection lost while replaying %s: %w", method, err)}
 }
 
 // announceListChanges tells a legacy host that its lists may have changed

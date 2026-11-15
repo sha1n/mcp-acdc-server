@@ -91,16 +91,16 @@ func compareInitialize(seen, replayed decodedLine) ([]string, error) {
 	seenResult, _ := objectMembers(seen.result)
 	replayedResult, ok := objectMembers(replayed.result)
 	if !ok {
-		return nil, &discoveryError{cause: causeProtocolVersion, err: errInitializeRejected}
+		return nil, &connectionSetupError{cause: causeProtocolVersion, err: errInitializeRejected}
 	}
 	var seenVersion, replayedVersion string
 	_ = json.Unmarshal(seenResult["protocolVersion"], &seenVersion)
 	if json.Unmarshal(replayedResult["protocolVersion"], &replayedVersion) != nil {
-		return nil, &discoveryError{cause: causeProtocolVersion, err: fmt.Errorf(
+		return nil, &connectionSetupError{cause: causeProtocolVersion, err: fmt.Errorf(
 			"the replayed initialize result carries no protocol version, the host saw %q", seenVersion)}
 	}
 	if replayedVersion != seenVersion {
-		return nil, &discoveryError{cause: causeProtocolVersion, err: fmt.Errorf(
+		return nil, &connectionSetupError{cause: causeProtocolVersion, err: fmt.Errorf(
 			"the replayed initialize negotiated protocol version %q, the host saw %q", replayedVersion, seenVersion)}
 	}
 	var differs []string

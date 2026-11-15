@@ -103,7 +103,7 @@ func (s *session) recover(ctx context.Context, crash *connectionLost) (*attachme
 		})
 		return att, nil
 	}
-	var failure *discoveryError
+	var failure *connectionSetupError
 	if !errors.As(err, &failure) || sessionEnd(ctx, s.input.ended) != nil {
 		return nil, endedOr(ctx, s.input.ended, err)
 	}
@@ -143,7 +143,7 @@ func (e *recoveryFailure) Unwrap() error { return e.err }
 // failRecovery answers every held request, since none of them can reach a
 // shared server any more, and drops the other held lines. The host has only
 // the context to cut those answers short: every one is owed before the exit.
-func (s *session) failRecovery(ctx context.Context, failure *discoveryError) error {
+func (s *session) failRecovery(ctx context.Context, failure *connectionSetupError) error {
 	err := fmt.Errorf("failed to recover the shared server connection (%s): %w", failure.cause, failure)
 	if answerErr := s.writeToHost(ctx, crashAnswers(s.input.abandon())); answerErr != nil {
 		err = fmt.Errorf("%w; %w", err, answerErr)
