@@ -138,6 +138,9 @@ func (e *BinaryEnv) CheckSharedServerLeaks(r LeakReporter) {
 type leakGuard struct {
 	logDir, endpointDir string
 	maxLinger, grace    time.Duration
+	// onUnattributed, when set, is called whenever the guard starts waiting
+	// on a held lock it has no live run to attribute to.
+	onUnattributed func()
 }
 
 func checkSharedServerLeaks(r LeakReporter, g leakGuard, watchdog time.Duration) {
