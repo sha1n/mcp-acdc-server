@@ -94,6 +94,15 @@ func (c *fakeSharedConn) crash() {
 	require.NoError(c.t, c.conn.Close())
 }
 
+// holdBarrier writes the first byte of next without its line end. The pipe
+// write returns only once the reader takes that byte, which it reads only
+// after delivering the previous complete line, so that line is held before
+// the caller lets the proxy attach. The caller completes next later.
+func holdBarrier(host *proxyHost, next string) {
+	host.t.Helper()
+	host.write(next[:1])
+}
+
 type recoveringProxy struct {
 	host   *proxyHost
 	server *fakeSharedServer
@@ -121,13 +130,14 @@ func TestRun_AnswersAnInFlightRequestWithTheCrashErrorAndRecoversOntoANewSession
 	assert.Equal(t, crashError("1"), proxy.host.readLine())
 	recovered := proxy.server.nextConn()
 	proxy.host.write(request("2"))
+	holdBarrier(proxy.host, request("3"))
 	recovered.sendReadyAs("second")
 	require.Equal(t, request("2"), recovered.readLine(), "the failed request is never re-sent")
 	recovered.write(response("2"))
 	assert.Equal(t, response("2"), proxy.host.readLine())
 	// Request 3 is live because request 2 already went through the attached
 	// forwarder, which logs the recovery before it reads live input.
-	proxy.host.write(request("3"))
+	proxy.host.write(request("3")[1:])
 	require.Equal(t, request("3"), recovered.readLine())
 
 	warnings := proxy.logs.matching(slog.LevelWarn, crashWarning)
@@ -225,12 +235,13 @@ func TestRun_DeliversMessagesHeldDuringTheOutageInOrderAndUnfiltered(t *testing.
 	for _, line := range held {
 		proxy.host.write(line)
 	}
+	holdBarrier(proxy.host, request("5"))
 	recovered.sendReadyAs("second")
 
 	for _, line := range held {
 		assert.Equal(t, line, recovered.readLine())
 	}
-	proxy.host.write(request("5"))
+	proxy.host.write(request("5")[1:])
 	require.Equal(t, request("5"), recovered.readLine(), "the relay resumed after the held messages")
 	recovered.write(response("3"))
 	assert.Equal(t, response("3"), proxy.host.readLine(), "untracked lines never get a crash error")
