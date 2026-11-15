@@ -27,9 +27,13 @@ type LaunchUnderTest struct {
 	t      testing.TB
 	stdin  *io.PipeWriter
 	stdout *bufio.Reader
-	stderr *lockedBuffer
-	done   chan struct{}
-	err    error
+	// stdoutPipe is the host end of stdout, owned by the harness: closing it
+	// fails a launch write that nobody reads.
+	stdoutPipe *io.PipeReader
+	stderr     *lockedBuffer
+	cancel     context.CancelFunc
+	done       chan struct{}
+	err        error
 	// identity is computed before the launch starts: content edited later
 	// in the test must not change the identity the launch ran with.
 	identity string
@@ -45,10 +49,14 @@ type lineResult struct {
 func (h *SharedServerHarness) Launch(args ...string) *LaunchUnderTest {
 	h.t.Helper()
 	l := StartLaunch(h.t, h.SessionProxyParams(args), h.Binary, args...)
+	h.addLaunch(l)
+	return l
+}
+
+func (h *SharedServerHarness) addLaunch(l *LaunchUnderTest) {
 	h.launchesMu.Lock()
 	defer h.launchesMu.Unlock()
 	h.launches = append(h.launches, l)
-	return l
 }
 
 // Launches returns every launch started with Launch so far.
@@ -74,8 +82,9 @@ func (h *SharedServerHarness) FallbackWarnings() int {
 
 // StartLaunch runs the runner with params and args. It owns the host streams
 // of params: both the session proxy streams and the per-session transport
-// are wired to the same pipes. When the test ends, host stdin is closed and
-// the launch must return within SharedServerDeadline.
+// are wired to the same pipes. When a passing test ends, host stdin is closed
+// and the launch must return within SharedServerDeadline; when the test has
+// failed, or the launch misses that deadline, the launch is torn down.
 func StartLaunch(t testing.TB, params app.RunParams, binary identity.Binary, args ...string) *LaunchUnderTest {
 	t.Helper()
 	return startLaunch(t, params, binary, nil, args...)
@@ -86,13 +95,16 @@ func startLaunch(t testing.TB, params app.RunParams, binary identity.Binary, gat
 	flags := LaunchFlags(t, args)
 	hostIn, launchIn := io.Pipe()
 	launchOut, hostOut := io.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
 	l := &LaunchUnderTest{
-		t:        t,
-		stdin:    launchIn,
-		stdout:   bufio.NewReader(launchOut),
-		stderr:   &lockedBuffer{},
-		done:     make(chan struct{}),
-		identity: launchIdentity(flags, binary),
+		t:          t,
+		stdin:      launchIn,
+		stdout:     bufio.NewReader(launchOut),
+		stdoutPipe: launchOut,
+		stderr:     &lockedBuffer{},
+		cancel:     cancel,
+		done:       make(chan struct{}),
+		identity:   launchIdentity(flags, binary),
 	}
 	params.Stdin = hostIn
 	params.Stdout = hostOut
@@ -102,8 +114,9 @@ func startLaunch(t testing.TB, params app.RunParams, binary identity.Binary, gat
 	gate.join()
 	go func() {
 		defer close(l.done)
+		defer cancel()
 		gate.await()
-		l.err = app.RunWithDeps(context.Background(), params, flags, binary)
+		l.err = app.RunWithDeps(ctx, params, flags, binary)
 		// Unblocks host reads and writes still pending on the ended launch.
 		hostIn.CloseWithError(io.ErrClosedPipe)
 		hostOut.CloseWithError(io.EOF)
@@ -112,12 +125,31 @@ func startLaunch(t testing.TB, params app.RunParams, binary identity.Binary, gat
 		// A test that fails before releasing its gate would otherwise leave
 		// the launch parked forever and fail the return deadline below.
 		gate.Release()
-		l.CloseStdin()
-		if ended, _ := l.waitWithin(SharedServerDeadline); !ended {
-			t.Errorf("launch did not return within %s of host stdin EOF", SharedServerDeadline)
-		}
+		l.end()
 	})
 	return l
+}
+
+func (l *LaunchUnderTest) end() {
+	if !l.t.Failed() {
+		l.CloseStdin()
+		if ended, _ := l.waitWithin(SharedServerDeadline); ended {
+			return
+		}
+		l.t.Errorf("launch did not return within %s of host stdin EOF", SharedServerDeadline)
+	}
+	l.tearDown()
+}
+
+// tearDown ends a launch that host stdin EOF cannot end, such as one blocked
+// writing answers it owes to a host that stopped reading.
+func (l *LaunchUnderTest) tearDown() {
+	l.cancel()
+	_ = l.stdin.CloseWithError(io.ErrClosedPipe)
+	_ = l.stdoutPipe.CloseWithError(io.ErrClosedPipe)
+	if ended, _ := l.waitWithin(SharedServerDeadline); !ended {
+		l.t.Errorf("launch did not return within %s of its teardown", SharedServerDeadline)
+	}
 }
 
 // WriteLine writes one host line; a newline is appended.
