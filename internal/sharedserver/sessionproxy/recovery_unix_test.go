@@ -120,11 +120,15 @@ func TestRun_AnswersAnInFlightRequestWithTheCrashErrorAndRecoversOntoANewSession
 
 	assert.Equal(t, crashError("1"), proxy.host.readLine())
 	recovered := proxy.server.nextConn()
-	recovered.sendReadyAs("second")
 	proxy.host.write(request("2"))
+	recovered.sendReadyAs("second")
 	require.Equal(t, request("2"), recovered.readLine(), "the failed request is never re-sent")
 	recovered.write(response("2"))
 	assert.Equal(t, response("2"), proxy.host.readLine())
+	// Request 3 is live because request 2 already went through the attached
+	// forwarder, which logs the recovery before it reads live input.
+	proxy.host.write(request("3"))
+	require.Equal(t, request("3"), recovered.readLine())
 
 	warnings := proxy.logs.matching(slog.LevelWarn, crashWarning)
 	require.Len(t, warnings, 1)
@@ -137,7 +141,7 @@ func TestRun_AnswersAnInFlightRequestWithTheCrashErrorAndRecoversOntoANewSession
 	assert.Equal(t, "/var/log/acdc-second.log", attaches[1].attrs["log"])
 	infos := proxy.logs.matching(slog.LevelInfo, recoveredInfo)
 	require.Len(t, infos, 1)
-	assert.Equal(t, "0", infos[0].attrs["held"])
+	assert.Equal(t, "1", infos[0].attrs["held"])
 }
 
 func TestRun_EchoesTheIdOfEachInFlightRequestWithItsOriginalType(t *testing.T) {
@@ -263,6 +267,11 @@ func TestRun_RecoversFromSuccessiveCrashes(t *testing.T) {
 	require.Equal(t, request("99"), conn.readLine())
 	conn.write(response("99"))
 	assert.Equal(t, response("99"), proxy.host.readLine())
+	// Request 100 is live because request 99 already went through the
+	// attached forwarder, which logs the last recovery before it reads live
+	// input.
+	proxy.host.write(request("100"))
+	require.Equal(t, request("100"), conn.readLine())
 	assert.Len(t, proxy.logs.matching(slog.LevelWarn, crashWarning), 4)
 	assert.Len(t, proxy.logs.matching(slog.LevelInfo, recoveredInfo), 4)
 	assert.Len(t, proxy.logs.matching(slog.LevelInfo, attachedMessage), 5)
