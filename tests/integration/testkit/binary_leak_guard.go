@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -117,7 +118,13 @@ type LeakReporter interface {
 // CheckSharedServerLeaks kills every shared server logged under logDir that is
 // still alive and reports one that outlived its linger deadline: the latest
 // of its startup and last detach entries plus its linger plus grace.
+// launchDir is the working directory of the launches that spawned them.
 func CheckSharedServerLeaks(r LeakReporter, logDir, launchDir string, grace time.Duration) {
+	resolvedLaunchDir, err := filepath.EvalSymlinks(launchDir)
+	if err != nil {
+		r.Errorf("leak guard: %v", err)
+		return
+	}
 	logs, err := filepath.Glob(filepath.Join(logDir, "*.log"))
 	if err != nil {
 		r.Errorf("leak guard: %v", err)
@@ -129,24 +136,25 @@ func CheckSharedServerLeaks(r LeakReporter, logDir, launchDir string, grace time
 			r.Errorf("leak guard: failed to read %s: %v", logPath, err)
 			continue
 		}
+		owner := serverOwner{identity: strings.TrimSuffix(filepath.Base(logPath), ".log"), launchDir: resolvedLaunchDir}
 		for _, run := range runs {
-			checkServerRun(r, logPath, run, grace)
+			checkServerRun(r, logPath, owner, run, grace)
 		}
 	}
 }
 
-func checkServerRun(r LeakReporter, logPath string, run ServerRun, grace time.Duration) {
+func checkServerRun(r LeakReporter, logPath string, owner serverOwner, run ServerRun, grace time.Duration) {
 	if !run.LingerExpired.IsZero() && run.LingerExpired.After(run.lingerStart().Add(run.Linger+grace)) {
 		r.Errorf("leak guard: shared server %d of %s expired at %s, after its linger deadline", run.PID, logPath, run.LingerExpired.Format(time.StampMilli))
 	}
 	if !run.Stopped.IsZero() {
 		return
 	}
-	linger, alive := liveSharedServerLinger(run.PID)
+	linger, alive := owner.liveServerLinger(run.PID)
 	if !alive {
 		return
 	}
-	if err := killAndAwaitExit(run.PID); err != nil {
+	if err := owner.killAndAwaitExit(run.PID); err != nil {
 		r.Errorf("leak guard: shared server %d of %s: %v", run.PID, logPath, err)
 	}
 	if deadline := run.lingerStart().Add(linger + grace); time.Now().After(deadline) {
@@ -154,22 +162,71 @@ func checkServerRun(r LeakReporter, logPath string, run ServerRun, grace time.Du
 	}
 }
 
-// liveSharedServerLinger reads the linger from the live process's own
-// arguments, which are its spawning launch's. A pid that no longer names a
-// shared server (exited, reused, or a zombie) is not alive.
-func liveSharedServerLinger(pid int) (time.Duration, bool) {
+// serverOwner is what proves a pid is the server of one log, so a reused pid
+// is never signalled: the log's identity is the identity among its arguments,
+// and its working directory, inherited from the spawning launch, is the
+// launch directory, which belongs to one test for as long as it exists.
+type serverOwner struct {
+	identity  string
+	launchDir string
+}
+
+// liveServerLinger reads the linger from the live process's own arguments,
+// which are its spawning launch's. A pid that no longer names this log's
+// server (exited, reused, or a zombie) is a server that is gone.
+func (o serverOwner) liveServerLinger(pid int) (time.Duration, bool) {
 	if syscall.Kill(pid, 0) != nil {
 		return 0, false
 	}
-	out, err := exec.Command("ps", "-o", "args=", "-p", strconv.Itoa(pid)).Output()
+	out, err := exec.Command("ps", "-ww", "-o", "args=", "-p", strconv.Itoa(pid)).Output()
 	if err != nil {
 		return 0, false
 	}
 	args := strings.Fields(string(out))
-	if !containsArg(args, "--shared-server-identity") {
+	if !carriesIdentity(args, o.identity) {
+		return 0, false
+	}
+	if dir, err := processDir(pid); err != nil || dir != o.launchDir {
 		return 0, false
 	}
 	return lingerArg(args), true
+}
+
+// carriesIdentity requires every identity flag in args to name identity.
+func carriesIdentity(args []string, identity string) bool {
+	found := false
+	for i, arg := range args {
+		value, inline := strings.CutPrefix(arg, "--shared-server-identity=")
+		if !inline && arg == "--shared-server-identity" {
+			value, inline = "", true
+			if i+1 < len(args) {
+				value = args[i+1]
+			}
+		}
+		if inline && value != identity {
+			return false
+		}
+		found = found || inline
+	}
+	return found
+}
+
+// processDir reads a process's working directory: /proc on Linux, where lsof
+// may be missing, and lsof elsewhere, where /proc does not exist.
+func processDir(pid int) (string, error) {
+	if runtime.GOOS == "linux" {
+		return os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
+	}
+	out, err := exec.Command("lsof", "-a", "-p", strconv.Itoa(pid), "-d", "cwd", "-Fn").Output()
+	if err != nil {
+		return "", err
+	}
+	for line := range strings.Lines(string(out)) {
+		if dir, ok := strings.CutPrefix(strings.TrimSuffix(line, "\n"), "n"); ok {
+			return dir, nil
+		}
+	}
+	return "", fmt.Errorf("lsof reported no working directory for %d", pid)
 }
 
 func containsArg(args []string, name string) bool {
@@ -195,13 +252,18 @@ func lingerArg(args []string) time.Duration {
 	return linger
 }
 
-func killAndAwaitExit(pid int) error {
+// killAndAwaitExit proves ownership again right before the signal and on
+// every look while waiting, since the pid may be reused at any point.
+func (o serverOwner) killAndAwaitExit(pid int) error {
+	if _, owned := o.liveServerLinger(pid); !owned {
+		return nil
+	}
 	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("kill: %w", err)
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, alive := liveSharedServerLinger(pid); !alive {
+		if _, owned := o.liveServerLinger(pid); !owned {
 			return nil
 		}
 		time.Sleep(20 * time.Millisecond)
