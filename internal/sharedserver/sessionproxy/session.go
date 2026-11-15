@@ -185,8 +185,9 @@ func (s *session) copyLines(fromServer *bufio.Reader) error {
 		if _, err := s.cfg.Stdout.Write(line); err != nil {
 			return fmt.Errorf("failed to relay to the host: %w", err)
 		}
-		s.requests.answered(line)
-		s.listens.delivered(line)
+		decoded := decodeLine(line)
+		s.requests.answered(decoded)
+		s.listens.delivered(decoded)
 	}
 }
 
@@ -199,13 +200,14 @@ type trackingWriter struct {
 	listens  *listenStreams
 }
 
-func (w trackingWriter) Write(line []byte) (int, error) {
+func (w trackingWriter) Write(raw []byte) (int, error) {
+	line := decodeLine(raw)
 	stream, isListen := w.listens.track(line)
 	var request *list.Element
 	if !isListen {
 		request = w.requests.track(line)
 	}
-	n, err := w.conn.Write(line)
+	n, err := w.conn.Write(raw)
 	if err != nil {
 		w.requests.untrack(request)
 		w.listens.untrack(stream)

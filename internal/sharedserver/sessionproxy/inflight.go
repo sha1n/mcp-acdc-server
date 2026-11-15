@@ -43,7 +43,7 @@ func newInFlight() *inFlight {
 // track records line if it is a request with an id. The returned handle
 // undoes it when the line could not be fully written; it is nil for any
 // other line, which is forwarded untracked.
-func (f *inFlight) track(line []byte) *list.Element {
+func (f *inFlight) track(line decodedLine) *list.Element {
 	key, id, ok := requestOf(line)
 	if !ok {
 		return nil
@@ -55,13 +55,12 @@ func (f *inFlight) track(line []byte) *list.Element {
 
 // requestOf reads line as a request with an id: go-sdk reads a line as a
 // request only when its method is a string.
-func requestOf(line []byte) (requestKey, json.RawMessage, bool) {
-	members, ok := objectMembers(line)
-	if !ok || !isString(members["method"]) {
+func requestOf(line decodedLine) (requestKey, json.RawMessage, bool) {
+	if !line.methodIsString {
 		return requestKey{}, nil, false
 	}
-	key, ok := keyOf(members["id"])
-	return key, members["id"], ok
+	key, ok := keyOf(line.id)
+	return key, line.id, ok
 }
 
 func (f *inFlight) untrack(handle *list.Element) {
@@ -74,15 +73,11 @@ func (f *inFlight) untrack(handle *list.Element) {
 }
 
 // answered clears the oldest request the server line responds to, if any.
-func (f *inFlight) answered(line []byte) {
-	members, ok := objectMembers(line)
-	if !ok {
+func (f *inFlight) answered(line decodedLine) {
+	if !line.object || line.hasMethod {
 		return
 	}
-	if _, isRequest := members["method"]; isRequest {
-		return
-	}
-	key, ok := keyOf(members["id"])
+	key, ok := keyOf(line.id)
 	if !ok || key.unmatchable {
 		return
 	}
@@ -114,7 +109,7 @@ func (f *inFlight) drain() [][]byte {
 func crashAnswers(lines [][]byte) [][]byte {
 	var answers [][]byte
 	for _, line := range lines {
-		if _, id, ok := requestOf(line); ok {
+		if _, id, ok := requestOf(decodeLine(line)); ok {
 			answers = append(answers, crashAnswer(id))
 		}
 	}
@@ -123,22 +118,6 @@ func crashAnswers(lines [][]byte) [][]byte {
 
 func crashAnswer(id json.RawMessage) []byte {
 	return bytes.Join([][]byte{[]byte(crashErrorPrefix), id, []byte(crashErrorSuffix)}, nil)
-}
-
-// objectMembers decodes into a map because go-sdk matches member names
-// case-sensitively, unlike decoding into a struct.
-func objectMembers(line []byte) (map[string]json.RawMessage, bool) {
-	var members map[string]json.RawMessage
-	if err := json.Unmarshal(line, &members); err != nil || members == nil {
-		return nil, false
-	}
-	return members, true
-}
-
-// isString needs only the first byte: objectMembers has already validated
-// the whole value.
-func isString(value json.RawMessage) bool {
-	return len(value) > 0 && value[0] == '"'
 }
 
 func keyOf(id json.RawMessage) (requestKey, bool) {

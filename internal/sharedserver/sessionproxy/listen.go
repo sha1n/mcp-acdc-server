@@ -38,18 +38,17 @@ func newListenStreams() *listenStreams {
 
 // track records line if it is a listen request with an id. The handle undoes
 // it when the line could not be fully written.
-func (l *listenStreams) track(line []byte) (*list.Element, bool) {
-	members, ok := objectMembers(line)
-	if !ok || !hasMethod(members, listenMethod) {
+func (l *listenStreams) track(line decodedLine) (*list.Element, bool) {
+	if !line.methodIs(listenMethod) {
 		return nil, false
 	}
-	key, ok := keyOf(members["id"])
+	key, ok := keyOf(line.id)
 	if !ok {
 		return nil, false
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.entries.PushBack(&listenStream{key: key, line: bytes.Clone(line)}), true
+	return l.entries.PushBack(&listenStream{key: key, line: bytes.Clone(line.raw)}), true
 }
 
 func (l *listenStreams) untrack(handle *list.Element) {
@@ -63,18 +62,14 @@ func (l *listenStreams) untrack(handle *list.Element) {
 
 // sent ends the stream a host cancellation written to the shared server
 // targets.
-func (l *listenStreams) sent(line []byte) {
-	if l.empty() {
-		return
-	}
-	members, ok := objectMembers(line)
-	if !ok || !hasMethod(members, cancelledMethod) {
+func (l *listenStreams) sent(line decodedLine) {
+	if l.empty() || !line.methodIs(cancelledMethod) {
 		return
 	}
 	var params struct {
 		RequestID json.RawMessage `json:"requestId"`
 	}
-	if json.Unmarshal(members["params"], &params) != nil {
+	if json.Unmarshal(line.params, &params) != nil {
 		return
 	}
 	if key, ok := keyOf(params.RequestID); ok {
@@ -84,21 +79,17 @@ func (l *listenStreams) sent(line []byte) {
 
 // delivered applies a server line written to the host: an acknowledgement
 // marks its stream, a response ends it.
-func (l *listenStreams) delivered(line []byte) {
-	if l.empty() {
+func (l *listenStreams) delivered(line decodedLine) {
+	if l.empty() || !line.object {
 		return
 	}
-	members, ok := objectMembers(line)
-	if !ok {
-		return
-	}
-	if _, isMessage := members["method"]; !isMessage {
-		if key, ok := keyOf(members["id"]); ok {
+	if !line.hasMethod {
+		if key, ok := keyOf(line.id); ok {
 			l.remove(key)
 		}
 		return
 	}
-	if ack, ok := acknowledgementOf(members); ok {
+	if ack, ok := acknowledgementOf(line); ok {
 		l.markAcknowledged(ack.key)
 	}
 }
@@ -155,11 +146,6 @@ func (l *listenStreams) markAcknowledged(key requestKey) {
 	}
 }
 
-func hasMethod(members map[string]json.RawMessage, method string) bool {
-	var name string
-	return isString(members["method"]) && json.Unmarshal(members["method"], &name) == nil && name == method
-}
-
 // acknowledgement is what the shared server agreed for a listen stream, keyed
 // by the subscription id it stamps (the listen request id as go-sdk reads it).
 type acknowledgement struct {
@@ -169,8 +155,8 @@ type acknowledgement struct {
 	prompts        bool
 }
 
-func acknowledgementOf(members map[string]json.RawMessage) (acknowledgement, bool) {
-	if !hasMethod(members, acknowledgedMethod) {
+func acknowledgementOf(line decodedLine) (acknowledgement, bool) {
+	if !line.methodIs(acknowledgedMethod) {
 		return acknowledgement{}, false
 	}
 	var params struct {
@@ -180,7 +166,7 @@ func acknowledgementOf(members map[string]json.RawMessage) (acknowledgement, boo
 			Prompts   bool `json:"promptsListChanged"`
 		} `json:"notifications"`
 	}
-	if json.Unmarshal(members["params"], &params) != nil {
+	if json.Unmarshal(line.params, &params) != nil {
 		return acknowledgement{}, false
 	}
 	id := params.Meta[subscriptionIDField]
@@ -252,14 +238,15 @@ func (s *session) awaitingAcknowledgement(reissues []*reissue) bool {
 
 // applyReissueLine discards the acknowledgement of a re-issue the host
 // already saw acknowledged; every other line reaches the host.
-func (s *session) applyReissueLine(ctx context.Context, reissues []*reissue, line []byte) error {
+func (s *session) applyReissueLine(ctx context.Context, reissues []*reissue, raw []byte) error {
+	line := decodeLine(raw)
 	if r, ack := acknowledgedReissue(reissues, line); r != nil {
 		r.ack = &ack
 		if r.stream.acknowledged {
 			return nil
 		}
 	}
-	if err := s.writeToHost(ctx, [][]byte{line}); err != nil {
+	if err := s.writeToHost(ctx, [][]byte{raw}); err != nil {
 		return err
 	}
 	s.requests.answered(line)
@@ -267,12 +254,8 @@ func (s *session) applyReissueLine(ctx context.Context, reissues []*reissue, lin
 	return nil
 }
 
-func acknowledgedReissue(reissues []*reissue, line []byte) (*reissue, acknowledgement) {
-	members, ok := objectMembers(line)
-	if !ok {
-		return nil, acknowledgement{}
-	}
-	ack, ok := acknowledgementOf(members)
+func acknowledgedReissue(reissues []*reissue, line decodedLine) (*reissue, acknowledgement) {
+	ack, ok := acknowledgementOf(line)
 	if !ok {
 		return nil, acknowledgement{}
 	}
