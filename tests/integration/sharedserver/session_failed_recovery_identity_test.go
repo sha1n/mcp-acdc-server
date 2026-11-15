@@ -25,6 +25,7 @@ func TestSessionFailedRecovery_UncomputableIdentityFailsWithoutFallback(t *testi
 	held := h.HoldSearches()
 	l := h.Launch(recoveryLaunchArgs(contentDir)...)
 	attachRecords(t, l, 1, deadline)
+	startupSpawns := h.Spawns()
 
 	l.WriteLine(modernSearch("5", testkit.HeldSearchQuery))
 	held.AwaitReceived()
@@ -42,6 +43,6 @@ func TestSessionFailedRecovery_UncomputableIdentityFailsWithoutFallback(t *testi
 	warnings := stderrRecords(t, l, slogtext.Record{"level": "WARN", "msg": crashWarningMessage})
 	require.Len(t, warnings, 1)
 	assert.Equal(t, "1", warnings[0]["in_flight"])
-	assert.Equal(t, 1, h.Spawns(), "the recovery failed before dial-or-spawn")
+	assert.Equal(t, startupSpawns, h.Spawns(), "the recovery failed before dial-or-spawn")
 	assert.Equal(t, 1, h.Builds())
 }
