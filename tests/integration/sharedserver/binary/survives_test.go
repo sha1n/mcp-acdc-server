@@ -69,7 +69,7 @@ func TestBinary_LeakGuardKillsALiveSharedServer(t *testing.T) {
 	run := awaitServerRun(t, logPath, "attached:"+session, deadline)
 	require.NoError(t, syscall.Kill(run.PID, 0), "precondition: the shared server is alive")
 
-	testkit.CheckSharedServerLeaks(t, env.LogDir(), testkit.LeakGuardGrace)
+	testkit.CheckSharedServerLeaks(t, env.LogDir(), env.Root, testkit.LeakGuardGrace)
 
 	for syscall.Kill(run.PID, 0) == nil {
 		require.True(t, time.Now().Before(deadline), "the guard did not kill shared server %d", run.PID)

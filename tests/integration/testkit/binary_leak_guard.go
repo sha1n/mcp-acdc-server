@@ -117,7 +117,7 @@ type LeakReporter interface {
 // CheckSharedServerLeaks kills every shared server logged under logDir that is
 // still alive and reports one that outlived its linger deadline: the latest
 // of its startup and last detach entries plus its linger plus grace.
-func CheckSharedServerLeaks(r LeakReporter, logDir string, grace time.Duration) {
+func CheckSharedServerLeaks(r LeakReporter, logDir, launchDir string, grace time.Duration) {
 	logs, err := filepath.Glob(filepath.Join(logDir, "*.log"))
 	if err != nil {
 		r.Errorf("leak guard: %v", err)

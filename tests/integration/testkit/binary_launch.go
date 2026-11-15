@@ -73,7 +73,7 @@ func NewBinaryEnv(t testing.TB, binary string) *BinaryEnv {
 		"XDG_STATE_HOME="+e.stateDir(),
 		"TMPDIR="+e.TempDir(),
 	)
-	t.Cleanup(func() { CheckSharedServerLeaks(t, e.LogDir(), LeakGuardGrace) })
+	t.Cleanup(func() { CheckSharedServerLeaks(t, e.LogDir(), e.Root, LeakGuardGrace) })
 	return e
 }
 
