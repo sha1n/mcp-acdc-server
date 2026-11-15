@@ -66,8 +66,9 @@ func Run(ctx context.Context, cfg Config) (err error) {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = listener.Close() }()
 
+	// The acceptor owns the listener from here: every return below waits for
+	// its stop sequence, which closes the listener.
 	sessions := startAccepting(ctx, logger, listener, ep, cfg.Identity, cfg.Linger)
 	server, cleanup, err := cfg.Build(sessions.buildContext(), logger)
 	if err != nil {
@@ -173,15 +174,15 @@ func bind(ep endpoint.Endpoint, identity string) (*net.UnixListener, error) {
 	return listener, nil
 }
 
-func attach(ctx context.Context, logger *slog.Logger, conn *net.UnixConn, server *mcp.Server, revalidate func(context.Context), logPath string) {
+func attach(ctx context.Context, logger *slog.Logger, conn *net.UnixConn, server *mcp.Server, admit func(context.Context) bool, logPath string) {
 	defer func() { _ = conn.Close() }()
 	stopOnCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stopOnCancel()
 
 	session := NewSessionID()
 	sessionCtx := withSession(ctx, session)
-	if revalidate != nil {
-		revalidate(ctx)
+	if admit != nil && !admit(ctx) {
+		return
 	}
 	readyLine, err := EncodeReadyLine(session, logPath)
 	if err != nil {
