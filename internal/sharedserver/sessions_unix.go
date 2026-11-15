@@ -47,10 +47,14 @@ func (w *acceptWake) consume() bool {
 // while the catalog and index are built is an attached session that waits
 // for the ready line instead of a connection left in the backlog.
 type sessionAcceptor struct {
-	// ctx scopes the build and every session. It is cancelled whenever the
-	// accept loop stops, whatever the reason, so that neither outlives it.
+	// ctx scopes accepting and the build: shutdown begins when it is
+	// cancelled. sessionCtx ends the sessions, and the run context never
+	// cancels it directly: it is cancelled only after accepting has stopped,
+	// so a proxy that lost its session can only dial a closed listener.
 	ctx         context.Context
 	cancel      context.CancelFunc
+	sessionCtx  context.Context
+	endSessions context.CancelFunc
 	runCtx      context.Context
 	logger      *slog.Logger
 	lingeredOut bool
@@ -80,12 +84,24 @@ func startAccepting(ctx context.Context, logger *slog.Logger, listener *net.Unix
 	}
 	a.runCtx = ctx
 	a.ctx, a.cancel = context.WithCancel(ctx)
+	a.sessionCtx, a.endSessions = context.WithCancel(context.WithoutCancel(ctx))
 	a.linger = newSessionLinger(linger, realLingerClock{}, a.wake.wake)
-	go func() {
-		a.err = a.acceptLoop()
-		close(a.stopped)
-	}()
+	go a.run()
 	return a
+}
+
+// run is the one stop sequence for every way the shared server ends. Sessions
+// end only on client close or cancellation, so they are cancelled before the
+// wait; otherwise the caller keeps the lock and a dialable socket that nobody
+// serves.
+func (a *sessionAcceptor) run() {
+	a.err = a.acceptLoop()
+	_ = a.listener.Close()
+	a.cancel()
+	a.linger.stop()
+	a.endSessions()
+	a.sessions.Wait()
+	close(a.stopped)
 }
 
 func (a *sessionAcceptor) buildContext() context.Context {
@@ -123,17 +139,6 @@ func (a *sessionAcceptor) abandon(buildErr error) error {
 func (a *sessionAcceptor) acceptLoop() error {
 	stopAccepting := context.AfterFunc(a.ctx, func() { _ = a.listener.Close() })
 	defer stopAccepting()
-
-	// Sessions end only on client close or cancellation, so whatever stops the
-	// accept loop must close the listener and cancel the sessions before
-	// waiting; otherwise the caller keeps the lock and a dialable socket that
-	// nobody serves.
-	defer func() {
-		_ = a.listener.Close()
-		a.linger.stop()
-		a.cancel()
-		a.sessions.Wait()
-	}()
 
 	for {
 		conn, err := a.listener.AcceptUnix()
@@ -176,11 +181,14 @@ func (a *sessionAcceptor) handle(conn *net.UnixConn) {
 		_ = conn.Close()
 		return
 	}
-	// Both cases can be ready at once; a session already cancelled must not
-	// get a ready line.
+	// Both cases can be ready at once; a connection of a shared server that
+	// is shutting down must not get a ready line. It is dropped only after
+	// accepting has stopped, so the peer's one retry is refused instead of
+	// being accepted and dropped as well.
 	if a.server == nil || a.ctx.Err() != nil {
+		<-a.sessionCtx.Done()
 		_ = conn.Close()
 		return
 	}
-	attach(a.ctx, a.logger, conn, a.server, a.revalidate, a.logPath)
+	attach(a.sessionCtx, a.logger, conn, a.server, a.revalidate, a.logPath)
 }
