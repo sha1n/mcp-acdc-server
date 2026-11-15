@@ -50,6 +50,8 @@ type loggedRecord struct {
 type logRecorder struct {
 	mu      sync.Mutex
 	records []loggedRecord
+	// appended is closed and cleared by the next record, waking every waiter.
+	appended chan struct{}
 }
 
 func (r *logRecorder) Enabled(context.Context, slog.Level) bool { return true }
@@ -63,6 +65,10 @@ func (r *logRecorder) Handle(_ context.Context, record slog.Record) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.records = append(r.records, logged)
+	if r.appended != nil {
+		close(r.appended)
+		r.appended = nil
+	}
 	return nil
 }
 
@@ -73,6 +79,36 @@ func (r *logRecorder) WithGroup(string) slog.Handler { return r }
 func (r *logRecorder) matching(level slog.Level, message string) []loggedRecord {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.matchingLocked(level, message)
+}
+
+// awaitRecord returns once a record with the level and message was logged,
+// whether before or after the call. A line the proxy relayed is no evidence
+// that another goroutine has logged yet.
+func (r *logRecorder) awaitRecord(t *testing.T, level slog.Level, message string) {
+	t.Helper()
+	watchdog := time.NewTimer(proxyTestDeadline)
+	defer watchdog.Stop()
+	for {
+		r.mu.Lock()
+		logged := len(r.matchingLocked(level, message)) > 0
+		if r.appended == nil {
+			r.appended = make(chan struct{})
+		}
+		appended := r.appended
+		r.mu.Unlock()
+		if logged {
+			return
+		}
+		select {
+		case <-appended:
+		case <-watchdog.C:
+			t.Fatalf("nothing logged %q at %v", message, level)
+		}
+	}
+}
+
+func (r *logRecorder) matchingLocked(level slog.Level, message string) []loggedRecord {
 	var out []loggedRecord
 	for _, record := range r.records {
 		if record.level == level && record.message == message {
