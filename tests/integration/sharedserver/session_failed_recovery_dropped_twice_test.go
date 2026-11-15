@@ -18,6 +18,7 @@ func TestSessionFailedRecovery_ReplacementDroppingTwiceBeforeTheReadyLineFails(t
 	h := testkit.NewSharedServerHarness(t)
 	l, gate := h.LaunchGatingRecovery(recoveryLaunchArgs(newSessionProxyContentDir(t))...)
 	attachRecords(t, l, 1, deadline)
+	startupSpawns := h.Spawns()
 	id := l.SharedServerIdentity()
 
 	crashIntoHeldRecovery(t, h, l, gate, deadline)
@@ -33,6 +34,6 @@ func TestSessionFailedRecovery_ReplacementDroppingTwiceBeforeTheReadyLineFails(t
 		"every held request gets the connection-lost error in held order, and nothing else is written")
 	requireFailedRecovery(t, h, l, "dropped_twice")
 	assert.Equal(t, 2, accepted(), "the recovery re-entered exactly once")
-	assert.Equal(t, 1, h.Spawns(), "nothing was spawned at recovery")
+	assert.Equal(t, startupSpawns, h.Spawns(), "nothing was spawned at recovery")
 	assert.Equal(t, 1, h.Builds())
 }

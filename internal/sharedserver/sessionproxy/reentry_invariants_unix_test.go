@@ -85,38 +85,39 @@ func TestEstablish_RecomputesTheIdentityOnReentry(t *testing.T) {
 	assert.Equal(t, int32(2), calls.Load())
 }
 
-// The ready line is withheld for real time beyond the connect wait: a
-// re-entry charged with the time spent waiting for it would expire at once.
+// The ready line is withheld for real time beyond the connect wait, counted
+// from the first accept so the first attempt's budget has certainly run out:
+// a re-entry charged with the time spent waiting for it would expire at once.
+// The connect wait equals the failure watchdog because it is real time here,
+// so no dial has to beat a budget shorter than any other wait of the package.
+// The listener stays bound, so the re-entry dials into its backlog without a
+// spawn.
 func TestEstablish_GivesTheReentryAFreshConnectWaitAfterALongReadyWait(t *testing.T) {
-	const connectWait = time.Second
+	const connectWait = supervisionTestDeadline
 	dir := sessionEndTestDir(t)
-	first := listenFor(t, dir, firstIdentity)
-	relistened := make(chan *identityListener, 1)
+	listener := listenFor(t, dir, firstIdentity)
 	result := establishAsync(t, Config{
 		EndpointDir: func() (string, error) { return dir, nil },
 		Identity:    func() (string, error) { return firstIdentity, nil },
 		ConnectWait: connectWait,
-		Spawn: func(string) error {
-			relistened <- listenFor(t, dir, firstIdentity)
-			return nil
-		},
+		Spawn:       func(string) error { return nil },
 	})
 
-	conn := first.nextConn()
+	conn := listener.nextConn()
+	firstBudgetSpent := time.Now().Add(connectWait)
 	select {
 	case r := <-result:
 		t.Fatalf("establish returned while the ready line was withheld: %v", r.err)
-	case <-time.After(connectWait + connectWait/2):
+	case <-time.After(time.Until(firstBudgetSpent)):
 	}
-	_ = first.listener.Close()
 	_ = conn.Close()
 	select {
-	case second := <-relistened:
-		sendReady(t, second.nextConn())
+	case reentry := <-listener.accepted:
+		sendReady(t, reentry)
 	case r := <-result:
-		t.Fatalf("the re-entry ended before its candidate listened: %v", r.err)
+		t.Fatalf("the re-entry ended before it connected: %v", r.err)
 	case <-time.After(supervisionTestDeadline):
-		t.Fatal("the re-entry never spawned a candidate")
+		t.Fatal("the re-entry never connected")
 	}
 
 	awaitEstablished(t, result)

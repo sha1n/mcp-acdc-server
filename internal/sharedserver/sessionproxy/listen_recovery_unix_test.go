@@ -80,6 +80,7 @@ func TestRun_ReissuesAnOpenListenStreamAndDiscardsItsSecondAcknowledgement(t *te
 	recovered.write(announcement(resourcesKind, "7") + response("9"))
 	assert.Equal(t, announcement(resourcesKind, "7"), proxy.host.readLine(), "a later change is delivered on the same stream")
 	assert.Equal(t, response("9"), proxy.host.readLine())
+	proxy.logs.awaitRecord(t, slog.LevelInfo, recoveredInfo)
 	assert.Len(t, proxy.logs.matching(slog.LevelInfo, recoveredInfo), 1)
 }
 
