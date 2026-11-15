@@ -40,12 +40,18 @@ func readHostInput(stdin io.Reader) *hostInput {
 // without closing stdin, which belongs to the caller, so the reader may
 // outlive the session until that read returns; it then reads no further.
 func (in *hostInput) stop() {
-	in.stopOnce.Do(func() {
-		in.mu.Lock()
-		defer in.mu.Unlock()
-		close(in.stopped)
-		in.held = nil
-	})
+	in.abandon()
+}
+
+// abandon stops the input as stop does and returns the lines held until then,
+// in order: no line can be held after them.
+func (in *hostInput) abandon() [][]byte {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	in.stopOnce.Do(func() { close(in.stopped) })
+	held := in.held
+	in.held = nil
+	return held
 }
 
 // read discards an incomplete trailing line: only complete lines are

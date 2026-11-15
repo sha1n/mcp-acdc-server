@@ -94,16 +94,47 @@ func (s *session) recover(ctx context.Context, crash *connectionLost) (*attachme
 		return nil, err
 	}
 	att, err := establish(ctx, s.cfg, s.input.ended)
-	if err != nil {
-		if end := sessionEnd(ctx, s.input.ended); end != nil {
-			return nil, end
-		}
-		return nil, fmt.Errorf("failed to recover the shared server connection: %w", err)
+	if err == nil {
+		err = s.resynchronize(ctx, att)
 	}
-	s.input.onHeldSent(func(held int) {
-		s.cfg.Logger.Info("Recovered the shared server connection", "held", held)
-	})
-	return att, nil
+	if err == nil {
+		s.input.onHeldSent(func(held int) {
+			s.cfg.Logger.Info("Recovered the shared server connection", "held", held)
+		})
+		return att, nil
+	}
+	var failure *discoveryError
+	if !errors.As(err, &failure) || sessionEnd(ctx, s.input.ended) != nil {
+		return nil, endedOr(ctx, s.input.ended, err)
+	}
+	return nil, s.failRecovery(ctx, failure)
+}
+
+// resynchronize is the recovery sequence between the ready line and the held
+// messages (spec section 7.3, steps 2 to 6). A step that fails closes the
+// connection and returns a classified failure, which fails the recovery
+// instead of discovering again. No step exists yet.
+func (s *session) resynchronize(context.Context, *attachment) error {
+	return nil
+}
+
+// recoveryFailure ends the session whatever happens while it is reported:
+// unlike a session end, a cancellation does not make it a normal return.
+type recoveryFailure struct{ err error }
+
+func (e *recoveryFailure) Error() string { return e.err.Error() }
+
+func (e *recoveryFailure) Unwrap() error { return e.err }
+
+// failRecovery answers every held request, since none of them can reach a
+// shared server any more, and drops the other held lines. The host has only
+// the context to cut those answers short: every one is owed before the exit.
+func (s *session) failRecovery(ctx context.Context, failure *discoveryError) error {
+	err := fmt.Errorf("failed to recover the shared server connection (%s): %w", failure.cause, failure)
+	if answerErr := s.writeToHost(ctx, crashAnswers(s.input.abandon())); answerErr != nil {
+		err = fmt.Errorf("%w; %w", err, answerErr)
+	}
+	return &recoveryFailure{err: err}
 }
 
 // answerLost does not wait for a host that stopped reading once the session
@@ -111,7 +142,15 @@ func (s *session) recover(ctx context.Context, crash *connectionLost) (*attachme
 func (s *session) answerLost(ctx context.Context, lines [][]byte) error {
 	phase, cancel := untilAborted(ctx, s.input.ended)
 	defer cancel(nil)
-	err := supervise(phase, func() error {
+	err := s.writeToHost(phase, lines)
+	if end := sessionEnd(ctx, s.input.ended); end != nil {
+		return end
+	}
+	return err
+}
+
+func (s *session) writeToHost(ctx context.Context, lines [][]byte) error {
+	return supervise(ctx, func() error {
 		for _, line := range lines {
 			if _, err := s.cfg.Stdout.Write(line); err != nil {
 				return fmt.Errorf("failed to relay to the host: %w", err)
@@ -119,10 +158,6 @@ func (s *session) answerLost(ctx context.Context, lines [][]byte) error {
 		}
 		return nil
 	})
-	if end := sessionEnd(ctx, s.input.ended); end != nil {
-		return end
-	}
-	return err
 }
 
 // copyLines drops an incomplete trailing line: only complete lines are

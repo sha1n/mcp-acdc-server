@@ -31,8 +31,9 @@ type Config struct {
 
 // Run returns nil when the session ends normally, on host stdin EOF or on
 // cancellation of ctx. A shared server connection that breaks after attach is
-// recovered onto a shared server for the identity computed again; Run returns
-// an error when that recovery fails. When discovery fails at first connect it
+// recovered onto a shared server for the identity computed again; when that
+// recovery fails, Run answers the held requests and returns an error, even if
+// ctx ends meanwhile. When discovery fails at first connect it
 // returns the result of cfg.Fallback.
 // It never waits on the shared server or on host stdio to return, since
 // neither can be interrupted.
@@ -71,6 +72,10 @@ func fallBack(ctx context.Context, cfg Config, failure *discoveryError, input *h
 }
 
 func sessionResult(ctx context.Context, err error) error {
+	var failed *recoveryFailure
+	if errors.As(err, &failed) {
+		return err
+	}
 	if ctx.Err() != nil || errors.Is(err, errSessionEnded) {
 		return nil
 	}

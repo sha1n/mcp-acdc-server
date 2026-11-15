@@ -40,25 +40,28 @@ func newInFlight() *inFlight {
 	return &inFlight{}
 }
 
-// track records line if it is a request with an id: go-sdk reads a line as
-// a request only when its method is a string. The returned handle
+// track records line if it is a request with an id. The returned handle
 // undoes it when the line could not be fully written; it is nil for any
 // other line, which is forwarded untracked.
 func (f *inFlight) track(line []byte) *list.Element {
-	members, ok := objectMembers(line)
-	if !ok {
-		return nil
-	}
-	if !isString(members["method"]) {
-		return nil
-	}
-	key, ok := keyOf(members["id"])
+	key, id, ok := requestOf(line)
 	if !ok {
 		return nil
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.entries.PushBack(inFlightEntry{key: key, id: members["id"]})
+	return f.entries.PushBack(inFlightEntry{key: key, id: id})
+}
+
+// requestOf reads line as a request with an id: go-sdk reads a line as a
+// request only when its method is a string.
+func requestOf(line []byte) (requestKey, json.RawMessage, bool) {
+	members, ok := objectMembers(line)
+	if !ok || !isString(members["method"]) {
+		return requestKey{}, nil, false
+	}
+	key, ok := keyOf(members["id"])
+	return key, members["id"], ok
 }
 
 func (f *inFlight) untrack(handle *list.Element) {
@@ -100,11 +103,26 @@ func (f *inFlight) drain() [][]byte {
 	defer f.mu.Unlock()
 	var lines [][]byte
 	for e := f.entries.Front(); e != nil; e = e.Next() {
-		id := e.Value.(inFlightEntry).id
-		lines = append(lines, bytes.Join([][]byte{[]byte(crashErrorPrefix), id, []byte(crashErrorSuffix)}, nil))
+		lines = append(lines, crashAnswer(e.Value.(inFlightEntry).id))
 	}
 	f.entries.Init()
 	return lines
+}
+
+// crashAnswers returns the crash error line for each request among lines, in
+// their order; every other line gets none.
+func crashAnswers(lines [][]byte) [][]byte {
+	var answers [][]byte
+	for _, line := range lines {
+		if _, id, ok := requestOf(line); ok {
+			answers = append(answers, crashAnswer(id))
+		}
+	}
+	return answers
+}
+
+func crashAnswer(id json.RawMessage) []byte {
+	return bytes.Join([][]byte{[]byte(crashErrorPrefix), id, []byte(crashErrorSuffix)}, nil)
 }
 
 // objectMembers decodes into a map because go-sdk matches member names
