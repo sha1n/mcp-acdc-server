@@ -3,8 +3,10 @@
 package testkit
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -115,11 +117,22 @@ type LeakReporter interface {
 	Errorf(format string, args ...any)
 }
 
+// leakGuardWatchdog bounds the guard's work on one server run, every
+// inspection tool it runs included, so a hung tool cannot hang the test.
+const (
+	leakGuardWatchdog   = 10 * time.Second
+	inspectionWaitDelay = 500 * time.Millisecond
+)
+
 // CheckSharedServerLeaks kills every shared server logged under logDir that is
 // still alive and reports one that outlived its linger deadline: the latest
 // of its startup and last detach entries plus its linger plus grace.
 // launchDir is the working directory of the launches that spawned them.
 func CheckSharedServerLeaks(r LeakReporter, logDir, launchDir string, grace time.Duration) {
+	checkSharedServerLeaks(r, logDir, launchDir, grace, leakGuardWatchdog)
+}
+
+func checkSharedServerLeaks(r LeakReporter, logDir, launchDir string, grace, watchdog time.Duration) {
 	resolvedLaunchDir, err := filepath.EvalSymlinks(launchDir)
 	if err != nil {
 		r.Errorf("leak guard: %v", err)
@@ -138,32 +151,38 @@ func CheckSharedServerLeaks(r LeakReporter, logDir, launchDir string, grace time
 		}
 		owner := serverOwner{identity: strings.TrimSuffix(filepath.Base(logPath), ".log"), launchDir: resolvedLaunchDir}
 		for _, run := range runs {
-			checkServerRun(r, logPath, owner, run, grace)
+			ctx, cancel := context.WithTimeout(context.Background(), watchdog)
+			checkServerRun(ctx, r, logPath, owner, run, grace)
+			cancel()
 		}
 	}
 }
 
-func checkServerRun(r LeakReporter, logPath string, owner serverOwner, run ServerRun, grace time.Duration) {
+func checkServerRun(ctx context.Context, r LeakReporter, logPath string, owner serverOwner, run ServerRun, grace time.Duration) {
 	if !run.LingerExpired.IsZero() && run.LingerExpired.After(run.lingerStart().Add(run.Linger+grace)) {
 		r.Errorf("leak guard: shared server %d of %s expired at %s, after its linger deadline", run.PID, logPath, run.LingerExpired.Format(time.StampMilli))
 	}
 	if !run.Stopped.IsZero() {
 		return
 	}
-	linger, alive := owner.liveServerLinger(run.PID)
-	if !alive {
+	look := owner.look(ctx, run.PID)
+	switch look.verdict {
+	case goneOrForeign:
+		return
+	case uninspectable:
+		r.Errorf("leak guard: shared server %d of %s was left unsignalled: %v", run.PID, logPath, look.cause)
 		return
 	}
-	if err := owner.killAndAwaitExit(run.PID); err != nil {
+	if err := owner.killAndAwaitExit(ctx, run.PID); err != nil {
 		r.Errorf("leak guard: shared server %d of %s: %v", run.PID, logPath, err)
 	}
-	if deadline := run.lingerStart().Add(linger + grace); time.Now().After(deadline) {
+	if deadline := run.lingerStart().Add(look.linger + grace); time.Now().After(deadline) {
 		r.Errorf("leak guard: shared server %d of %s was alive after its linger deadline %s", run.PID, logPath, deadline.Format(time.StampMilli))
 	}
 }
 
 // serverOwner is what proves a pid is the server of one log, so a reused pid
-// is never signalled: the log's identity is the identity among its arguments,
+// is not signalled: the log's identity is the identity among its arguments,
 // and its working directory, inherited from the spawning launch, is the
 // launch directory, which belongs to one test for as long as it exists.
 type serverOwner struct {
@@ -171,25 +190,107 @@ type serverOwner struct {
 	launchDir string
 }
 
-// liveServerLinger reads the linger from the live process's own arguments,
-// which are its spawning launch's. A pid that no longer names this log's
-// server (exited, reused, or a zombie) is a server that is gone.
-func (o serverOwner) liveServerLinger(pid int) (time.Duration, bool) {
+type ownershipVerdict int
+
+const (
+	// goneOrForeign: the pid no longer names this log's server (exited,
+	// reused, or a zombie); it is neither signalled nor reported.
+	goneOrForeign ownershipVerdict = iota
+	owned
+	// uninspectable: ownership was neither proven nor disproven, so the pid
+	// is not signalled, and the guard reports it, since a silent pass here
+	// could hide a leaked server.
+	uninspectable
+)
+
+// ownership is what one look at a pid proved; cause is set only when the
+// verdict is uninspectable, and linger only when it is owned.
+type ownership struct {
+	verdict ownershipVerdict
+	linger  time.Duration
+	cause   error
+}
+
+// errDeparted marks an inspection failure that itself proves the process gone.
+var errDeparted = errors.New("the process is gone")
+
+func classifyLookFailure(cause error, departed bool) ownership {
+	if departed || errors.Is(cause, errDeparted) || errors.Is(cause, syscall.ESRCH) {
+		return ownership{verdict: goneOrForeign}
+	}
+	return ownership{verdict: uninspectable, cause: cause}
+}
+
+// look reads the linger from the live process's own arguments, which are its
+// spawning launch's.
+func (o serverOwner) look(ctx context.Context, pid int) ownership {
 	if syscall.Kill(pid, 0) != nil {
-		return 0, false
+		return ownership{verdict: goneOrForeign}
 	}
-	out, err := exec.Command("ps", "-ww", "-o", "args=", "-p", strconv.Itoa(pid)).Output()
+	stat, args, err := processStatus(ctx, pid)
 	if err != nil {
-		return 0, false
+		return o.failedLook(ctx, pid, err)
 	}
-	args := strings.Fields(string(out))
-	if !carriesIdentity(args, o.identity) {
-		return 0, false
+	if isZombie(stat) || !carriesIdentity(args, o.identity) {
+		return ownership{verdict: goneOrForeign}
 	}
-	if dir, err := processDir(pid); err != nil || dir != o.launchDir {
-		return 0, false
+	dir, err := processDir(ctx, pid)
+	if err != nil {
+		return o.failedLook(ctx, pid, err)
 	}
-	return lingerArg(args), true
+	if dir != o.launchDir {
+		return ownership{verdict: goneOrForeign}
+	}
+	return ownership{verdict: owned, linger: lingerArg(args)}
+}
+
+func (o serverOwner) failedLook(ctx context.Context, pid int, cause error) ownership {
+	look := classifyLookFailure(cause, departed(ctx, pid))
+	if look.verdict == uninspectable {
+		look.cause = fmt.Errorf("could not inspect process %d for identity %s: %w", pid, o.identity, cause)
+	}
+	return look
+}
+
+// departed tells whether a process ended while it was being inspected, so
+// that the failure of a look is not mistaken for a failure to inspect it.
+func departed(ctx context.Context, pid int) bool {
+	if syscall.Kill(pid, 0) != nil {
+		return true
+	}
+	stat, _, err := processStatus(ctx, pid)
+	return err == nil && isZombie(stat)
+}
+
+func isZombie(stat string) bool {
+	return strings.HasPrefix(stat, "Z")
+}
+
+func processStatus(ctx context.Context, pid int) (string, []string, error) {
+	out, err := runInspection(ctx, "ps", "-ww", "-o", "stat=,args=", "-p", strconv.Itoa(pid))
+	if err != nil {
+		return "", nil, err
+	}
+	fields := strings.Fields(out)
+	if len(fields) == 0 {
+		return "", nil, fmt.Errorf("ps listed no process %d", pid)
+	}
+	return fields[0], fields[1:], nil
+}
+
+// runInspection runs a tool under the guard's watchdog; WaitDelay also bounds
+// the wait for output a killed tool's descendant may still hold open.
+func runInspection(ctx context.Context, name string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = inspectionWaitDelay
+	out, err := cmd.Output()
+	if err != nil && ctx.Err() != nil {
+		return "", fmt.Errorf("%s did not answer within the leak guard's watchdog: %w", name, ctx.Err())
+	}
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", name, err)
+	}
+	return string(out), nil
 }
 
 // carriesIdentity requires every identity flag in args to name identity.
@@ -213,20 +314,31 @@ func carriesIdentity(args []string, identity string) bool {
 
 // processDir reads a process's working directory: /proc on Linux, where lsof
 // may be missing, and lsof elsewhere, where /proc does not exist.
-func processDir(pid int) (string, error) {
+func processDir(ctx context.Context, pid int) (string, error) {
 	if runtime.GOOS == "linux" {
-		return os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
+		dir, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
+		return dir, cwdLinkError(err)
 	}
-	out, err := exec.Command("lsof", "-a", "-p", strconv.Itoa(pid), "-d", "cwd", "-Fn").Output()
+	out, err := runInspection(ctx, "lsof", "-a", "-p", strconv.Itoa(pid), "-d", "cwd", "-Fn")
 	if err != nil {
 		return "", err
 	}
-	for line := range strings.Lines(string(out)) {
+	for line := range strings.Lines(out) {
 		if dir, ok := strings.CutPrefix(strings.TrimSuffix(line, "\n"), "n"); ok {
 			return dir, nil
 		}
 	}
 	return "", fmt.Errorf("lsof reported no working directory for %d", pid)
+}
+
+// cwdLinkError marks a missing /proc/<pid>/cwd link as a departure: the
+// process exited, or is a zombie, whose cwd link the kernel removes. Any
+// other error, a permission error above all, leaves ownership unknown.
+func cwdLinkError(err error) error {
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
+		return fmt.Errorf("%w: %w", errDeparted, err)
+	}
+	return err
 }
 
 func containsArg(args []string, name string) bool {
@@ -254,19 +366,21 @@ func lingerArg(args []string) time.Duration {
 
 // killAndAwaitExit proves ownership again right before the signal and on
 // every look while waiting, since the pid may be reused at any point.
-func (o serverOwner) killAndAwaitExit(pid int) error {
-	if _, owned := o.liveServerLinger(pid); !owned {
-		return nil
+func (o serverOwner) killAndAwaitExit(ctx context.Context, pid int) error {
+	if look := o.look(ctx, pid); look.verdict != owned {
+		return look.cause
 	}
 	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return fmt.Errorf("kill: %w", err)
 	}
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, owned := o.liveServerLinger(pid); !owned {
-			return nil
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("still alive when the leak guard's watchdog expired after SIGKILL: %w", ctx.Err())
+		case <-time.After(20 * time.Millisecond):
 		}
-		time.Sleep(20 * time.Millisecond)
+		if look := o.look(ctx, pid); look.verdict != owned {
+			return look.cause
+		}
 	}
-	return errors.New("still alive 10s after SIGKILL")
 }
