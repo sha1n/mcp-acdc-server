@@ -42,7 +42,6 @@ type SharedServerHarness struct {
 	ctx     context.Context
 	spawns  atomic.Int32
 	builds  atomic.Int32
-	servers sync.WaitGroup
 	exitsMu sync.Mutex
 	exits   []SharedServerExit
 	// buildGate runs in every build after it is counted; a non-nil error is
@@ -52,8 +51,7 @@ type SharedServerHarness struct {
 	// first spawn.
 	receiving []mcp.Middleware
 
-	candidatesMu sync.Mutex
-	candidates   []*runningCandidate
+	candidates candidateSet
 
 	launchesMu sync.Mutex
 	launches   []*LaunchUnderTest
@@ -84,6 +82,7 @@ func NewSharedServerHarness(t testing.TB) *SharedServerHarness {
 		ctx:    ctx,
 	}
 	t.Cleanup(func() {
+		h.candidates.stop()
 		cancel()
 		h.awaitServers()
 	})
@@ -197,10 +196,7 @@ func (h *SharedServerHarness) spawnCandidate(args []string) func(string) (*candi
 		params := h.sharedServerParams(&built)
 		end := &candidateEnd{ended: make(chan struct{})}
 		ctx, cancel := context.WithCancel(h.ctx)
-		h.addCandidate(&runningCandidate{cancel: cancel, end: end})
-		h.servers.Add(1)
-		go func() {
-			defer h.servers.Done()
+		err = h.candidates.start(&runningCandidate{cancel: cancel, end: end}, func() {
 			defer cancel()
 			err := app.RunWithDeps(ctx, params, flags, h.Binary)
 			end.exit = SharedServerExit{Built: built.Load(), Err: err}
@@ -209,7 +205,11 @@ func (h *SharedServerHarness) spawnCandidate(args []string) func(string) (*candi
 			if err != nil {
 				h.t.Logf("shared server %s stopped with: %v", id, err)
 			}
-		}()
+		})
+		if err != nil {
+			cancel()
+			return nil, err
+		}
 		return end, nil
 	}
 }
@@ -271,7 +271,7 @@ func (h *SharedServerHarness) logDir() (string, error) { return h.LogDir, nil }
 func (h *SharedServerHarness) awaitServers() {
 	stopped := make(chan struct{})
 	go func() {
-		h.servers.Wait()
+		h.candidates.awaitEnded()
 		close(stopped)
 	}()
 	select {
