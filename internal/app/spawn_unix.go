@@ -32,11 +32,14 @@ func detachedCommand(name string, args ...string) *exec.Cmd {
 	return cmd
 }
 
-// startDetached releases the started process instead of waiting on it: its
-// outcome is observed only through the endpoint.
+// startDetached does not wait for the started process, because its outcome is
+// observed only through the endpoint. The background wait exists solely to reap
+// candidates that exit, such as those losing the identity lock, so they do not
+// linger as zombies for the lifetime of the launching process.
 func startDetached(cmd *exec.Cmd) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	return cmd.Process.Release()
+	go func() { _ = cmd.Wait() }()
+	return nil
 }
