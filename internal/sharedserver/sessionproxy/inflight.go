@@ -107,12 +107,6 @@ func (f *inFlight) drain() [][]byte {
 	return lines
 }
 
-func (f *inFlight) len() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.entries.Len()
-}
-
 // objectMembers decodes into a map because go-sdk matches member names
 // case-sensitively, unlike decoding into a struct.
 func objectMembers(line []byte) (map[string]json.RawMessage, bool) {
