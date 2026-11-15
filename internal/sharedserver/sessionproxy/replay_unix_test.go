@@ -136,7 +136,7 @@ func (l *legacyOutage) nextReplacement() *fakeSharedConn {
 func (l *legacyOutage) requireFailedWithoutRediscovery(cause string) {
 	l.t.Helper()
 	assert.Equal(l.t, crashError("7"), l.host.readLine())
-	failedRecoveryError(l.t, l.host.result(), cause)
+	_ = failedRecoveryError(l.t, l.host.result(), cause)
 	assert.Empty(l.t, l.remainingOutput(), "nothing follows the answers to the held requests")
 	l.requireNoFailureLine()
 	assert.Equal(l.t, int32(2), l.computed.Load(), "the failed recovery discovered no shared server again")
