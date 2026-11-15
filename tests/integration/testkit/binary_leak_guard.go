@@ -6,8 +6,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -117,13 +119,14 @@ type LeakReporter interface {
 
 const (
 	// leakGuardWatchdog bounds one invocation of the guard, every log and
-	// every wait for a lock included.
+	// every wait for a lock included. It is the only real-time budget that
+	// decides an outcome.
 	leakGuardWatchdog = 10 * time.Second
-	// lockHandoverBound bounds the wait for a lock held by a process its log
-	// does not name: by production's order a holder unlocks right after its
-	// stopped entry, a new holder logs its startup entry right after taking
-	// the lock, and a process that exits releases the lock before it is gone.
-	lockHandoverBound = time.Second
+	// logRereadTick paces rereading the log while a held lock waits for its
+	// holder's startup entry: the lock's release is a kernel event, a log
+	// that grew is none without a new dependency, so the log is reread as a
+	// positive condition, and only the release or the watchdog ends the wait.
+	logRereadTick = 20 * time.Millisecond
 )
 
 // CheckSharedServerLeaks kills every shared server of this environment that
@@ -144,8 +147,8 @@ type leakGuard struct {
 }
 
 func checkSharedServerLeaks(r LeakReporter, g leakGuard, watchdog time.Duration) {
-	logs, err := filepath.Glob(filepath.Join(g.logDir, "*.log"))
-	if err != nil || len(logs) == 0 {
+	identities, err := g.identities()
+	if err != nil || len(identities) == 0 {
 		reportErr(r, err)
 		return
 	}
@@ -156,8 +159,8 @@ func checkSharedServerLeaks(r LeakReporter, g leakGuard, watchdog time.Duration)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), watchdog)
 	defer cancel()
-	for _, logPath := range logs {
-		g.checkLog(ctx, r, ep, logPath)
+	for _, identity := range identities {
+		g.checkIdentity(ctx, r, ep, identity)
 	}
 }
 
@@ -167,10 +170,45 @@ func reportErr(r LeakReporter, err error) {
 	}
 }
 
-// checkLog reads the log after trying the lock, so a run whose holder the try
-// found is in what it reads, unless that holder has yet to log its startup.
-func (g leakGuard) checkLog(ctx context.Context, r LeakReporter, ep endpoint.Endpoint, logPath string) {
-	identity := strings.TrimSuffix(filepath.Base(logPath), ".log")
+// identities names every identity with a log or a lock file: a server holds
+// its lock before it opens its log, so a lock file alone may be a live
+// server the log does not show yet.
+func (g leakGuard) identities() ([]string, error) {
+	logs, err := namesWithSuffix(g.logDir, ".log")
+	if err != nil {
+		return nil, err
+	}
+	locks, err := namesWithSuffix(g.endpointDir, ".lock")
+	if err != nil {
+		return nil, err
+	}
+	return slices.Compact(slices.Sorted(slices.Values(append(logs, locks...)))), nil
+}
+
+// namesWithSuffix lists the names in dir ending in suffix, without it. An
+// absent dir has none; every other failure to read it is an error.
+func namesWithSuffix(dir, suffix string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("could not list %s: %w", dir, err)
+	}
+	var names []string
+	for _, entry := range entries {
+		if name, ok := strings.CutSuffix(entry.Name(), suffix); ok {
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
+// checkIdentity reads the log after trying the lock, so a run whose holder
+// the try found is in what it reads, unless that holder has yet to log its
+// startup.
+func (g leakGuard) checkIdentity(ctx context.Context, r LeakReporter, ep endpoint.Endpoint, identity string) {
+	logPath := filepath.Join(g.logDir, identity+".log")
 	lockPath, err := ep.LockPath(identity)
 	if err != nil {
 		r.Errorf("leak guard: %s: %v", logPath, err)
@@ -181,15 +219,28 @@ func (g leakGuard) checkLog(ctx context.Context, r LeakReporter, ep endpoint.End
 		r.Errorf("leak guard: %s: %v", logPath, err)
 		return
 	}
-	runs, err := ReadServerRuns(logPath)
+	runs, err := readRuns(logPath)
 	if err != nil {
-		r.Errorf("leak guard: failed to read %s: %v", logPath, err)
+		r.Errorf("leak guard: %v", err)
 		return
 	}
 	g.reportLateExpiries(r, logPath, runs)
 	if held {
 		g.checkHeldLock(ctx, r, heldLock{logPath: logPath, identity: identity, lockPath: lockPath, foundAt: time.Now()}, runs)
 	}
+}
+
+// readRuns reads a log that may not exist yet: its holder opens it only after
+// taking the lock.
+func readRuns(logPath string) ([]ServerRun, error) {
+	runs, err := ReadServerRuns(logPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %s: %w", logPath, err)
+	}
+	return runs, nil
 }
 
 func (g leakGuard) reportLateExpiries(r LeakReporter, logPath string, runs []ServerRun) {
@@ -206,27 +257,66 @@ type heldLock struct {
 }
 
 // checkHeldLock either kills the holder, proven to be the logged pid of the
-// log's last run, or reports it: a held lock is a live server either way.
+// log's last run, or, as long as the lock stays held, waits under the
+// watchdog for a run it can attribute, reporting the holder once the
+// watchdog expires: a held lock is a live server either way.
 func (g leakGuard) checkHeldLock(ctx context.Context, r LeakReporter, h heldLock, runs []ServerRun) {
 	release := awaitRelease(h.lockPath)
-	run, ok := liveRun(runs)
-	if !ok {
-		if release.within(ctx, lockHandoverBound) {
+	ticker := time.NewTicker(logRereadTick)
+	defer ticker.Stop()
+	var tried runKey
+	unattributed := "no run of the log is live"
+	for {
+		if run, ok := liveRun(runs); ok && keyOf(run) != tried {
+			tried = keyOf(run)
+			g.reportOverdue(r, h, run)
+			err := verifyServer(run.PID, h.identity)
+			if err == nil {
+				killHolder(ctx, r, h, run, release)
+				return
+			}
+			unattributed = fmt.Sprintf("its logged pid %d, left unsignalled: %v", run.PID, err)
+		}
+		if g.onUnattributed != nil {
+			g.onUnattributed()
+		}
+		var done bool
+		if runs, done = awaitProgress(ctx, r, h, release, ticker.C, unattributed); done {
 			return
 		}
-		run, ok = rereadLiveRun(r, h.logPath)
 	}
-	if !ok {
-		r.Errorf("leak guard: the lock of %s is held by a shared server that could not be attributed: no run of the log is live", h.logPath)
-		return
-	}
-	g.reportOverdue(r, h, run)
-	if err := verifyServer(run.PID, h.identity); err != nil {
-		if !release.within(ctx, lockHandoverBound) {
-			r.Errorf("leak guard: the lock of %s is held by a shared server that could not be attributed to its logged pid %d, left unsignalled: %v", h.logPath, run.PID, err)
+}
+
+type runKey struct {
+	pid     int
+	started time.Time
+}
+
+func keyOf(run ServerRun) runKey { return runKey{pid: run.PID, started: run.Started} }
+
+// awaitProgress waits for the next of the holder's departure, the watchdog's
+// expiry and a tick, after which it rereads the log.
+func awaitProgress(ctx context.Context, r LeakReporter, h heldLock, release *lockRelease, tick <-chan time.Time, unattributed string) ([]ServerRun, bool) {
+	select {
+	case <-release.done:
+		if release.err != nil {
+			r.Errorf("leak guard: the lock of %s is held by a shared server the leak guard could not await: %v", h.logPath, release.err)
 		}
-		return
+		return nil, true
+	case <-ctx.Done():
+		r.Errorf("leak guard: the lock of %s is held by a shared server that could not be attributed within the leak guard's watchdog: %s", h.logPath, unattributed)
+		return nil, true
+	case <-tick:
 	}
+	runs, err := readRuns(h.logPath)
+	if err != nil {
+		r.Errorf("leak guard: %v", err)
+		return nil, true
+	}
+	return runs, false
+}
+
+func killHolder(ctx context.Context, r LeakReporter, h heldLock, run ServerRun, release *lockRelease) {
 	if err := syscall.Kill(run.PID, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
 		r.Errorf("leak guard: shared server %d of %s: kill: %v", run.PID, h.logPath, err)
 		return
@@ -239,15 +329,6 @@ func (g leakGuard) checkHeldLock(ctx context.Context, r LeakReporter, h heldLock
 	case <-ctx.Done():
 		r.Errorf("leak guard: shared server %d of %s did not release its lock within the leak guard's watchdog after SIGKILL: %v", run.PID, h.logPath, ctx.Err())
 	}
-}
-
-func rereadLiveRun(r LeakReporter, logPath string) (ServerRun, bool) {
-	runs, err := ReadServerRuns(logPath)
-	if err != nil {
-		r.Errorf("leak guard: failed to read %s: %v", logPath, err)
-		return ServerRun{}, false
-	}
-	return liveRun(runs)
 }
 
 func liveRun(runs []ServerRun) (ServerRun, bool) {
@@ -348,18 +429,4 @@ func flockRetryingEINTR(fd int) error {
 			return err
 		}
 	}
-}
-
-// within tells whether the lock was released, by a holder now gone, within
-// bound.
-func (l *lockRelease) within(ctx context.Context, bound time.Duration) bool {
-	timer := time.NewTimer(bound)
-	defer timer.Stop()
-	select {
-	case <-l.done:
-		return l.err == nil
-	case <-timer.C:
-	case <-ctx.Done():
-	}
-	return false
 }
