@@ -199,7 +199,7 @@ func TestRun_FailedRecoveryAnswersAHeldListenRequestButNotAnOpenOne(t *testing.T
 	o.release("", errors.New("manifest unreadable"))
 
 	assert.Equal(t, crashError("6"), o.host.readLine())
-	failedRecoveryError(t, o.host.result(), "identity")
+	_ = failedRecoveryError(t, o.host.result(), "identity")
 	assert.Empty(t, o.remainingOutput(), "the open stream gets no crash error")
 	o.requireNoFailureLine()
 }
