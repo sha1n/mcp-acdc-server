@@ -5,10 +5,13 @@ package binary
 import (
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/gofrs/flock"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/endpoint"
 	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -69,7 +72,17 @@ func TestBinary_LeakGuardKillsALiveSharedServer(t *testing.T) {
 	run := awaitServerRun(t, logPath, "attached:"+session, deadline)
 	require.NoError(t, syscall.Kill(run.PID, 0), "precondition: the shared server is alive")
 
-	testkit.CheckSharedServerLeaks(t, env.LogDir(), env.Root, testkit.LeakGuardGrace)
+	env.CheckSharedServerLeaks(t)
+
+	ep, err := endpoint.OpenEndpoint(env.EndpointDir())
+	require.NoError(t, err)
+	lockPath, err := ep.LockPath(strings.TrimSuffix(filepath.Base(logPath), ".log"))
+	require.NoError(t, err)
+	lock := flock.New(lockPath)
+	locked, err := lock.TryLock()
+	require.NoError(t, err)
+	assert.True(t, locked, "the guard returned before the shared server released its lock")
+	require.NoError(t, lock.Unlock())
 
 	for syscall.Kill(run.PID, 0) == nil {
 		require.True(t, time.Now().Before(deadline), "the guard did not kill shared server %d", run.PID)

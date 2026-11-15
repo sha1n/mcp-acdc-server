@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/testutil/slogtext"
 )
 
@@ -49,11 +50,16 @@ type BinaryEnv struct {
 	Binary string
 	Root   string
 	env    []string
+
+	mu              sync.Mutex
+	launched        bool
+	maxLaunchLinger time.Duration
 }
 
 // NewBinaryEnv creates the environment and registers its leak guard. The
 // guard is registered after the directory removal, so it runs before it and
-// still finds the shared server logs.
+// still finds the shared server logs and locks, and before every launch,
+// whose kill therefore runs before it.
 func NewBinaryEnv(t testing.TB, binary string) *BinaryEnv {
 	t.Helper()
 	root, err := os.MkdirTemp("/tmp", "acdc-")
@@ -73,7 +79,7 @@ func NewBinaryEnv(t testing.TB, binary string) *BinaryEnv {
 		"XDG_STATE_HOME="+e.stateDir(),
 		"TMPDIR="+e.TempDir(),
 	)
-	t.Cleanup(func() { CheckSharedServerLeaks(t, e.LogDir(), e.Root, LeakGuardGrace) })
+	t.Cleanup(func() { e.CheckSharedServerLeaks(t) })
 	return e
 }
 
@@ -110,6 +116,40 @@ func (e *BinaryEnv) LogDir() string {
 		return filepath.Join(e.home(), "Library", "Logs", "acdc-mcp")
 	}
 	return filepath.Join(e.stateDir(), "acdc-mcp")
+}
+
+func (e *BinaryEnv) recordLaunch(args []string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if linger := launchLinger(args); !e.launched || linger > e.maxLaunchLinger {
+		e.maxLaunchLinger = linger
+	}
+	e.launched = true
+}
+
+// maxLinger is the largest linger a launch of this environment started its
+// shared server with.
+func (e *BinaryEnv) maxLinger() time.Duration {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.launched {
+		return config.DefaultSharedServerLinger
+	}
+	return e.maxLaunchLinger
+}
+
+func launchLinger(args []string) time.Duration {
+	linger := config.DefaultSharedServerLinger
+	for i, arg := range args {
+		value, inline := strings.CutPrefix(arg, "--shared-server-linger=")
+		if !inline && arg == "--shared-server-linger" && i+1 < len(args) {
+			value, inline = args[i+1], true
+		}
+		if parsed, err := time.ParseDuration(value); inline && err == nil {
+			linger = parsed
+		}
+	}
+	return linger
 }
 
 // BinaryLaunch is one acdc-mcp process with its host stdio as pipes.
@@ -155,6 +195,7 @@ func (e *BinaryEnv) StartInterleaved(t testing.TB, args ...string) *BinaryLaunch
 }
 
 func (e *BinaryEnv) newLaunch(args []string) *BinaryLaunch {
+	e.recordLaunch(args)
 	cmd := exec.Command(e.Binary, args...)
 	cmd.Env = e.env
 	cmd.Dir = e.Root
