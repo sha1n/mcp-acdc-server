@@ -19,7 +19,7 @@ func cancelLine(id string) []byte {
 	return []byte(`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":` + id + `}}` + "\n")
 }
 
-func openLines(l *listenStreams) []string {
+func openLines(l *ledger) []string {
 	var lines []string
 	for _, stream := range l.open() {
 		lines = append(lines, string(stream.line))
@@ -27,11 +27,11 @@ func openLines(l *listenStreams) []string {
 	return lines
 }
 
-func sendListen(t *testing.T, l *listenStreams, line []byte) {
+func sendListen(t *testing.T, l *ledger, line []byte) {
 	t.Helper()
-	_, isListen := l.track(decodeLine(line))
-	require.True(t, isListen, "%s", line)
-	l.sent(decodeLine(line))
+	stream := l.register(decodeLine(line))
+	require.True(t, stream != nil && stream.kind == listenRequest, "%s", line)
+	l.cancel(l.cancellationTarget(decodeLine(line)))
 }
 
 func TestListenStreams_TracksOnlyListenRequestsWithAnId(t *testing.T) {
@@ -39,10 +39,13 @@ func TestListenStreams_TracksOnlyListenRequestsWithAnId(t *testing.T) {
 		name string
 		line string
 		want bool
+		// ordinary marks a request the ledger tracks as an ordinary
+		// occurrence rather than a listen stream.
+		ordinary bool
 	}{
 		{name: "number id", line: string(listenLine("7")), want: true},
 		{name: "string id", line: string(listenLine(`"s"`)), want: true},
-		{name: "other method", line: `{"jsonrpc":"2.0","id":7,"method":"tools/call"}` + "\n"},
+		{name: "other method", line: `{"jsonrpc":"2.0","id":7,"method":"tools/call"}` + "\n", ordinary: true},
 		{name: "no id", line: `{"jsonrpc":"2.0","method":"subscriptions/listen","params":{}}` + "\n"},
 		{name: "null id", line: `{"jsonrpc":"2.0","id":null,"method":"subscriptions/listen","params":{}}` + "\n"},
 		{name: "method not a string", line: `{"jsonrpc":"2.0","id":7,"method":["subscriptions/listen"]}` + "\n"},
@@ -51,10 +54,16 @@ func TestListenStreams_TracksOnlyListenRequestsWithAnId(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			l := newListenStreams()
-			handle, isListen := l.track(decodeLine([]byte(tt.line)))
+			l := newLedger()
+			handle := l.register(decodeLine([]byte(tt.line)))
+			isListen := handle != nil && handle.kind == listenRequest
 			assert.Equal(t, tt.want, isListen)
-			assert.Equal(t, tt.want, handle != nil)
+			if tt.ordinary {
+				require.NotNil(t, handle)
+				assert.Equal(t, ordinaryRequest, handle.kind)
+			} else {
+				assert.Equal(t, tt.want, handle != nil)
+			}
 			if tt.want {
 				assert.Equal(t, []string{tt.line}, openLines(l))
 			} else {
@@ -65,7 +74,7 @@ func TestListenStreams_TracksOnlyListenRequestsWithAnId(t *testing.T) {
 }
 
 func TestListenStreams_OpenStreamsKeepSendOrderAndDuplicates(t *testing.T) {
-	l := newListenStreams()
+	l := newLedger()
 	for _, id := range []string{"3", `"a"`, "3"} {
 		sendListen(t, l, listenLine(id))
 	}
@@ -74,22 +83,22 @@ func TestListenStreams_OpenStreamsKeepSendOrderAndDuplicates(t *testing.T) {
 }
 
 func TestListenStreams_UntrackRemovesOnlyThatStream(t *testing.T) {
-	l := newListenStreams()
+	l := newLedger()
 	sendListen(t, l, listenLine("1"))
-	handle, _ := l.track(decodeLine(listenLine("2")))
+	handle := l.register(decodeLine(listenLine("2")))
 
-	l.untrack(handle)
-	l.untrack(nil)
+	l.undo(handle)
+	l.undo(nil)
 
 	assert.Equal(t, []string{string(listenLine("1"))}, openLines(l))
 }
 
 func TestListenStreams_AnAcknowledgementDeliveredToTheHostMarksItsStream(t *testing.T) {
-	l := newListenStreams()
+	l := newLedger()
 	sendListen(t, l, listenLine("1"))
 	sendListen(t, l, listenLine(`"two"`))
 
-	l.delivered(decodeLine(ackLine(`"two"`)))
+	l.deliver(l.resolve(decodeLine(ackLine(`"two"`))))
 
 	streams := l.open()
 	require.Len(t, streams, 2)
@@ -98,10 +107,10 @@ func TestListenStreams_AnAcknowledgementDeliveredToTheHostMarksItsStream(t *test
 }
 
 func TestListenStreams_MatchesAnAcknowledgementAsGoSDKStampsTheId(t *testing.T) {
-	l := newListenStreams()
+	l := newLedger()
 	sendListen(t, l, listenLine("2.0"))
 
-	l.delivered(decodeLine(ackLine("2")))
+	l.deliver(l.resolve(decodeLine(ackLine("2"))))
 
 	streams := l.open()
 	require.Len(t, streams, 1)
@@ -109,10 +118,10 @@ func TestListenStreams_MatchesAnAcknowledgementAsGoSDKStampsTheId(t *testing.T) 
 }
 
 func TestListenStreams_AStringIdDoesNotMatchANumericAcknowledgement(t *testing.T) {
-	l := newListenStreams()
+	l := newLedger()
 	sendListen(t, l, listenLine(`"1"`))
 
-	l.delivered(decodeLine(ackLine("1")))
+	l.deliver(l.resolve(decodeLine(ackLine("1"))))
 
 	streams := l.open()
 	require.Len(t, streams, 1)
@@ -120,22 +129,22 @@ func TestListenStreams_AStringIdDoesNotMatchANumericAcknowledgement(t *testing.T
 }
 
 func TestListenStreams_AHostCancellationEndsTheStream(t *testing.T) {
-	l := newListenStreams()
+	l := newLedger()
 	sendListen(t, l, listenLine("1"))
 	sendListen(t, l, listenLine("2"))
 
-	l.sent(decodeLine(cancelLine("1")))
+	l.cancel(l.cancellationTarget(decodeLine(cancelLine("1"))))
 
 	assert.Equal(t, []string{string(listenLine("2"))}, openLines(l))
 }
 
 func TestListenStreams_ACancellationOfAnotherRequestKeepsTheStream(t *testing.T) {
-	l := newListenStreams()
+	l := newLedger()
 	sendListen(t, l, listenLine("1"))
 
-	l.sent(decodeLine(cancelLine("9")))
-	l.sent(decodeLine(cancelLine(`"1"`)))
-	l.sent(decodeLine([]byte(`{"jsonrpc":"2.0","method":"notifications/cancelled"}` + "\n")))
+	l.cancel(l.cancellationTarget(decodeLine(cancelLine("9"))))
+	l.cancel(l.cancellationTarget(decodeLine(cancelLine(`"1"`))))
+	l.cancel(l.cancellationTarget(decodeLine([]byte(`{"jsonrpc":"2.0","method":"notifications/cancelled"}` + "\n"))))
 
 	assert.Equal(t, []string{string(listenLine("1"))}, openLines(l))
 }
@@ -150,11 +159,11 @@ func TestListenStreams_AServerResponseEndsTheStream(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			l := newListenStreams()
+			l := newLedger()
 			sendListen(t, l, listenLine("1"))
 			sendListen(t, l, listenLine("2"))
 
-			l.delivered(decodeLine([]byte(tt.response)))
+			l.deliver(l.resolve(decodeLine([]byte(tt.response))))
 
 			assert.Equal(t, []string{string(listenLine("2"))}, openLines(l))
 		})
@@ -162,20 +171,20 @@ func TestListenStreams_AServerResponseEndsTheStream(t *testing.T) {
 }
 
 func TestListenStreams_AServerRequestWithTheSameIdKeepsTheStream(t *testing.T) {
-	l := newListenStreams()
+	l := newLedger()
 	sendListen(t, l, listenLine("1"))
 
-	l.delivered(decodeLine([]byte(`{"jsonrpc":"2.0","id":1,"method":"ping"}` + "\n")))
+	l.deliver(l.resolve(decodeLine([]byte(`{"jsonrpc":"2.0","id":1,"method":"ping"}` + "\n"))))
 
 	assert.Equal(t, []string{string(listenLine("1"))}, openLines(l))
 }
 
 func TestListenStreams_DuplicateIdsEndOneStreamPerResponseOldestFirst(t *testing.T) {
-	l := newListenStreams()
+	l := newLedger()
 	sendListen(t, l, listenLine("1"))
 	sendListen(t, l, listenLine("1"))
 
-	l.delivered(decodeLine([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}` + "\n")))
+	l.deliver(l.resolve(decodeLine([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}` + "\n"))))
 
 	assert.Len(t, l.open(), 1)
 }

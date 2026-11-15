@@ -60,10 +60,10 @@ func TestInFlight_ClearsARequestWithTheIdTheSharedServerEchoes(t *testing.T) {
 			if tc.echo != "" {
 				require.Equal(t, tc.echo, echo, "go-sdk echo")
 			}
-			requests := newInFlight()
-			require.NotNil(t, requests.track(decodeLine([]byte(`{"jsonrpc":"2.0","id":`+tc.id+`,"method":"tools/call"}`+"\n"))))
+			requests := newLedger()
+			require.NotNil(t, requests.register(decodeLine([]byte(`{"jsonrpc":"2.0","id":`+tc.id+`,"method":"tools/call"}`+"\n"))))
 
-			requests.answered(decodeLine([]byte(`{"jsonrpc":"2.0","id":` + echo + `,"result":{}}` + "\n")))
+			requests.deliver(requests.resolve(decodeLine([]byte(`{"jsonrpc":"2.0","id":` + echo + `,"result":{}}` + "\n"))))
 
 			assert.Empty(t, requests.drain())
 		})
@@ -88,8 +88,8 @@ func TestInFlight_AnswersAnUnansweredRequestWithItsOriginalIdBytes(t *testing.T)
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			requests := newInFlight()
-			require.NotNil(t, requests.track(decodeLine([]byte(tc.line+"\n"))))
+			requests := newLedger()
+			require.NotNil(t, requests.register(decodeLine([]byte(tc.line+"\n"))))
 
 			lines := requests.drain()
 
@@ -127,9 +127,9 @@ func TestInFlight_DoesNotTrackALineThatIsNotARequestWithAnId(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			requests := newInFlight()
+			requests := newLedger()
 
-			assert.Nil(t, requests.track(decodeLine([]byte(tc.line+"\n"))))
+			assert.Nil(t, requests.register(decodeLine([]byte(tc.line+"\n"))))
 			assert.Empty(t, requests.drain())
 		})
 	}
@@ -153,10 +153,10 @@ func TestInFlight_ClearsOnlyOnAResponseFromTheServer(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			requests := newInFlight()
-			require.NotNil(t, requests.track(decodeLine([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call"}`+"\n"))))
+			requests := newLedger()
+			require.NotNil(t, requests.register(decodeLine([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call"}`+"\n"))))
 
-			requests.answered(decodeLine([]byte(tc.line + "\n")))
+			requests.deliver(requests.resolve(decodeLine([]byte(tc.line + "\n"))))
 
 			if tc.cleared {
 				assert.Empty(t, requests.drain())
@@ -168,56 +168,56 @@ func TestInFlight_ClearsOnlyOnAResponseFromTheServer(t *testing.T) {
 }
 
 func TestInFlight_StringIdDoesNotMatchANumericResponse(t *testing.T) {
-	requests := newInFlight()
-	require.NotNil(t, requests.track(decodeLine([]byte(`{"id":"1","method":"x"}`+"\n"))))
+	requests := newLedger()
+	require.NotNil(t, requests.register(decodeLine([]byte(`{"id":"1","method":"x"}`+"\n"))))
 
-	requests.answered(decodeLine([]byte(`{"id":1,"result":{}}` + "\n")))
+	requests.deliver(requests.resolve(decodeLine([]byte(`{"id":1,"result":{}}` + "\n"))))
 
 	assert.Equal(t, []string{crashErrorLine(`"1"`)}, lineStrings(requests.drain()))
 }
 
 func TestInFlight_DuplicateIdsAreAnsweredOncePerRequestOldestFirst(t *testing.T) {
-	requests := newInFlight()
-	require.NotNil(t, requests.track(decodeLine([]byte(`{"id":1.0,"method":"x"}`+"\n"))))
-	require.NotNil(t, requests.track(decodeLine([]byte(`{"id":1,"method":"x"}`+"\n"))))
-	require.NotNil(t, requests.track(decodeLine([]byte(`{"id":1,"method":"x"}`+"\n"))))
+	requests := newLedger()
+	require.NotNil(t, requests.register(decodeLine([]byte(`{"id":1.0,"method":"x"}`+"\n"))))
+	require.NotNil(t, requests.register(decodeLine([]byte(`{"id":1,"method":"x"}`+"\n"))))
+	require.NotNil(t, requests.register(decodeLine([]byte(`{"id":1,"method":"x"}`+"\n"))))
 
-	requests.answered(decodeLine([]byte(`{"id":1,"result":{}}` + "\n")))
+	requests.deliver(requests.resolve(decodeLine([]byte(`{"id":1,"result":{}}` + "\n"))))
 
 	assert.Equal(t, []string{crashErrorLine(`1`), crashErrorLine(`1`)}, lineStrings(requests.drain()))
 }
 
 func TestInFlight_AnswersRemainingRequestsInSendOrder(t *testing.T) {
-	requests := newInFlight()
+	requests := newLedger()
 	for _, id := range []string{`"a"`, `2`, `"c"`, `4`} {
-		require.NotNil(t, requests.track(decodeLine([]byte(`{"id":`+id+`,"method":"x"}`+"\n"))))
+		require.NotNil(t, requests.register(decodeLine([]byte(`{"id":`+id+`,"method":"x"}`+"\n"))))
 	}
 
-	requests.answered(decodeLine([]byte(`{"id":2,"result":{}}` + "\n")))
-	requests.answered(decodeLine([]byte(`{"id":"c","error":{"code":1,"message":"m"}}` + "\n")))
+	requests.deliver(requests.resolve(decodeLine([]byte(`{"id":2,"result":{}}` + "\n"))))
+	requests.deliver(requests.resolve(decodeLine([]byte(`{"id":"c","error":{"code":1,"message":"m"}}` + "\n"))))
 
 	assert.Equal(t, []string{crashErrorLine(`"a"`), crashErrorLine(`4`)}, lineStrings(requests.drain()))
 }
 
 func TestInFlight_UntrackRemovesOnlyThatRequest(t *testing.T) {
-	requests := newInFlight()
-	first := requests.track(decodeLine([]byte(`{"id":1,"method":"x"}` + "\n")))
-	second := requests.track(decodeLine([]byte(`{"id":1,"method":"x"}` + "\n")))
+	requests := newLedger()
+	first := requests.register(decodeLine([]byte(`{"id":1,"method":"x"}` + "\n")))
+	second := requests.register(decodeLine([]byte(`{"id":1,"method":"x"}` + "\n")))
 	require.NotNil(t, first)
 	require.NotNil(t, second)
 
-	requests.untrack(second)
-	requests.untrack(nil)
+	requests.undo(second)
+	requests.undo(nil)
 
 	assert.Equal(t, []string{crashErrorLine(`1`)}, lineStrings(requests.drain()))
 }
 
 func TestInFlight_ClearedEntriesDoNotAccumulate(t *testing.T) {
-	requests := newInFlight()
+	requests := newLedger()
 	for range 1000 {
-		require.NotNil(t, requests.track(decodeLine([]byte(`{"id":7,"method":"x"}`+"\n"))))
-		requests.answered(decodeLine([]byte(`{"id":7,"result":{}}` + "\n")))
-		requests.untrack(requests.track(decodeLine([]byte(`{"id":8,"method":"x"}` + "\n"))))
+		require.NotNil(t, requests.register(decodeLine([]byte(`{"id":7,"method":"x"}`+"\n"))))
+		requests.deliver(requests.resolve(decodeLine([]byte(`{"id":7,"result":{}}` + "\n"))))
+		requests.undo(requests.register(decodeLine([]byte(`{"id":8,"method":"x"}` + "\n"))))
 	}
 
 	assert.Zero(t, requests.entries.Len(), "no entry is retained")

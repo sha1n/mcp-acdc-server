@@ -18,10 +18,10 @@ func TestListenStreams_IgnoresServerLinesThatNameNoStream(t *testing.T) {
 		`{"jsonrpc":"2.0","method":"notifications/resources/list_changed","params":{}}` + "\n",
 	} {
 		t.Run(line, func(t *testing.T) {
-			l := newListenStreams()
+			l := newLedger()
 			sendListen(t, l, listenLine("1"))
 
-			l.delivered(decodeLine([]byte(line)))
+			l.deliver(l.resolve(decodeLine([]byte(line))))
 
 			streams := l.open()
 			require.Len(t, streams, 1)
@@ -37,10 +37,10 @@ func TestListenStreams_IgnoresHostCancellationsThatNameNoStream(t *testing.T) {
 		`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1e999}}` + "\n",
 	} {
 		t.Run(line, func(t *testing.T) {
-			l := newListenStreams()
+			l := newLedger()
 			sendListen(t, l, listenLine("1"))
 
-			l.sent(decodeLine([]byte(line)))
+			l.cancel(l.cancellationTarget(decodeLine([]byte(line))))
 
 			assert.Len(t, l.open(), 1)
 		})
@@ -48,10 +48,10 @@ func TestListenStreams_IgnoresHostCancellationsThatNameNoStream(t *testing.T) {
 }
 
 func TestListenStreams_WithoutAnOpenStreamLinesChangeNothing(t *testing.T) {
-	l := newListenStreams()
+	l := newLedger()
 
-	l.sent(decodeLine(cancelLine("1")))
-	l.delivered(decodeLine(ackLine("1")))
+	l.cancel(l.cancellationTarget(decodeLine(cancelLine("1"))))
+	l.deliver(l.resolve(decodeLine(ackLine("1"))))
 
 	assert.Empty(t, l.open())
 }

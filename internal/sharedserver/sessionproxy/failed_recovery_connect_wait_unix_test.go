@@ -42,7 +42,7 @@ func TestRecover_ConnectWaitExpiryFailsTheRecoveryAndAnswersEveryHeldRequest(t *
 			ended:   make(chan struct{}),
 			stopped: make(chan struct{}),
 		},
-		requests: newInFlight(),
+		ledger: newLedger(),
 	}
 
 	att, err := s.recover(context.Background(), &connectionLost{err: io.EOF})
