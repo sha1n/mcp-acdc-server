@@ -57,6 +57,7 @@ func TestSessionProxy_IncompleteLineAtStdinEOFEndsTheSessionWithoutOutputAsAPerS
 		assert.Empty(t, string(l.ReadToEOF()), name)
 		launch.assertExit(t, l.Wait(testkit.SharedServerDeadline))
 	}
+	assert.Empty(t, stderrRecords(t, proxy, slogtext.Record{"msg": crashWarningMessage}), "the proxy session stayed on its first connection")
 }
 
 func TestSessionProxy_InvalidLineEndsOnlyItsSharedServerSessionWhichRecoversAndIsLoggedByTheSharedServer(t *testing.T) {
