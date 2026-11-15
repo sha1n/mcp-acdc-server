@@ -4,6 +4,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -139,9 +140,9 @@ func requireReturnsBeforeRelease(t *testing.T, deadline time.Time, start func() 
 	}
 }
 
-// release lets the child go, returns its record and reaps it: a released
-// process is still a child of the test process. It requires the child to
-// leave no process behind in its process group.
+// release lets the child go and returns its record. It requires the launching
+// process, not the test, to reap the child: a zombie still answers kill 0. It
+// also requires the child to leave no process behind in its process group.
 func (r *spawnRendezvous) release(t *testing.T, deadline time.Time) spawnRecord {
 	t.Helper()
 	require.NoError(t, r.listener.SetDeadline(deadline))
@@ -155,8 +156,8 @@ func (r *spawnRendezvous) release(t *testing.T, deadline time.Time) spawnRecord 
 	require.NoError(t, err)
 	var record spawnRecord
 	require.NoError(t, json.Unmarshal(data, &record), string(data))
-	_, err = unix.Wait4(record.PID, nil, 0, nil)
-	require.NoError(t, err, "the spawned child ends once it has answered")
+	require.Eventually(t, func() bool { return errors.Is(unix.Kill(record.PID, 0), unix.ESRCH) },
+		time.Until(deadline), 10*time.Millisecond, "the spawned child %d was not reaped once it had answered", record.PID)
 	assert.ErrorIs(t, unix.Kill(-record.PID, 0), unix.ESRCH, "the spawned child left a process in its group")
 	return record
 }
