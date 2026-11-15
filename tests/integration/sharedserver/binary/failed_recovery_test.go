@@ -66,7 +66,7 @@ func failRecoveryWithAHeldRequest(t *testing.T, deadline time.Time, start func(*
 	stub, spawnedIdentity, err := testkit.WriteRecordingStub(env.Root)
 	require.NoError(t, err)
 	launch := start(env, t, sharedLaunchArgs(testkit.CreateTestContentDir(t, nil),
-		"--shared-server-linger", "10m", "--shared-server-connect-wait", "10m")...)
+		"--shared-server-linger", "10m")...)
 	handshake(t, launch, deadline)
 	session, logPath := awaitIsolatedAttach(t, env, launch, deadline)
 	server := awaitServerRun(t, logPath, "attached:"+session, deadline)

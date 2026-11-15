@@ -61,6 +61,12 @@ func endSession(t *testing.T, l *testkit.BinaryLaunch, deadline time.Time) {
 	require.Equal(t, 0, code, "stderr:\n%s", l.Stderr())
 }
 
+// sharedConnectWait outlasts binaryTestBudget: a correct but slow server must
+// not lose its session to a fallback, so the test deadline is the only budget.
+const sharedConnectWait = "10m"
+
+// sharedLaunchArgs are the arguments of a launch that attaches to a shared
+// server; extra flags come later, so a test of the connect wait overrides it.
 func sharedLaunchArgs(contentDir string, extra ...string) []string {
-	return append([]string{"--content-dir", contentDir, "--transport", "stdio"}, extra...)
+	return append([]string{"--content-dir", contentDir, "--transport", "stdio", "--shared-server-connect-wait", sharedConnectWait}, extra...)
 }

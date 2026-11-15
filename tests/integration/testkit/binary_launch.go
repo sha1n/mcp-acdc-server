@@ -311,20 +311,34 @@ func (l *BinaryLaunch) Stderr() string {
 
 // AwaitStderrRecord polls stderr for the first slog record matching match.
 func (l *BinaryLaunch) AwaitStderrRecord(match slogtext.Record, deadline time.Time) (slogtext.Record, error) {
+	found, err := l.AwaitStderrRecords(match, 1, deadline)
+	if err != nil {
+		return nil, err
+	}
+	return found[0], nil
+}
+
+// AwaitStderrRecords polls stderr until n slog records match match and
+// returns the first n of them in write order.
+func (l *BinaryLaunch) AwaitStderrRecords(match slogtext.Record, n int, deadline time.Time) ([]slogtext.Record, error) {
+	wanted := fmt.Sprintf("%d stderr records %v", n, match)
+	if n == 1 {
+		wanted = fmt.Sprintf("a stderr record %v", match)
+	}
 	for {
-		if found := matchingStderrRecords(l.Stderr(), match); len(found) > 0 {
-			return found[0], nil
+		if found := matchingStderrRecords(l.Stderr(), match); len(found) >= n {
+			return found[:n], nil
 		}
 		select {
 		case <-l.done:
-			if found := matchingStderrRecords(l.Stderr(), match); len(found) > 0 {
-				return found[0], nil
+			if found := matchingStderrRecords(l.Stderr(), match); len(found) >= n {
+				return found[:n], nil
 			}
-			return nil, fmt.Errorf("the process exited without a stderr record %v; stderr:\n%s", match, l.Stderr())
+			return nil, fmt.Errorf("the process exited before writing %s; stderr:\n%s", wanted, l.Stderr())
 		case <-time.After(20 * time.Millisecond):
 		}
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("no stderr record %v before the deadline; stderr:\n%s", match, l.Stderr())
+			return nil, fmt.Errorf("%s not written before the deadline; stderr:\n%s", wanted, l.Stderr())
 		}
 	}
 }
@@ -346,7 +360,7 @@ func matchingStderrRecords(stderr string, match slogtext.Record) []slogtext.Reco
 
 // AwaitAttach returns the session id and log path of the launch's attach line.
 func (l *BinaryLaunch) AwaitAttach(deadline time.Time) (session, logPath string, err error) {
-	record, err := l.AwaitStderrRecord(slogtext.Record{"msg": "Attached to the shared server"}, deadline)
+	record, err := l.AwaitStderrRecord(slogtext.Record{"msg": attachMsg}, deadline)
 	if err != nil {
 		return "", "", err
 	}
