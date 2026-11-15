@@ -122,6 +122,9 @@ type coldStartEvidence struct {
 	exits          []testkit.SharedServerExit
 	fallbacks      []fallbackRecord
 	logs           map[string]identityLog
+	// crashes counts the crash warnings of every launch: a session that
+	// recovered was dropped after its ready line.
+	crashes int
 }
 
 func won() coldStartVerdict { return coldStartVerdict{outcome: coldStartWon} }
@@ -151,8 +154,12 @@ func awaiting(format string, args ...any) coldStartVerdict {
 // A loss is accepted only when every piece of evidence is consistent with
 // those; any other outcome, including a fallback with any other cause, a
 // shared server that ended with an error or before the linger elapsed, or a
-// connect_wait fallback while a shared server of its identity was live, fails.
+// connect_wait fallback while a shared server of its identity was live, or a
+// session that recovered from a crash, fails.
 func classifyColdStart(e coldStartEvidence) coldStartVerdict {
+	if e.crashes > 0 {
+		return failed("%d sessions recovered from a crash during the attempt", e.crashes)
+	}
 	if len(e.fallbacks) == 0 && e.builds <= e.designedBuilds {
 		return won()
 	}
