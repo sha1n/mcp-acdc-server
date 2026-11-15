@@ -15,6 +15,8 @@ func TestProcessArgs_ReadsTheArgumentVectorOfALiveProcess(t *testing.T) {
 	deadline := time.Now().Add(guardTestBudget)
 	args := []string{"--shared-server-identity", fakeIdentity, "an argument with spaces", ""}
 	process := startFakeSharedServer(t, deadline, "", args...)
+	// A round trip proves the exec done: until then Linux reports an empty cmdline.
+	process.requireAlive(t, deadline)
 
 	got, err := processArgs(process.pid)
 
