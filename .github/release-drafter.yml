@@ -94,6 +94,7 @@ template: |
   $CHANGES
 
   ## New Contributors
-  * @$AUTHOR made their first contribution in #$NUMBER
 
-  **Full Changelog**: https://github.com/sha1n/mcp-acdc-server/compare/$BASE_TAG...$NEXT_TAG
+  $NEW_CONTRIBUTORS
+
+  **Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...$RESOLVED_TAG
