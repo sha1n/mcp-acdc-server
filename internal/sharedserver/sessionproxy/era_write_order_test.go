@@ -27,25 +27,25 @@ func (c answeringConn) Write(line []byte) (int, error) {
 }
 
 func TestTrackingWriter_CommitsAnInitializeAnsweredBeforeItsWriteReturned(t *testing.T) {
-	s := &session{requests: newInFlight()}
-	w := trackingWriter{conn: answeringConn{answer: func([]byte) { s.handshake.sentToHost([]byte(eraResult)) }}, requests: s.requests, handshake: &s.handshake}
+	s := &session{ledger: newLedger()}
+	w := trackingWriter{conn: answeringConn{answer: func([]byte) { s.ledger.deliver(s.ledger.resolve(decodeLine([]byte(eraResult)))) }}, ledger: s.ledger}
 
 	_, err := w.Write([]byte(eraInitialize))
 	require.NoError(t, err)
 
-	replay, legacy := s.handshake.replay()
+	replay, legacy := s.ledger.replay()
 	require.True(t, legacy, "the host saw the initialize succeed")
 	assert.Equal(t, eraInitialize, string(replay.initialize))
 	assert.Equal(t, eraResult, string(replay.result))
 }
 
 func TestTrackingWriter_ForgetsWhatAFailedWriteDidNotDeliver(t *testing.T) {
-	s := &session{requests: newInFlight()}
-	delivered := trackingWriter{conn: answeringConn{answer: func([]byte) {}}, requests: s.requests, handshake: &s.handshake}
-	failed := trackingWriter{conn: answeringConn{err: errors.New("broken pipe")}, requests: s.requests, handshake: &s.handshake}
+	s := &session{ledger: newLedger()}
+	delivered := trackingWriter{conn: answeringConn{answer: func([]byte) {}}, ledger: s.ledger}
+	failed := trackingWriter{conn: answeringConn{err: errors.New("broken pipe")}, ledger: s.ledger}
 	_, err := delivered.Write([]byte(eraInitialize))
 	require.NoError(t, err)
-	s.handshake.sentToHost([]byte(eraResult))
+	s.ledger.deliver(s.ledger.resolve(decodeLine([]byte(eraResult))))
 	_, err = delivered.Write([]byte(eraInitialized))
 	require.NoError(t, err)
 
@@ -53,9 +53,9 @@ func TestTrackingWriter_ForgetsWhatAFailedWriteDidNotDeliver(t *testing.T) {
 	require.Error(t, err)
 	_, err = failed.Write([]byte(eraSetLevel("5", "debug")))
 	require.Error(t, err)
-	s.handshake.sentToHost([]byte(eraSuccess("5")))
+	s.ledger.deliver(s.ledger.resolve(decodeLine([]byte(eraSuccess("5")))))
 
-	replay, legacy := s.handshake.replay()
+	replay, legacy := s.ledger.replay()
 	require.True(t, legacy)
 	assert.Equal(t, eraInitialized, string(replay.initialized), "the initialized in effect is the last one fully written")
 	assert.Nil(t, replay.setLevel, "a setLevel whose write failed never reached the server")

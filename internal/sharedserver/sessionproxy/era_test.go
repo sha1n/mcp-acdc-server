@@ -35,13 +35,15 @@ func server(line string) observed { return observed{toServer: true, line: line} 
 
 func host(line string) observed { return observed{line: line} }
 
-func observe(lines ...observed) *handshake {
-	h := &handshake{}
+func observe(lines ...observed) *ledger {
+	h := newLedger()
 	for _, o := range lines {
+		line := decodeLine([]byte(o.line))
 		if o.toServer {
-			h.sentToServer([]byte(o.line))
+			h.register(line)
+			h.recordInitialized(line)
 		} else {
-			h.sentToHost([]byte(o.line))
+			h.deliver(h.resolve(line))
 		}
 	}
 	return h
@@ -153,7 +155,7 @@ func TestCompareInitialize(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			differs, err := compareInitialize(resultLine(seen), resultLine(tc.replayed))
+			differs, err := compareInitialize(decodeLine(resultLine(seen)), decodeLine(resultLine(tc.replayed)))
 			require.NoError(t, err)
 			assert.Equal(t, tc.differs, differs)
 		})
@@ -173,7 +175,7 @@ func TestCompareInitialize_FailsTheRecoveryOnAnotherProtocolVersionOrARejection(
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := compareInitialize(seen, tc.replayed)
+			_, err := compareInitialize(decodeLine(seen), decodeLine(tc.replayed))
 			var failure *discoveryError
 			require.True(t, errors.As(err, &failure), "a classified failure, got %v", err)
 			assert.Equal(t, causeProtocolVersion, failure.cause)
