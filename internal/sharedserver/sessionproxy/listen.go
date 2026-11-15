@@ -80,17 +80,25 @@ func (l *listenStreams) sent(line decodedLine) {
 // delivered applies a server line written to the host: an acknowledgement
 // marks its stream, a response ends it.
 func (l *listenStreams) delivered(line decodedLine) {
-	if l.empty() || !line.object {
+	if l.empty() {
 		return
 	}
-	if !line.hasMethod {
-		if key, ok := keyOf(line.id); ok {
-			l.remove(key)
-		}
-		return
-	}
-	if ack, ok := acknowledgementOf(line); ok {
+	ack, isAck := acknowledgementOf(line)
+	l.deliveredAs(line, ack, isAck)
+}
+
+// deliveredAs is delivered for a line whose acknowledgement the caller has
+// already read.
+func (l *listenStreams) deliveredAs(line decodedLine, ack acknowledgement, isAck bool) {
+	if isAck {
 		l.markAcknowledged(ack.key)
+		return
+	}
+	if !line.object || line.hasMethod {
+		return
+	}
+	if key, ok := keyOf(line.id); ok {
+		l.remove(key)
 	}
 }
 
@@ -240,7 +248,8 @@ func (s *session) awaitingAcknowledgement(reissues []*reissue) bool {
 // already saw acknowledged; every other line reaches the host.
 func (s *session) applyReissueLine(ctx context.Context, reissues []*reissue, raw []byte) error {
 	line := decodeLine(raw)
-	if r, ack := acknowledgedReissue(reissues, line); r != nil {
+	ack, isAck := acknowledgementOf(line)
+	if r := acknowledgedReissue(reissues, ack, isAck); r != nil {
 		r.ack = &ack
 		if r.stream.acknowledged {
 			return nil
@@ -250,21 +259,20 @@ func (s *session) applyReissueLine(ctx context.Context, reissues []*reissue, raw
 		return err
 	}
 	s.requests.answered(line)
-	s.listens.delivered(line)
+	s.listens.deliveredAs(line, ack, isAck)
 	return nil
 }
 
-func acknowledgedReissue(reissues []*reissue, line decodedLine) (*reissue, acknowledgement) {
-	ack, ok := acknowledgementOf(line)
-	if !ok {
-		return nil, acknowledgement{}
+func acknowledgedReissue(reissues []*reissue, ack acknowledgement, isAck bool) *reissue {
+	if !isAck {
+		return nil
 	}
 	for _, r := range reissues {
 		if r.ack == nil && r.stream.key == ack.key {
-			return r, ack
+			return r
 		}
 	}
-	return nil, acknowledgement{}
+	return nil
 }
 
 // announceListens is the modern half of recovery step 6: each re-issued
