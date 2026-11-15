@@ -22,7 +22,11 @@ type occurrence struct {
 	kind requestKind
 	key  requestKey
 	id   json.RawMessage
-	// line is kept for a listen request only: it is re-issued verbatim.
+	// handshake is the method of an initialize or logging/setLevel
+	// request, which its success puts in effect for the host.
+	handshake string
+	// line is kept for a listen request, re-issued verbatim, and for a
+	// handshake request, replayed verbatim once it is in effect.
 	line []byte
 	// cancelled takes a listen stream out of the open set, but the
 	// occurrence stays outstanding until its ending response consumes it.
@@ -37,10 +41,14 @@ type occurrence struct {
 
 // ledger holds every outstanding occurrence in send order, of every kind:
 // a response, a cancellation or an acknowledgement selects exactly one of
-// them, oldest first, as go-sdk matches ids.
+// them, oldest first, as go-sdk matches ids. committed is the handshake the
+// host has in effect: it changes under the same lock that ends the
+// occurrence whose success put it in effect, so a crash drain never races
+// a commit.
 type ledger struct {
-	mu      sync.Mutex
-	entries list.List
+	mu        sync.Mutex
+	entries   list.List
+	committed handshakeReplay
 }
 
 func newLedger() *ledger {
@@ -58,6 +66,10 @@ func (l *ledger) register(line decodedLine) *occurrence {
 	o := &occurrence{kind: ordinaryRequest, key: key, id: id}
 	if line.methodIs(listenMethod) {
 		o.kind = listenRequest
+		o.line = bytes.Clone(line.raw)
+	}
+	if line.methodIs(methodInitialize) || line.methodIs(methodSetLevel) {
+		o.handshake = line.method
 		o.line = bytes.Clone(line.raw)
 	}
 	l.mu.Lock()
@@ -110,6 +122,8 @@ func (l *ledger) cancel(o *occurrence) {
 type delivery struct {
 	target *occurrence
 	ends   bool
+	// success is the line of a response carrying a result.
+	success []byte
 }
 
 func (l *ledger) resolve(line decodedLine) delivery {
@@ -133,7 +147,11 @@ func (l *ledger) resolveAs(line decodedLine, ack acknowledgement, isAck bool) de
 	if !ok || key.unmatchable {
 		return delivery{}
 	}
-	return delivery{target: l.oldest(func(o *occurrence) bool { return o.key == key }), ends: true}
+	d := delivery{target: l.oldest(func(o *occurrence) bool { return o.key == key }), ends: true}
+	if line.result != nil {
+		d.success = line.raw
+	}
+	return d
 }
 
 func (l *ledger) deliver(d delivery) {
@@ -143,6 +161,9 @@ func (l *ledger) deliver(d delivery) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if d.ends {
+		if d.target.element != nil && d.success != nil {
+			l.commitLocked(d.target, d.success)
+		}
 		l.removeLocked(d.target)
 		return
 	}
@@ -151,7 +172,9 @@ func (l *ledger) deliver(d delivery) {
 
 // drain is the crash boundary: it returns the crash error line for each
 // ordinary occurrence in send order, echoing the id bytes the host sent, and
-// keeps only the open listen streams, which the recovery re-issues.
+// keeps only the open listen streams, which the recovery re-issues. A
+// handshake request is ordinary: the crash error is not its success, so
+// nothing of it survives but what was committed before.
 func (l *ledger) drain() [][]byte {
 	l.mu.Lock()
 	defer l.mu.Unlock()

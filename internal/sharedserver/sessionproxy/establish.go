@@ -22,6 +22,7 @@ const (
 	causeConnectWait       failureCause = "connect_wait"
 	causeDroppedTwice      failureCause = "dropped_twice"
 	causeDroppedInSequence failureCause = "dropped_in_sequence"
+	causeProtocolVersion   failureCause = "protocol_version"
 )
 
 // discoveryError is a failure to reach a shared server before anything was

@@ -115,7 +115,14 @@ func (s *session) recover(ctx context.Context, crash *connectionLost) (*attachme
 // connection and returns a classified failure, which fails the recovery
 // instead of discovering again.
 func (s *session) resynchronize(ctx context.Context, att *attachment) error {
-	reissues, err := s.reissueListens(ctx, att)
+	err := s.replayHandshake(ctx, att)
+	var reissues []*reissue
+	if err == nil {
+		reissues, err = s.reissueListens(ctx, att)
+	}
+	if err == nil {
+		err = s.announceListChanges(ctx)
+	}
 	if err == nil {
 		err = s.announceListens(ctx, reissues)
 	}
@@ -202,9 +209,11 @@ func (w trackingWriter) Write(raw []byte) (int, error) {
 	line := decodeLine(raw)
 	cancellation := w.ledger.cancellationTarget(line)
 	request := w.ledger.register(line)
+	initialized := w.ledger.recordInitialized(line)
 	n, err := w.conn.Write(raw)
 	if err != nil {
 		w.ledger.undo(request)
+		w.ledger.undoInitialized(initialized)
 		return n, &connectionLost{err: err}
 	}
 	w.ledger.cancel(cancellation)
