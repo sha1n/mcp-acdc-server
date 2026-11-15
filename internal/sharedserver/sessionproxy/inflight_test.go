@@ -220,7 +220,7 @@ func TestInFlight_ClearedEntriesDoNotAccumulate(t *testing.T) {
 		requests.untrack(requests.track([]byte(`{"id":8,"method":"x"}` + "\n")))
 	}
 
-	assert.Zero(t, requests.len())
+	assert.Zero(t, requests.entries.Len(), "no entry is retained")
 }
 
 func lineStrings(lines [][]byte) []string {
