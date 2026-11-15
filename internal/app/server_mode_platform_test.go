@@ -82,21 +82,16 @@ func TestEffectiveServerMode_OtherPlatformsKeepTheConfiguredModeSilently(t *test
 	}
 }
 
-func platformGateParams(spawn func(string) error) RunParams {
-	return RunParams{SpawnSharedServer: spawn}
-}
-
-func platformGateSettings(transport string, mode config.ServerMode) *config.Settings {
+func platformSettings(transport string, mode config.ServerMode) *config.Settings {
 	return &config.Settings{Transport: transport, ServerMode: mode}
 }
 
-func TestAttemptsDiscovery_NeverOnWindowsEvenWithASpawnSeam(t *testing.T) {
-	spawn := func(string) error { return nil }
+func TestAttemptsDiscovery_NeverOnWindows(t *testing.T) {
 	for _, mode := range bothServerModes {
 		t.Run(string(mode), func(t *testing.T) {
 			logger, buf := newPlatformDebugLogger()
 
-			attempted := attemptsDiscovery(logger, "windows", platformGateParams(spawn), platformGateSettings("stdio", mode))
+			attempted := attemptsDiscovery(logger, "windows", platformSettings("stdio", mode))
 
 			assert.False(t, attempted)
 			assertWindowsLogForConfiguredMode(t, mode, buf)
@@ -105,12 +100,11 @@ func TestAttemptsDiscovery_NeverOnWindowsEvenWithASpawnSeam(t *testing.T) {
 }
 
 func TestAttemptsDiscovery_SSEIsInertOnEveryPlatform(t *testing.T) {
-	spawn := func(string) error { return nil }
 	for _, goos := range []string{"windows", "linux", "darwin"} {
 		t.Run(goos, func(t *testing.T) {
 			logger, buf := newPlatformDebugLogger()
 
-			attempted := attemptsDiscovery(logger, goos, platformGateParams(spawn), platformGateSettings("sse", config.ServerModeShared))
+			attempted := attemptsDiscovery(logger, goos, platformSettings("sse", config.ServerModeShared))
 
 			assert.False(t, attempted)
 			assert.Empty(t, platformLogEntries(t, buf))
@@ -118,24 +112,21 @@ func TestAttemptsDiscovery_SSEIsInertOnEveryPlatform(t *testing.T) {
 	}
 }
 
-func TestAttemptsDiscovery_UnixKeepsTheSpawnSeamGate(t *testing.T) {
-	spawn := func(string) error { return nil }
+func TestAttemptsDiscovery_UnixFollowsTheConfiguredMode(t *testing.T) {
 	tests := []struct {
-		name  string
-		mode  config.ServerMode
-		spawn func(string) error
-		want  bool
+		name string
+		mode config.ServerMode
+		want bool
 	}{
-		{name: "shared with spawn seam", mode: config.ServerModeShared, spawn: spawn, want: true},
-		{name: "shared without spawn seam", mode: config.ServerModeShared, spawn: nil, want: false},
-		{name: "session with spawn seam", mode: config.ServerModeSession, spawn: spawn, want: false},
+		{name: "shared", mode: config.ServerModeShared, want: true},
+		{name: "session", mode: config.ServerModeSession, want: false},
 	}
 	for _, goos := range []string{"linux", "darwin"} {
 		for _, tt := range tests {
 			t.Run(goos+"/"+tt.name, func(t *testing.T) {
 				logger, buf := newPlatformDebugLogger()
 
-				attempted := attemptsDiscovery(logger, goos, platformGateParams(tt.spawn), platformGateSettings("stdio", tt.mode))
+				attempted := attemptsDiscovery(logger, goos, platformSettings("stdio", tt.mode))
 
 				assert.Equal(t, tt.want, attempted)
 				assert.Empty(t, platformLogEntries(t, buf))

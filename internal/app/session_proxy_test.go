@@ -90,6 +90,7 @@ func TestRunWithDeps_SessionProxyRejectsMissingDependencies(t *testing.T) {
 		{name: "nil endpoint dir", mutate: func(p *RunParams) { p.EndpointDir = nil }},
 		{name: "nil stdin", mutate: func(p *RunParams) { p.Stdin = nil }},
 		{name: "nil stdout", mutate: func(p *RunParams) { p.Stdout = nil }},
+		{name: "nil spawn", mutate: func(p *RunParams) { p.SpawnSharedServer = nil }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -185,7 +186,7 @@ func TestRunWithDeps_SessionProxyFallsBackToAPerSessionServer(t *testing.T) {
 	}
 }
 
-func TestRunWithDeps_SessionProxyGate(t *testing.T) {
+func TestRunWithDeps_DiscoveryOnlyForAStdioSharedLaunch(t *testing.T) {
 	errSpawned := errors.New("spawn called")
 	var spawns atomic.Int32
 	spawn := func(string) error { spawns.Add(1); return errSpawned }
@@ -199,10 +200,9 @@ func TestRunWithDeps_SessionProxyGate(t *testing.T) {
 	}{
 		{name: "sse transport", transport: "sse", mode: config.ServerModeShared, spawn: spawn, wantErr: errSessionProxyTestCreate},
 		{name: "session server mode", transport: "stdio", mode: config.ServerModeSession, spawn: spawn, wantErr: errSessionProxyTestCreate},
-		{name: "nil spawn seam", transport: "stdio", mode: config.ServerModeShared, spawn: nil, wantErr: errSessionProxyTestCreate},
 		// A failed spawn falls back to a per-session server, which reports the
 		// startup error as today.
-		{name: "stdio shared with spawn seam", transport: "stdio", mode: config.ServerModeShared, spawn: spawn, wantErr: errSessionProxyTestCreate, wantSpawned: true},
+		{name: "stdio shared", transport: "stdio", mode: config.ServerModeShared, spawn: spawn, wantErr: errSessionProxyTestCreate, wantSpawned: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -212,7 +212,7 @@ func TestRunWithDeps_SessionProxyGate(t *testing.T) {
 			err := RunWithDeps(context.Background(), params, nil, sessionProxyTestBinary)
 
 			require.ErrorIs(t, err, tt.wantErr)
-			assert.Equal(t, tt.wantSpawned, spawns.Load() > 0, "discovery is attempted only behind the gate")
+			assert.Equal(t, tt.wantSpawned, spawns.Load() > 0, "discovery is attempted only for a stdio launch in shared mode")
 		})
 	}
 }
