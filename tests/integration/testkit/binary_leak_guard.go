@@ -211,30 +211,43 @@ func (g leakGuard) lockPath(identity string) (string, error) {
 	return filepath.Join(g.endpointDir, identity+lockSuffix), nil
 }
 
-// checkIdentity reads the log after trying the lock, so a run whose holder
-// the try found is in what it reads, unless that holder has yet to log its
-// startup.
 func (g leakGuard) checkIdentity(ctx context.Context, r LeakReporter, identity string) {
-	logPath := filepath.Join(g.logDir, identity+".log")
-	lockPath, err := g.lockPath(identity)
-	if err != nil {
-		r.Errorf("leak guard: %s: %v", logPath, err)
-		return
-	}
-	held, err := lockHeld(lockPath)
-	if err != nil {
-		r.Errorf("leak guard: %s: %v", logPath, err)
-		return
-	}
-	runs, err := readRuns(logPath)
+	o, err := g.observe(identity)
 	if err != nil {
 		r.Errorf("leak guard: %v", err)
 		return
 	}
-	g.reportLateExpiries(r, logPath, runs)
-	if held {
-		g.checkHeldLock(ctx, r, heldLock{logPath: logPath, identity: identity, lockPath: lockPath, foundAt: time.Now()}, runs)
+	g.reportLateExpiries(r, o.logPath, o.runs)
+	if o.held {
+		o.foundAt = time.Now()
+		g.checkHeldLock(ctx, r, o.heldLock, o.runs)
 	}
+}
+
+// identityObservation is an identity's lock, tried, and the runs of its log.
+type identityObservation struct {
+	heldLock
+	held bool
+	runs []ServerRun
+}
+
+// observe reads the log after trying the lock, so a run whose holder the try
+// found is in what it reads, unless that holder has yet to log its startup.
+func (g leakGuard) observe(identity string) (identityObservation, error) {
+	logPath := filepath.Join(g.logDir, identity+".log")
+	lockPath, err := g.lockPath(identity)
+	if err != nil {
+		return identityObservation{}, fmt.Errorf("%s: %w", logPath, err)
+	}
+	held, err := lockHeld(lockPath)
+	if err != nil {
+		return identityObservation{}, fmt.Errorf("%s: %w", logPath, err)
+	}
+	runs, err := readRuns(logPath)
+	if err != nil {
+		return identityObservation{}, err
+	}
+	return identityObservation{heldLock: heldLock{logPath: logPath, identity: identity, lockPath: lockPath}, held: held, runs: runs}, nil
 }
 
 // readRuns reads a log that may not exist yet: its holder opens it only after
@@ -274,10 +287,9 @@ func (g leakGuard) checkHeldLock(ctx context.Context, r LeakReporter, h heldLock
 	var tried runKey
 	unattributed := "no run of the log is live"
 	for {
-		if run, ok := liveRun(runs); ok && keyOf(run) != tried {
+		if run, ok, err := h.attribute(runs, tried); ok {
 			tried = keyOf(run)
 			g.reportOverdue(r, h, run)
-			err := verifyServer(run.PID, h.identity)
 			if err == nil {
 				killHolder(ctx, r, h, run, release)
 				return
@@ -336,6 +348,20 @@ func killHolder(ctx context.Context, r LeakReporter, h heldLock, run ServerRun, 
 	case <-ctx.Done():
 		r.Errorf("leak guard: shared server %d of %s did not release its lock within the leak guard's watchdog after SIGKILL: %v", run.PID, h.logPath, ctx.Err())
 	}
+}
+
+// attribute decides which process holds h's lock: the log's last run, unless
+// it has stopped or is the run decided before, proven by the arguments of its
+// pid carrying the identity. ok reports a run to decide on; err is why that
+// run is not proven the holder. A holder that has yet to log its startup
+// leaves an earlier run last, which has stopped or whose pid has exited, so
+// is not proven, short of the pid's reuse by a server of the same identity.
+func (h heldLock) attribute(runs []ServerRun, decided runKey) (run ServerRun, ok bool, err error) {
+	run, ok = liveRun(runs)
+	if !ok || keyOf(run) == decided {
+		return ServerRun{}, false, nil
+	}
+	return run, true, verifyServer(run.PID, h.identity)
 }
 
 func liveRun(runs []ServerRun) (ServerRun, bool) {
