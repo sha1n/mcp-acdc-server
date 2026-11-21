@@ -113,3 +113,43 @@ func TestRunWithDeps_SuppliedSharedServerIdentityMustBeValid(t *testing.T) {
 		})
 	}
 }
+
+// A shared server serves stdio sessions and a loopback Web UI only, so the
+// authentication settings it inherits from its environment never apply to it
+// and must not stop it.
+func TestRunWithDeps_SharedServerLaunchIgnoresAuthenticationSettings(t *testing.T) {
+	tests := []struct {
+		name    string
+		flags   map[string]string
+		wantErr string
+	}{
+		{name: "basic without credentials", flags: map[string]string{"auth-type": "basic"}, wantErr: "invalid shared server identity"},
+		{name: "unknown auth type", flags: map[string]string{"auth-type": "bogus"}, wantErr: "invalid shared server identity"},
+		{name: "invalid non-auth setting", flags: map[string]string{"auth-type": "basic", "server-mode": "bogus"}, wantErr: "invalid configuration"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+			RegisterFlags(flags)
+			require.NoError(t, flags.Set("content-dir", t.TempDir()))
+			require.NoError(t, flags.Set("transport", "stdio"))
+			for name, value := range tt.flags {
+				require.NoError(t, flags.Set(name, value))
+			}
+			require.NoError(t, flags.Parse([]string{"--shared-server-identity=malformed"}))
+			endpointDir := t.TempDir()
+			params := RunParams{
+				Stderr:        io.Discard,
+				LoadSettings:  config.LoadSettingsWithFlags,
+				ValidSettings: config.ValidateSettings,
+				EndpointDir:   func() (string, error) { return endpointDir, nil },
+			}
+
+			err := RunWithDeps(context.Background(), params, flags, identity.Binary{Version: "test"})
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}

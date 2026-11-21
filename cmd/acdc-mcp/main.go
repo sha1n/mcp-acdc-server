@@ -48,10 +48,31 @@ func Execute(version, build, programName string, args []string) error {
 	rootCmd.SetVersionTemplate(`{{.Version}}
 `)
 
+	// Only the commands this program documents: no shell completion command.
+	rootCmd.CompletionOptions.DisableDefaultCmd = true
 	app.RegisterFlags(rootCmd.Flags())
+	rootCmd.AddCommand(browseCommand(version, build))
 	rootCmd.SetArgs(args)
 
 	return rootCmd.Execute()
+}
+
+// browseCommand takes the same settings as the root command, so it computes
+// the server identity a launch with those settings would.
+func browseCommand(version, build string) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "browse",
+		Short: "Print the Web UI URL of the shared server for these settings",
+		Long: "Find or start the shared server for these settings, start its Web UI if it is not running " +
+			"and print the Web UI URL. --ui-enabled, --host, --port and the auth flags are ignored.",
+		Args:         cobra.NoArgs,
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return app.RunBrowse(cmd.Context(), app.BrowseRunParams(cmd.Flags()), cmd.Flags(), binary(version, build))
+		},
+	}
+	app.RegisterFlags(cmd.Flags())
+	return cmd
 }
 
 func runWithFlags(flags *pflag.FlagSet, bin identity.Binary) error {

@@ -188,29 +188,40 @@ func sendHello(conn net.Conn) error {
 // awaitReady has no limit of its own: the shared server may still be building
 // its index, and the host's initialize timeout governs that wait.
 func awaitReady(ctx context.Context, fromServer *bufio.Reader, abort <-chan struct{}) (sharedserver.ReadyLine, error) {
-	type decoded struct {
-		ready sharedserver.ReadyLine
-		err   error
+	line, err := readReplyLine(ctx, fromServer, abort)
+	if err != nil {
+		return sharedserver.ReadyLine{}, err
 	}
-	result := make(chan decoded, 1)
+	ready, err := sharedserver.DecodeReadyLine(line)
+	if err != nil {
+		return sharedserver.ReadyLine{}, fmt.Errorf("%w: %w", errBrokeBeforeReady, err)
+	}
+	return ready, nil
+}
+
+// readReplyLine reads the first line the shared server writes on a
+// connection, with no limit of its own. A connection that ends before a
+// whole line broke before the ready line.
+func readReplyLine(ctx context.Context, fromServer *bufio.Reader, abort <-chan struct{}) ([]byte, error) {
+	type read struct {
+		line []byte
+		err  error
+	}
+	result := make(chan read, 1)
 	go func() {
 		line, err := fromServer.ReadBytes('\n')
-		var ready sharedserver.ReadyLine
-		if err == nil {
-			ready, err = sharedserver.DecodeReadyLine(line)
-		}
 		if err != nil {
 			err = fmt.Errorf("%w: %w", errBrokeBeforeReady, err)
 		}
-		result <- decoded{ready: ready, err: err}
+		result <- read{line: line, err: err}
 	}()
 	select {
 	case r := <-result:
-		return r.ready, r.err
+		return r.line, r.err
 	case <-ctx.Done():
-		return sharedserver.ReadyLine{}, ctx.Err()
+		return nil, ctx.Err()
 	case <-abort:
-		return sharedserver.ReadyLine{}, errSessionEnded
+		return nil, errSessionEnded
 	}
 }
 

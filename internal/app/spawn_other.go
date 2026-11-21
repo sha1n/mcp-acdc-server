@@ -9,3 +9,7 @@ import "errors"
 func spawnSharedServer(string) error {
 	return errors.New("a shared server cannot be spawned on this platform")
 }
+
+func spawnSharedServerWith([]string) func(string) error {
+	return spawnSharedServer
+}

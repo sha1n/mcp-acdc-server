@@ -28,7 +28,7 @@ The server reads Markdown from a content root, splits each document into heading
 
 **Prompts.** Markdown files under `.acdc/prompts/` are exposed as MCP prompt templates with typed arguments. See [Authoring Prompts](docs/authoring-resources.md#authoring-prompts).
 
-**Web UI (optional, SSE only).** With `--ui-enabled`, the SSE server also serves a read-only browser interface at `/ui/` for searching the same index, filtering by label, and reading rendered documents. It is off by default. See [Web UI](docs/web-ui.md).
+**Web UI (optional).** With `--ui-enabled`, the SSE server also serves a read-only browser interface at `/ui/` for searching the same index, filtering by label, and reading rendered documents. It is off by default. For stdio launches, `acdc-mcp browse` prints the URL of a UI served by their shared server. See [Web UI](docs/web-ui.md).
 
 ## Effect on agent work
 
@@ -79,6 +79,11 @@ docker run -p 8080:8080 \
 **Web UI (SSE only).** Add `--ui-enabled` (or `ACDC_MCP_UI_ENABLED=true`) and open `http://<host>:<port>/ui/`. It shares the port and authentication of `/sse`:
 ```bash
 acdc-mcp --transport sse --ui-enabled --content-dir ./content
+```
+
+**Web UI for stdio launches.** On macOS and Linux, `acdc-mcp browse` with the same settings as your MCP launch prints the URL of a UI served by that launch's [shared server](#server-mode), on `127.0.0.1` with no authentication. It does not open a browser:
+```bash
+acdc-mcp browse --content-dir ./content
 ```
 
 **Health check (SSE only).** The SSE server serves an unauthenticated `/health` endpoint that returns `200 OK`. Use it as a Kubernetes liveness or readiness probe:
@@ -169,6 +174,8 @@ On macOS and Linux, stdio launches that share a server identity (same settings, 
 | `--server-mode` | `ACDC_MCP_SERVER_MODE` | `shared`; on Windows every launch behaves as `session` |
 | `--shared-server-connect-wait` | `ACDC_MCP_SHARED_SERVER_CONNECT_WAIT` | `5s` |
 | `--shared-server-linger` | `ACDC_MCP_SHARED_SERVER_LINGER` | `30s` |
+
+`acdc-mcp browse`, with the same settings as a stdio launch, finds or starts the shared server for their server identity, starts its [web UI](docs/web-ui.md#acdc-mcp-browse) on demand on `127.0.0.1` and prints the URL. The UI has no authentication, so other local users can read it.
 
 Opt out with `--server-mode session`. See [Server Mode](docs/configuration.md#server-mode) for the processes, files and logs it creates and its known limitations.
 

@@ -28,6 +28,35 @@ func WithWebUI(backend webui.SearchBackend, documents webui.DocumentReader) SSEO
 	}
 }
 
+func newSSEOptions(opts []SSEOption) sseOptions {
+	var options sseOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+	return options
+}
+
+// mountWebUI mounts the web UI pages and API on mux; it is the one wiring of
+// the web UI, for the SSE server and for a shared server's Web UI alike.
+func (o sseOptions) mountWebUI(logger *slog.Logger, mux *http.ServeMux, ui config.UISettings) error {
+	if o.uiBackend == nil || o.uiDocuments == nil {
+		return errors.New("web UI enabled but no UI components supplied")
+	}
+	webui.Mount(logger, mux, o.uiBackend, o.uiDocuments, ui)
+	return nil
+}
+
+// newWebUIHandler serves only the web UI pages and API, with no
+// authentication and maxResults as its ui.max_results.
+func newWebUIHandler(logger *slog.Logger, opts []SSEOption, maxResults int) (http.Handler, error) {
+	mux := http.NewServeMux()
+	ui := config.UISettings{Enabled: true, MaxResults: maxResults}
+	if err := newSSEOptions(opts).mountWebUI(logger, mux, ui); err != nil {
+		return nil, err
+	}
+	return mux, nil
+}
+
 // StartSSEServer starts the SSE server with authentication
 func StartSSEServer(logger *slog.Logger, s *mcp.Server, settings *config.Settings, opts ...SSEOption) error {
 	srv, err := NewSSEServer(logger, s, settings, opts...)
@@ -41,10 +70,7 @@ func StartSSEServer(logger *slog.Logger, s *mcp.Server, settings *config.Setting
 
 // NewSSEServer creates a new SSE server with authentication middleware
 func NewSSEServer(logger *slog.Logger, s *mcp.Server, settings *config.Settings, opts ...SSEOption) (*http.Server, error) {
-	var options sseOptions
-	for _, opt := range opts {
-		opt(&options)
-	}
+	options := newSSEOptions(opts)
 
 	// Factory function returns the server instance for each request
 	sseHandler := mcp.NewSSEHandler(func(r *http.Request) *mcp.Server {
@@ -59,10 +85,9 @@ func NewSSEServer(logger *slog.Logger, s *mcp.Server, settings *config.Settings,
 	})
 	mux.Handle("/sse", sseHandler)
 	if settings.UI.Enabled {
-		if options.uiBackend == nil || options.uiDocuments == nil {
-			return nil, errors.New("web UI enabled but no UI components supplied")
+		if err := options.mountWebUI(logger, mux, settings.UI); err != nil {
+			return nil, err
 		}
-		webui.Mount(logger, mux, options.uiBackend, options.uiDocuments, settings.UI)
 	}
 
 	authMiddleware, err := auth.NewMiddleware(settings.Auth)

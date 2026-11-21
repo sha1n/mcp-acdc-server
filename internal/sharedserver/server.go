@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -44,6 +45,13 @@ type Config struct {
 	// line, so a session's first listing reflects current content. It is
 	// called only after Build has returned.
 	Revalidate func(context.Context)
+	// UIHandler, if set, builds the Web UI handler on the first browse
+	// request. It is called only after Build has returned. Without it every
+	// browse request is answered with an error.
+	UIHandler UIHandlerFunc
+	// UIListen, if set, binds the Web UI instead of an ephemeral port on
+	// 127.0.0.1.
+	UIListen func() (net.Listener, error)
 	// Linger below config.MinSharedServerLinger is rejected before anything
 	// is created, as settings validation rejects it.
 	Linger time.Duration
