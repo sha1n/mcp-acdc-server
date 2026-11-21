@@ -42,6 +42,10 @@ type RunParams struct {
 	// ViewerWindow, if set, replaces how long a viewer of a shared server's
 	// Web UI stays live after its last heartbeat.
 	ViewerWindow time.Duration
+	// UIShutdownGrace, if set, replaces how long a foreground browse waits
+	// for in-flight Web UI requests before force-closing their connections;
+	// zero keeps the 5s default.
+	UIShutdownGrace time.Duration
 }
 
 // DefaultRunParams returns production dependencies

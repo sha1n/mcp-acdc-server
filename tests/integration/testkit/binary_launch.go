@@ -275,6 +275,11 @@ func (l *BinaryLaunch) Send(line string) error {
 	return err
 }
 
+// Signal sends sig to the process.
+func (l *BinaryLaunch) Signal(sig os.Signal) error {
+	return l.cmd.Process.Signal(sig)
+}
+
 // CloseStdin ends the host input, which ends a session.
 func (l *BinaryLaunch) CloseStdin() error {
 	return l.stdin.Close()

@@ -41,7 +41,8 @@ func runBrowseCommand(t *testing.T, env *testkit.BinaryEnv, deadline time.Time, 
 
 func requireUIServed(t *testing.T, uiURL string) {
 	t.Helper()
-	resp, err := http.Get(uiURL) //nolint:gosec // the URL printed by browse
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(uiURL) //nolint:gosec // the URL printed by browse
 	require.NoError(t, err)
 	_ = resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -156,4 +157,23 @@ func TestBinary_BrowseClosesItsPipesWhileADescendantOfTheOpenerRuns(t *testing.T
 	runBrowseCommand(t, env, time.Now().Add(min(10*time.Second, time.Until(deadline))), args...)
 
 	require.FileExists(t, pidFile, "the opener ran")
+}
+
+func TestBinary_BrowseInSessionModeServesTheWebUIUntilInterrupted(t *testing.T) {
+	deadline := time.Now().Add(binaryTestBudget)
+	env := testkit.NewBinaryEnv(t, acdcBinary)
+	contentDir := testkit.CreateTestContentDir(t, nil)
+	l := env.Start(t, "browse", "--content-dir", contentDir, "--transport", "stdio", "--server-mode", "session", "--no-open")
+
+	uiURL, err := l.ReadLine(deadline)
+	require.NoError(t, err, "stderr:\n%s", l.Stderr())
+	require.True(t, strings.HasPrefix(uiURL, "http://127.0.0.1:") && strings.HasSuffix(uiURL, "/ui/"), "unexpected URL %q", uiURL)
+	requireUIServed(t, uiURL)
+	_, statErr := os.Stat(env.EndpointDir())
+	assert.True(t, os.IsNotExist(statErr), "a foreground browse creates no endpoint files")
+
+	require.NoError(t, l.Signal(syscall.SIGINT))
+	code, err := l.Wait(deadline)
+	require.NoError(t, err)
+	assert.Equal(t, 0, code, "stderr:\n%s", l.Stderr())
 }

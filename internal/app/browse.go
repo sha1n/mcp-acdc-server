@@ -61,8 +61,12 @@ func BrowseSharedServerArgs(flags *pflag.FlagSet) []string {
 // settings, as a session proxy does, gets the URL of its Web UI and prints
 // it on stdout, then opens the system browser on it unless --no-open is
 // set. A browser that cannot be opened is a warning, not a failure. A
-// requested UI is a required UI: when no URL can be had it
-// fails, and it never serves anything itself.
+// requested UI is a required UI: when no URL can be had it fails.
+//
+// Without a shared server (session server mode, or Windows) it builds the
+// catalog itself and serves the Web UI in the foreground on a loopback
+// ephemeral port until ctx is cancelled or the process is interrupted, then
+// returns nil.
 func RunBrowse(ctx context.Context, params RunParams, flags *pflag.FlagSet, binary identity.Binary) error {
 	settings, err := params.LoadSettings(flags)
 	if err != nil {
@@ -71,12 +75,15 @@ func RunBrowse(ctx context.Context, params RunParams, flags *pflag.FlagSet, bina
 	if err := validateBrowseSettings(params.ValidSettings, settings); err != nil {
 		return err
 	}
-	if params.Stderr == nil || params.Stdout == nil || params.EndpointDir == nil || params.SpawnSharedServer == nil {
-		return errors.New("browse requires stderr, stdout, an endpoint directory and a shared server spawn")
+	if params.Stderr == nil || params.Stdout == nil {
+		return errors.New("browse requires stderr and stdout")
 	}
 	logger := slog.New(slog.NewTextHandler(params.Stderr, nil))
 	if effectiveServerMode(logger, runtime.GOOS, settings.ServerMode) != config.ServerModeShared {
-		return errors.New("browse requires a shared server: set server_mode to shared, on a Unix platform")
+		return runForegroundBrowse(ctx, params, logger, settings, flags, binary)
+	}
+	if params.EndpointDir == nil || params.SpawnSharedServer == nil {
+		return errors.New("browse requires an endpoint directory and a shared server spawn")
 	}
 
 	ready, err := sessionproxy.Browse(ctx, sessionproxy.BrowseConfig{
