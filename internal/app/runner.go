@@ -22,7 +22,7 @@ import (
 type RunParams struct {
 	LoadSettings      func(*pflag.FlagSet) (*config.Settings, error)
 	ValidSettings     func(*config.Settings) error
-	StartSSEServer    func(*slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error
+	StartSSEServer    func(context.Context, *slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error
 	CreateServer      func(context.Context, *slog.Logger, *config.Settings, string) (Components, error)
 	CustomIOTransport mcp.Transport // Optional: for testing with custom IO
 	EndpointDir       func() (string, error)
@@ -106,13 +106,27 @@ func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, bi
 		return runPerSession(ctx, logger, params, settings, binary.Version, transport)
 	}
 
-	components, err := params.CreateServer(ctx, logger, settings, binary.Version)
+	return runSSE(ctx, logger, params, settings, binary.Version)
+}
+
+// runSSE serves the SSE transport until ctx is cancelled or the process gets
+// SIGINT or SIGTERM, then shuts it down and cleans up its components.
+func runSSE(ctx context.Context, logger *slog.Logger, params RunParams, settings *config.Settings, version string) error {
+	signalCtx, stop := notifyShutdownSignals(ctx)
+	defer stop()
+	// Registered before the build so a signal during it is not lost; the build
+	// itself keeps the caller's context and is stopped only by a second signal.
+	components, err := params.CreateServer(ctx, logger, settings, version)
 	if err != nil {
 		return err
 	}
 	if components.Cleanup != nil {
 		defer components.Cleanup()
 	}
+	if signalCtx.Err() != nil && ctx.Err() == nil {
+		logger.Info("Shutdown signal received before the SSE server started")
+		return nil
+	}
 	logger.Info("Starting SSE server", "host", settings.Host, "port", settings.Port)
-	return params.StartSSEServer(logger, components.MCP, settings, components.SSEOptions...)
+	return params.StartSSEServer(signalCtx, logger, components.MCP, settings, components.SSEOptions...)
 }

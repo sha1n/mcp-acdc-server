@@ -102,7 +102,7 @@ func TestStartSSEServer_NewSSEServerError(t *testing.T) {
 	settings := &config.Settings{
 		Auth: config.AuthSettings{Type: "invalid"},
 	}
-	err := StartSSEServer(slog.New(slog.DiscardHandler), mcpSrv, settings)
+	err := StartSSEServer(context.Background(), slog.New(slog.DiscardHandler), mcpSrv, settings)
 	if err == nil {
 		t.Error("Expected error for invalid auth type")
 	}
@@ -125,7 +125,7 @@ func TestStartSSEServer_PortCollision(t *testing.T) {
 		Auth: config.AuthSettings{Type: config.AuthTypeNone},
 	}
 
-	err = StartSSEServer(slog.New(slog.DiscardHandler), mcpSrv, settings)
+	err = StartSSEServer(context.Background(), slog.New(slog.DiscardHandler), mcpSrv, settings)
 	if err == nil {
 		t.Error("Expected error because port is already in use")
 	}
@@ -302,7 +302,7 @@ func TestStartSSEServer_WebUIEnabledWithoutComponentsFails(t *testing.T) {
 	}
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- StartSSEServer(slog.New(slog.DiscardHandler), mcpSrv, settings) }()
+	go func() { errCh <- StartSSEServer(context.Background(), slog.New(slog.DiscardHandler), mcpSrv, settings) }()
 
 	select {
 	case err := <-errCh:

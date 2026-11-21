@@ -73,7 +73,7 @@ func TestSessionAttribution_SSELogsRequestsWithoutASession(t *testing.T) {
 	runCtx, stopRun := context.WithCancel(context.Background())
 	params := app.DefaultRunParams()
 	params.Stderr = stderr
-	params.StartSSEServer = func(logger *slog.Logger, mcpSrv *mcp.Server, settings *config.Settings, opts ...app.SSEOption) error {
+	params.StartSSEServer = func(_ context.Context, logger *slog.Logger, mcpSrv *mcp.Server, settings *config.Settings, opts ...app.SSEOption) error {
 		srv, err := app.NewSSEServer(logger, mcpSrv, settings, opts...)
 		if err != nil {
 			return err
