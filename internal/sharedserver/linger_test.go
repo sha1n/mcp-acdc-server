@@ -240,3 +240,34 @@ func TestSessionLinger_StopCancelsAPendingTimer(t *testing.T) {
 	p.clock.advance(10 * lingerUnderTest)
 	assert.Equal(t, 0, p.expired())
 }
+
+func TestSessionLinger_RefusesAnAttachOnceTheShutdownRan(t *testing.T) {
+	p := newLingerProbe()
+	p.clock.advance(lingerUnderTest)
+	require.True(t, p.shutsDown())
+
+	assert.False(t, p.linger.attach(), "a session that arrives after the linger shut down must not be admitted")
+	assert.Equal(t, 0, p.clock.armed())
+}
+
+func TestSessionLinger_RefusesAnAttachOnceStopped(t *testing.T) {
+	p := newLingerProbe()
+	p.linger.stop()
+
+	assert.False(t, p.linger.attach())
+}
+
+func TestSessionLinger_AdmitsAnAttachAfterAnExpiryNotYetConfirmed(t *testing.T) {
+	p := newLingerProbe()
+	p.clock.advance(lingerUnderTest)
+	require.Equal(t, 1, p.expired())
+
+	assert.True(t, p.linger.attach())
+	assert.False(t, p.shutsDown())
+}
+
+func (l *sessionLinger) attachedSessions() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.sessions
+}

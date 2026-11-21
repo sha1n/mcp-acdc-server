@@ -105,7 +105,16 @@ func (s *fakeSharedServer) listen() {
 	}()
 }
 
+// nextConn accepts the next connection and consumes the hello the proxy
+// sends first, so the test sees only the JSON-RPC traffic that follows.
 func (s *fakeSharedServer) nextConn() *fakeSharedConn {
+	s.t.Helper()
+	conn := s.nextRawConn()
+	conn.expectHello()
+	return conn
+}
+
+func (s *fakeSharedServer) nextRawConn() *fakeSharedConn {
 	s.t.Helper()
 	select {
 	case conn := <-s.accepted:
@@ -127,6 +136,12 @@ func (c *fakeSharedConn) sendReady() {
 	line, err := sharedserver.EncodeReadyLine("abcd1234", "/var/log/acdc.log")
 	require.NoError(c.t, err)
 	c.write(string(line))
+}
+
+func (c *fakeSharedConn) expectHello() {
+	c.t.Helper()
+	_, err := sharedserver.DecodeHelloLine([]byte(c.readLine()))
+	require.NoError(c.t, err, "the proxy must send its hello first")
 }
 
 func (c *fakeSharedConn) write(s string) {

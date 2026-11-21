@@ -67,6 +67,10 @@ func attachOnce(ctx context.Context, cfg Config, abort <-chan struct{}) (*attach
 	if err != nil {
 		return nil, endedOr(ctx, abort, err)
 	}
+	if err := sendHello(conn); err != nil {
+		_ = conn.Close()
+		return nil, endedOr(ctx, abort, err)
+	}
 	fromServer := bufio.NewReader(conn)
 	ready, err := awaitReady(ctx, fromServer, abort)
 	if err != nil {
@@ -165,6 +169,20 @@ func endedOr(ctx context.Context, abort <-chan struct{}, err error) error {
 		return end
 	}
 	return err
+}
+
+// sendHello speaks first on every connection, the first connect and every
+// recovery alike: the shared server reads the hello before its ready line. A
+// connection that cannot take it broke before the ready line.
+func sendHello(conn net.Conn) error {
+	hello, err := sharedserver.EncodeHelloLine(sharedserver.HelloSession)
+	if err != nil {
+		return err
+	}
+	if _, err := conn.Write(hello); err != nil {
+		return fmt.Errorf("%w: failed to send hello line: %w", errBrokeBeforeReady, err)
+	}
+	return nil
 }
 
 // awaitReady has no limit of its own: the shared server may still be building

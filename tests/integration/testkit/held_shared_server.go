@@ -112,6 +112,10 @@ func tryAttach(ctx context.Context, socketPath string) *attachedSession {
 	if err != nil {
 		return nil
 	}
+	if err := SendHello(conn); err != nil {
+		_ = conn.Close()
+		return nil
+	}
 	return readReadyLine(ctx, conn)
 }
 

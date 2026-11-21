@@ -204,6 +204,7 @@ func dialSession(t *testing.T, ep endpoint.Endpoint, identity string, done chan 
 	for {
 		conn, err := (&net.Dialer{Deadline: deadline}).Dial("unix", socketPath)
 		if err == nil {
+			sendTestHello(t, conn)
 			return conn, true
 		}
 		require.True(t, errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ECONNREFUSED),

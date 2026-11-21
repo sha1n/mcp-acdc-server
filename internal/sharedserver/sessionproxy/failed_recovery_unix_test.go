@@ -127,7 +127,9 @@ func (o *outageFixture) accept() *fakeSharedConn {
 	select {
 	case conn := <-accepted:
 		o.t.Cleanup(func() { _ = conn.Close() })
-		return &fakeSharedConn{t: o.t, conn: conn, lines: bufio.NewReader(conn)}
+		c := &fakeSharedConn{t: o.t, conn: conn, lines: bufio.NewReader(conn)}
+		c.expectHello()
+		return c
 	case <-time.After(proxyTestDeadline):
 		o.t.Fatal("the session proxy never connected")
 		return nil

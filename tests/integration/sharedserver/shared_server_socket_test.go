@@ -158,6 +158,7 @@ func (s *sharedServerUnderTest) dial(t *testing.T) *sharedServerLineClient {
 		if err == nil {
 			require.NoError(t, conn.SetDeadline(time.Now().Add(sharedServerSocketTestDeadline)))
 			t.Cleanup(func() { _ = conn.Close() })
+			require.NoError(t, testkit.SendHello(conn))
 			return &sharedServerLineClient{conn: conn, reader: bufio.NewReader(conn)}
 		}
 		select {

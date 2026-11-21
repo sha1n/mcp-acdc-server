@@ -6,7 +6,6 @@ import (
 	"context"
 	"io"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,31 +18,26 @@ import (
 )
 
 func TestSessionAcceptor_AConnectionCancelledByTheTimeTheBuildCompletesGetsNoReadyLine(t *testing.T) {
-	acceptorListener, acceptorSocket := bindTestEndpoint(t)
-	ep, err := endpoint.OpenEndpoint(filepath.Dir(acceptorSocket))
-	require.NoError(t, err)
-	peerListener, peerSocket := bindTestEndpoint(t)
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	acceptor := startAccepting(ctx, slog.New(slog.DiscardHandler), acceptorListener, ep, testIdentity, time.Hour)
-	cancel()
-	// Both the build and the cancellation are now observable to every
-	// session, as when a build completes just after a signal.
-	require.NoError(t, acceptor.serve(server, nil, ""))
-
-	// Each round is a fresh chance for the select to pick the build.
+	// Each round is a fresh chance for the waiting session to see the build
+	// before the cancellation, as when a build completes just after a signal.
 	for range 50 {
-		client, err := net.Dial("unix", peerSocket)
+		listener, socketPath := bindTestEndpoint(t)
+		ep, err := endpoint.OpenEndpoint(filepath.Dir(socketPath))
 		require.NoError(t, err)
-		require.NoError(t, client.SetDeadline(time.Now().Add(serveTestDeadline)))
-		conn, err := peerListener.AcceptUnix()
-		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(context.Background())
+		acceptor := startAccepting(ctx, slog.New(slog.DiscardHandler), listener, ep, testIdentity, time.Hour)
 
-		acceptor.linger.attach()
-		acceptor.handle(conn)
+		client, reader := dialRawAcceptorTestSocket(t, socketPath)
+		sendTestHello(t, client)
+		require.Eventually(t, func() bool { return acceptor.linger.attachedSessions() == 1 }, serveTestDeadline, time.Millisecond,
+			"the session must be attached and waiting for the build")
 
-		received, err := io.ReadAll(client)
+		cancel()
+		require.NoError(t, acceptor.serve(server, nil, ""))
+
+		received, err := io.ReadAll(reader)
 		_ = client.Close()
 		require.NoError(t, err)
 		assert.Empty(t, received, "a cancelled session must be closed without a ready line")

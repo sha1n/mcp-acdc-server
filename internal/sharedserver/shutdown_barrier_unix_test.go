@@ -99,6 +99,7 @@ func (b *barrierTestAcceptor) dial(t *testing.T) *net.UnixConn {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 	require.NoError(t, conn.SetDeadline(b.deadline))
+	sendTestHello(t, conn)
 	return conn
 }
 

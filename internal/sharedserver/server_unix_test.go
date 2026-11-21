@@ -36,6 +36,7 @@ func TestServe_AcceptFailureClosesListenerAndIdleSessions(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 	require.NoError(t, client.SetDeadline(time.Now().Add(serveTestDeadline)))
+	sendTestHello(t, client)
 	reader := bufio.NewReader(client)
 	_, err = reader.ReadBytes('\n')
 	require.NoError(t, err, "the idle session must have been accepted and attached")

@@ -4,9 +4,13 @@ package testkit
 
 import (
 	"fmt"
+	"io"
+	"net"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,4 +69,29 @@ func (tb *deferredCleanupTB) errors() []string {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
 	return slices.Clone(tb.reported)
+}
+
+func TestSharedServerHarness_SkipsTheHandlerOfAConnectionWithoutAHello(t *testing.T) {
+	h := NewSharedServerHarness(t)
+	id := h.Identity(SharedLaunchArgs(CreateTestContentDir(t, nil)))
+	var handled atomic.Int32
+	h.serveSocket(id, func(net.Conn) { handled.Add(1) })
+	socketPath, err := h.Endpoint().SocketPath(id)
+	require.NoError(t, err)
+
+	refused, err := net.Dial("unix", socketPath)
+	require.NoError(t, err)
+	defer func() { _ = refused.Close() }()
+	require.NoError(t, refused.(*net.UnixConn).CloseWrite())
+	require.NoError(t, refused.SetReadDeadline(time.Now().Add(SharedServerDeadline)))
+	received, err := io.ReadAll(refused)
+	require.NoError(t, err, "a connection without a hello must be closed at once, not held until cleanup")
+	assert.Empty(t, received)
+	assert.Zero(t, handled.Load(), "a connection that sent no hello must not reach the handler")
+
+	accepted, err := net.Dial("unix", socketPath)
+	require.NoError(t, err)
+	defer func() { _ = accepted.Close() }()
+	require.NoError(t, SendHello(accepted))
+	require.Eventually(t, func() bool { return handled.Load() == 1 }, SharedServerDeadline, 10*time.Millisecond)
 }

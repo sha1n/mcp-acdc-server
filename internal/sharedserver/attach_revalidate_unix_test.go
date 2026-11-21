@@ -22,6 +22,7 @@ func dialAttachRevalidateSocket(t *testing.T, socketPath string, done <-chan err
 		conn, err := net.Dial("unix", socketPath)
 		if err == nil {
 			t.Cleanup(func() { _ = conn.Close() })
+			sendTestHello(t, conn)
 			return conn
 		}
 		select {
