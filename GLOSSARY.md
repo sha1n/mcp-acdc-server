@@ -31,7 +31,7 @@ A session currently connected to a shared server.
 _Avoid_: Client, connection, active session
 
 **Linger**:
-The time a shared server stays up with no attached sessions and no viewers before it shuts down.
+The time a shared server stays up with no attached sessions, no viewers and no pending `browse` before it shuts down. A pending `browse` holds off the linger like a session, and its release restarts the linger, so the page it opened has a whole linger to send its first heartbeat.
 _Avoid_: Idle timeout, grace period, keep-alive
 
 **Recovery**:
