@@ -2,10 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, main ]
     tags: [ 'v*' ]
   pull_request:
-    branches: [ master ]
+    branches: [ master, main ]
   schedule:
     - cron: '16 6 * * 2'
 
@@ -60,7 +60,7 @@ jobs:
               - '.github/workflows/ci.yml'
 
   # Only pull requests may skip on the path filter: pushes keep a coverage
-  # baseline on every master commit, and a scheduled run has no diff to filter.
+  # baseline on every default-branch commit, and a scheduled run has no diff to filter.
   test:
     needs: changes
     if: needs.changes.outputs.src == 'true' || github.event_name != 'pull_request'
@@ -154,8 +154,8 @@ jobs:
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     env:
-      # Pull requests keep their build cache in a scope master never writes, and
-      # every build reads one scope only. A pull request can read master's cache
+      # Pull requests keep their build cache in a scope the default branch never writes, and
+      # every build reads one scope only. A pull request can read the default branch's cache
       # as well as its own, and BuildKit misses layers when it imports both.
       BUILD_CACHE_SCOPE: ${{ github.event_name == 'pull_request' && 'buildkit-pr' || 'buildkit' }}
     steps:
@@ -261,7 +261,7 @@ jobs:
     needs: changes
     if: |
       github.event_name == 'push' &&
-      github.ref == 'refs/heads/master' &&
+      (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') &&
       needs.changes.outputs.dockerhub_description == 'true'
     permissions:
       contents: read
