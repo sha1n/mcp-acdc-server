@@ -55,7 +55,7 @@ acdc-mcp browse --content-dir ./content --no-open
 
 ### Without a shared server
 
-When the effective server mode is `session` (`--server-mode session`, or any launch on Windows), there is no shared server to serve the UI, so `browse` serves it itself in the foreground. It builds the index, serves the UI on `127.0.0.1` on an ephemeral port, prints the URL on stdout and opens the browser on it unless `--no-open` is set, as above (on Windows it only prints the URL). It then runs until it gets `SIGINT` (Ctrl+C) or `SIGTERM`, and exits `0`; the URL stops working when it exits. The listener, `ui.max_results` and ignored settings are as above. It starts no shared server and writes no endpoint files, and pages open on it are not tied to any MCP session.
+When the effective server mode is `session` (`--server-mode session`, or any launch on Windows), there is no shared server to serve the UI, so `browse` serves it itself in the foreground. It builds the index, serves the UI on `127.0.0.1` on an ephemeral port, prints the URL on stdout and opens the browser on it unless `--no-open` is set, as above (on Windows it only prints the URL). It then runs until it gets `SIGINT` (Ctrl+C) or `SIGTERM`, and exits `0`; a second `SIGINT` or `SIGTERM` during that exit ends it at once with exit code `130` or `143` respectively (see [Lifecycle](configuration.md#lifecycle)). The URL stops working when it exits. The listener, `ui.max_results` and ignored settings are as above. It starts no shared server and writes no endpoint files, and pages open on it are not tied to any MCP session.
 
 ```bash
 acdc-mcp browse --content-dir ./content --server-mode session
