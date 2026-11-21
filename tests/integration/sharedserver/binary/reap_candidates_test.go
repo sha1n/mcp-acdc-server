@@ -13,16 +13,17 @@ import (
 	"time"
 
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
+	"github.com/sha1n/mcp-acdc-server/internal/testutil/slogtext"
 	"github.com/sha1n/mcp-acdc-server/tests/integration/testkit"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // Every candidate loses the held lock and exits 0, as an extra candidate of a
 // slow cold start does. The binary is replaced by a wrapper that records each
 // later candidate's pid and parent and execs the real binary in place, so the
-// candidate stays the proxy's child. The proxy hashes its executable once,
-// racing the replacement, so the locks of both possible identities are held.
+// candidate stays the proxy's child. The binary is replaced only once the
+// proxy runs; see ReplaceBinary. The proxy hashes its executable once, racing
+// the replacement, so the locks of both possible identities are held.
 func TestSessionProxy_ReapsLosingCandidates(t *testing.T) {
 	deadline := time.Now().Add(binaryTestBudget)
 	env := testkit.NewBinaryEnv(t, acdcBinary)
@@ -36,24 +37,41 @@ func TestSessionProxy_ReapsLosingCandidates(t *testing.T) {
 	}
 
 	launch := env.Start(t, args...)
+	reportReapDiagnosticsOnFailure(t, env, launch, spawnsFile)
+	_, err := launch.AwaitStderrRecord(slogtext.Record{"msg": "Starting MCP Acdc server"}, deadline)
+	require.NoError(t, err)
 	env.ReplaceBinary(t, wrapper)
 
 	var spawns []recordedSpawn
-	spawned := assert.Eventually(t, func() bool {
+	spawned := pollUntil(deadline, 20*time.Millisecond, func() bool {
 		spawns = readRecordedSpawns(t, spawnsFile)
 		return len(spawns) >= 2
-	}, time.Until(deadline), 20*time.Millisecond)
-	require.True(t, spawned, "the proxy did not keep spawning candidates; stderr:\n%s", launch.Stderr())
+	})
+	require.True(t, spawned, "the proxy did not keep spawning candidates")
 	proxy := spawns[0].parent
-	require.Eventually(t, func() bool { return allExited(t, spawns[:2]) }, time.Until(deadline), 20*time.Millisecond,
-		"the recorded candidates %v never lost the held lock and exited", spawns[:2])
+	exited := pollUntil(deadline, 20*time.Millisecond, func() bool { return allExited(t, spawns[:2]) })
+	require.True(t, exited, "the recorded candidates %v never lost the held lock and exited", spawns[:2])
 
 	var zombies []string
-	assert.Eventually(t, func() bool {
+	pollUntil(deadline, 50*time.Millisecond, func() bool {
 		zombies = zombieChildren(t, proxy)
 		return len(zombies) == 0
-	}, 5*time.Second, 50*time.Millisecond, "losing candidates remain zombie children of the live session proxy %d", proxy)
-	require.Empty(t, zombies, "zombie children (pid ppid stat) of the session proxy %d", proxy)
+	})
+	require.Empty(t, zombies, "zombie children (pid ppid stat) of the live session proxy %d", proxy)
+}
+
+// pollUntil evaluates done on the test goroutine, unlike assert.Eventually,
+// so a condition that is slow under load still counts and may call require.
+func pollUntil(deadline time.Time, interval time.Duration, done func() bool) bool {
+	for {
+		if done() {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(interval)
+	}
 }
 
 type recordedSpawn struct{ pid, parent int }
@@ -80,6 +98,10 @@ func readRecordedSpawns(t *testing.T, spawnsFile string) []recordedSpawn {
 		return nil
 	}
 	require.NoError(t, err)
+	return parseSpawns(data)
+}
+
+func parseSpawns(data []byte) []recordedSpawn {
 	var spawns []recordedSpawn
 	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
 		var s recordedSpawn

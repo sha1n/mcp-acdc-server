@@ -72,6 +72,11 @@ func (e *BinaryEnv) UseBinaryCopy(t testing.TB) {
 // ReplaceBinary renames a copy of replacement over the environment's binary,
 // as an upgrade on disk does: running processes keep the old file, and a
 // later exec of the path runs the replacement.
+//
+// Call it only once every launch of the path has logged: macOS assesses an
+// exec by path while the process waits before its first instruction, and a
+// replacement during that assessment can crash syspolicyd, which leaves every
+// exec pending on it system-wide waiting indefinitely (#251).
 func (e *BinaryEnv) ReplaceBinary(t testing.TB, replacement string) {
 	t.Helper()
 	staged := e.Binary + ".new"
