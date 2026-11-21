@@ -145,7 +145,7 @@ func attachWithoutLingerLoss(t *testing.T, attempt func(h *testkit.SharedServerH
 // or as a second build. Anything else fails the test.
 func lostToTheInitialLinger(t *testing.T, h *testkit.SharedServerHarness, l *testkit.LaunchUnderTest, deadline time.Time) bool {
 	t.Helper()
-	if h.Builds() == 1 && len(l.FallbackWarnings()) == 0 && len(builtExits(h)) == 0 {
+	if h.Builds() == 1 && len(l.FallbackWarnings()) == 0 && len(h.BuiltExits()) == 0 {
 		return false
 	}
 	id := l.SharedServerIdentity()

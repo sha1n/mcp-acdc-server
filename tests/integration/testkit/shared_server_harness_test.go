@@ -34,6 +34,26 @@ func TestSharedServerHarness_CleanupAwaitsItsCandidatesAndRefusesLaterSpawns(t *
 	assert.Empty(t, tb.errors())
 }
 
+// A session proxy spawns a candidate on every failed dial, so a launch may add
+// candidates that lose the lock to the one that builds (#248).
+func TestSharedServerHarness_BuiltExitsLeaveOutCandidatesThatLostTheLock(t *testing.T) {
+	h := NewSharedServerHarness(t)
+	args := SharedLaunchArgs(CreateTestContentDir(t, nil))
+	id := h.Identity(args)
+	spawn := h.SpawnSharedServer(args)
+	release := h.HoldLock(id)
+	require.NoError(t, spawn(id))
+	h.Eventually(func() bool { return len(h.SharedServerExits()) == 1 }, "the candidate that lost the lock does not exit")
+	assert.Empty(t, h.BuiltExits())
+	release()
+
+	require.NoError(t, spawn(id))
+
+	h.Eventually(func() bool { return len(h.BuiltExits()) == 1 }, "the built candidate does not linger out")
+	assert.Equal(t, []SharedServerExit{{Built: true, Err: nil}}, h.BuiltExits())
+	assert.Equal(t, []SharedServerExit{{Built: false, Err: nil}, {Built: true, Err: nil}}, h.SharedServerExits())
+}
+
 // deferredCleanupTB runs the cleanups registered on it only when the test
 // asks, and records reported errors instead of failing the test.
 type deferredCleanupTB struct {
