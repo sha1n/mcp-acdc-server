@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -26,7 +25,6 @@ type RunnerFunc func(ctx context.Context, params app.RunParams, flags *pflag.Fla
 type acdcService struct {
 	name         string
 	flags        *pflag.FlagSet
-	srv          atomic.Pointer[http.Server]
 	errChan      chan error
 	StopDelay    time.Duration
 	StartTimeout time.Duration
@@ -56,6 +54,10 @@ type acdcService struct {
 	ctxCancel    context.CancelFunc
 }
 
+// shutdownOverhead covers force-closing connections and cleanup after the app
+// has waited out its full shutdown grace.
+const shutdownOverhead = 5 * time.Second
+
 func NewACDCService(name string, flags *pflag.FlagSet) Service {
 	return &acdcService{
 		name:         name,
@@ -64,7 +66,7 @@ func NewACDCService(name string, flags *pflag.FlagSet) Service {
 		watcherDone:  make(chan struct{}),
 		abandon:      make(chan struct{}),
 		startDone:    make(chan struct{}),
-		StopDelay:    5 * time.Second,
+		StopDelay:    app.DefaultShutdownGrace + shutdownOverhead,
 		StartTimeout: 10 * time.Second,
 		runner:       app.RunWithDeps,
 	}
@@ -93,20 +95,13 @@ func (s *acdcService) Start() (props map[string]any, err error) {
 			Writer: s.stdoutWriter,
 		}
 	} else {
-		params.StartSSEServer = func(logger *slog.Logger, mcpSrv *mcp.Server, settings *config.Settings, opts ...app.SSEOption) error {
+		params.StartSSEServer = func(ctx context.Context, logger *slog.Logger, mcpSrv *mcp.Server, settings *config.Settings, opts ...app.SSEOption) error {
 			srv, err := app.NewSSEServer(logger, mcpSrv, settings, opts...)
 			if err != nil {
 				return err
 			}
 			srv.Handler = withReadinessMarker(srv.Handler, readinessMarker)
-			s.srv.Store(srv)
-			// The app does not watch ctx on this transport. Stop cancels ctx before
-			// it loads srv, so either it shuts this server down or this check sees
-			// the cancellation; a server published late cannot outlive Stop.
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return srv.ListenAndServe()
+			return app.ServeSSEServer(ctx, logger, srv, opts...)
 		}
 	}
 
@@ -238,10 +233,14 @@ func (s *acdcService) stop() error {
 	started := s.started
 	s.mu.Unlock()
 
+	// A pooled client connection the server has not yet read a request from counts
+	// as busy for its first five seconds (golang/go#22682), which would hold the
+	// app's graceful shutdown for its whole grace. Tests reach the server through
+	// the default transport, so its pool is emptied before the server is stopped.
+	http.DefaultClient.CloseIdleConnections()
 	if s.ctxCancel != nil {
 		s.ctxCancel()
 	}
-	shutdownErr := s.shutdownHTTPServer()
 	if s.stdinWriter != nil {
 		_ = s.stdinWriter.Close()
 	}
@@ -251,14 +250,14 @@ func (s *acdcService) stop() error {
 	runnerErr := s.awaitRunner()
 
 	if !started {
-		return errors.Join(shutdownErr, runnerErr)
+		return runnerErr
 	}
 	// Start settles promptly once the runner has reported or been abandoned.
 	<-s.startDone
 	if s.startErr == nil {
-		return errors.Join(shutdownErr, runnerErr)
+		return runnerErr
 	}
-	return joinStartupFailure(s.startErr, shutdownErr, runnerErr)
+	return joinStartupFailure(s.startErr, runnerErr)
 }
 
 // joinStartupFailure leaves out results the startup error already carries, such as
@@ -271,29 +270,6 @@ func joinStartupFailure(startErr error, errs ...error) error {
 		}
 	}
 	return errors.Join(joined...)
-}
-
-func (s *acdcService) shutdownHTTPServer() error {
-	srv := s.srv.Load()
-	if srv == nil {
-		return nil
-	}
-
-	// A pooled client connection the server has not yet read a request from counts
-	// as busy for its first five seconds (golang/go#22682), which would hold the
-	// graceful shutdown for the whole StopDelay. Tests reach the server through the
-	// default transport, so its pool is emptied before the server is asked to stop.
-	http.DefaultClient.CloseIdleConnections()
-
-	ctx, cancel := context.WithTimeout(context.Background(), s.StopDelay)
-	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		// Shutdown only stops accepting; without this the connections it gave up
-		// on, and the goroutines serving them, would outlive the test.
-		_ = srv.Close()
-		return fmt.Errorf("graceful shutdown of %s failed, connections were closed forcibly: %w", s.name, err)
-	}
-	return nil
 }
 
 func (s *acdcService) awaitRunner() error {

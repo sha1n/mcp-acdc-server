@@ -44,6 +44,9 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && (os.Args[1] == "--"+sharedServerIdentityFlag || os.Args[1] == detachedTestChildArg) {
 		os.Exit(runAsSpawnedChild())
 	}
+	if len(os.Args) > 1 && os.Args[1] == shutdownSignalsTestChildArg {
+		os.Exit(runShutdownSignalsChild(os.Args[2:]))
+	}
 	os.Exit(m.Run())
 }
 

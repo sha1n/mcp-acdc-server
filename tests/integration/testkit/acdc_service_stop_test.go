@@ -1,11 +1,14 @@
 package testkit
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -19,9 +22,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestACDCService_StopReleasesTheServerWhenGracefulShutdownTimesOut(t *testing.T) {
+func TestACDCService_StopEndsAnOpenStream(t *testing.T) {
 	flags := NewTestFlags(t, CreateTestContentDir(t, nil), nil)
-	service := NewACDCService("stop-shutdown-timeout", flags)
+	service := NewACDCService("stop-open-stream", flags)
 	acdc := service.(*acdcService)
 	acdc.StopDelay = 200 * time.Millisecond
 
@@ -36,8 +39,8 @@ func TestACDCService_StopReleasesTheServerWhenGracefulShutdownTimesOut(t *testin
 	props, err := service.Start()
 	require.NoError(t, err)
 
-	// An event stream stays in flight for as long as its client holds it, so the
-	// graceful shutdown cannot complete while this connection is open.
+	// An event stream stays in flight for as long as its client holds it, so only
+	// the app's shutdown ending it lets Stop finish within the StopDelay.
 	stream, err := net.Dial("tcp", strings.TrimPrefix(props["acdc.baseURL"].(string), "http://"))
 	require.NoError(t, err)
 	defer func() { _ = stream.Close() }()
@@ -46,21 +49,19 @@ func TestACDCService_StopReleasesTheServerWhenGracefulShutdownTimesOut(t *testin
 	_, err = stream.Read(make([]byte, 1))
 	require.NoError(t, err, "the server must be serving the stream before it is stopped")
 
-	stopErr := service.Stop()
-
-	require.ErrorIs(t, stopErr, context.DeadlineExceeded)
+	require.NoError(t, service.Stop())
 
 	select {
 	case <-runnerReturned:
 	case <-time.After(2 * time.Second):
 		t.Fatal("the server run did not return after Stop")
 	}
-	require.Error(t, serverCtx.Err(), "Stop must cancel the server context even when the graceful shutdown fails")
+	require.Error(t, serverCtx.Err(), "Stop must cancel the server context")
 
 	require.NoError(t, stream.SetReadDeadline(time.Now().Add(2*time.Second)))
 	_, readErr := readUntilError(stream)
 	require.False(t, errors.Is(readErr, os.ErrDeadlineExceeded),
-		"Stop must close the connections the graceful shutdown left open, got %v", readErr)
+		"Stop must end the open stream, got %v", readErr)
 }
 
 func TestACDCService_StopAfterAFailedStartReturnsTheStartupErrorPromptly(t *testing.T) {
@@ -349,9 +350,8 @@ func TestACDCService_StopsShareOneShutdownResultWhileAStreamIsOpen(t *testing.T)
 			errs := c.stops(t, service)
 
 			for i, err := range errs {
-				require.ErrorIs(t, err, context.DeadlineExceeded, "Stop #%d", i+1)
+				require.NoError(t, err, "Stop #%d", i+1)
 			}
-			require.Same(t, errs[0], errs[1])
 		})
 	}
 }
@@ -429,10 +429,10 @@ func TestACDCService_ServerPublishedAfterStopIsNeverServed(t *testing.T) {
 	hookReturned := make(chan error, 1)
 	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, binary identity.Binary) error {
 		startSSEServer := params.StartSSEServer
-		params.StartSSEServer = func(logger *slog.Logger, mcpSrv *mcp.Server, settings *config.Settings, opts ...app.SSEOption) error {
+		params.StartSSEServer = func(sseCtx context.Context, logger *slog.Logger, mcpSrv *mcp.Server, settings *config.Settings, opts ...app.SSEOption) error {
 			close(hookEntered)
 			<-releaseHook
-			err := startSSEServer(logger, mcpSrv, settings, opts...)
+			err := startSSEServer(sseCtx, logger, mcpSrv, settings, opts...)
 			hookReturned <- err
 			return err
 		}
@@ -446,18 +446,17 @@ func TestACDCService_ServerPublishedAfterStopIsNeverServed(t *testing.T) {
 	}()
 	<-hookEntered
 
-	// Stop has returned, so it has already looked for a server and found none.
+	// Stop has returned, so the run context is cancelled before the server starts.
 	stopErr := stopWithin(t, service, 2*time.Second)
 	require.Error(t, stopErr)
 	close(releaseHook)
 
 	select {
 	case err := <-hookReturned:
-		require.ErrorIs(t, err, context.Canceled)
+		require.NoError(t, err)
 	case <-time.After(2 * time.Second):
-		t.Fatal("a server published after Stop is serving")
+		t.Fatal("a server started after Stop is serving")
 	}
-	require.NotNil(t, acdc.srv.Load(), "the hook must have published its server")
 	port, _ := flags.GetInt("port")
 	conn, dialErr := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
 	if dialErr == nil {
@@ -466,4 +465,97 @@ func TestACDCService_ServerPublishedAfterStopIsNeverServed(t *testing.T) {
 	require.Error(t, dialErr, "nothing may listen after Stop")
 	require.EqualError(t, <-started, stopErr.Error())
 	require.Same(t, stopErr, stopWithin(t, service, 2*time.Second))
+}
+
+// The app gives an in-flight handler its whole shutdown grace before
+// force-closing it, so Stop's default wait must outlast the grace plus the
+// force-close and cleanup that follow it.
+func TestACDCService_StopReturnsNilWhenAnInFlightRequestHoldsTheShutdownForTheGrace(t *testing.T) {
+	service := NewACDCService("stop-in-flight-request", NewTestFlags(t, CreateTestContentDir(t, nil), nil))
+	props, err := service.Start()
+	require.NoError(t, err)
+	openInFlightRequest(t, props["acdc.baseURL"].(string))
+
+	require.NoError(t, stopWithin(t, service, 30*time.Second))
+}
+
+func TestACDCService_ConcurrentStopsWhileAStreamIsOpenShareTheRunnerFailure(t *testing.T) {
+	runnerErr := errors.New("runner failed")
+	service := NewACDCService("concurrent-stops-runner-failure", NewTestFlags(t, CreateTestContentDir(t, nil), nil))
+	acdc := service.(*acdcService)
+	acdc.StopDelay = time.Minute
+	acdc.runner = func(ctx context.Context, params app.RunParams, flags *pflag.FlagSet, binary identity.Binary) error {
+		return errors.Join(runnerErr, app.RunWithDeps(ctx, params, flags, binary))
+	}
+	props, err := service.Start()
+	require.NoError(t, err)
+	stream := openEventStream(t, props["acdc.baseURL"].(string))
+	defer func() { _ = stream.Close() }()
+
+	const stoppers = 2
+	entered := make(chan struct{}, stoppers)
+	results := make(chan error, stoppers)
+	for range stoppers {
+		go func() {
+			entered <- struct{}{}
+			results <- service.Stop()
+		}()
+	}
+	for range stoppers {
+		<-entered
+	}
+
+	var errs [stoppers]error
+	for i := range errs {
+		select {
+		case errs[i] = <-results:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("Stop #%d did not return", i+1)
+		}
+		require.ErrorIs(t, errs[i], runnerErr, "Stop #%d", i+1)
+	}
+	require.Same(t, errs[0], errs[1], "concurrent Stops must share one result")
+}
+
+// openInFlightRequest holds a real handler open until the server force-closes
+// its connection. It posts to an /sse session endpoint with
+// "Expect: 100-continue" and never sends the body: the server answers
+// 100 Continue only once the handler reads the body, so reading that answer
+// proves the handler is running, blocked in a read that ignores cancellation.
+func openInFlightRequest(t *testing.T, baseURL string) {
+	t.Helper()
+	addr := strings.TrimPrefix(baseURL, "http://")
+	endpoint := openSessionEndpoint(t, addr)
+	conn, err := net.Dial("tcp", addr)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	_, err = io.WriteString(conn, "POST "+endpoint+" HTTP/1.1\r\nHost: "+addr+
+		"\r\nContent-Type: application/json\r\nContent-Length: 2\r\nExpect: 100-continue\r\n\r\n")
+	require.NoError(t, err)
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+	status, err := bufio.NewReader(conn).ReadString('\n')
+	require.NoError(t, err, "the handler never read the request body")
+	require.True(t, strings.HasPrefix(status, "HTTP/1.1 100 "), "got %q, want 100 Continue", status)
+}
+
+// openSessionEndpoint opens an /sse stream for the rest of the test and
+// returns the request URI of its session's message endpoint.
+func openSessionEndpoint(t *testing.T, addr string) string {
+	t.Helper()
+	stream, err := net.Dial("tcp", addr)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = stream.Close() })
+	_, err = io.WriteString(stream, "GET /sse HTTP/1.1\r\nHost: "+addr+"\r\nAccept: text/event-stream\r\n\r\n")
+	require.NoError(t, err)
+	require.NoError(t, stream.SetReadDeadline(time.Now().Add(5*time.Second)))
+	reader := bufio.NewReader(stream)
+	for {
+		line, err := reader.ReadString('\n')
+		require.NoError(t, err, "the /sse stream ended before the endpoint data")
+		if data, ok := strings.CutPrefix(strings.TrimSpace(line), "data:"); ok {
+			endpoint, err := url.Parse(strings.TrimSpace(data))
+			require.NoError(t, err)
+			return endpoint.RequestURI()
+		}
+	}
 }
