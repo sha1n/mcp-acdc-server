@@ -29,7 +29,10 @@ type sessionLinger struct {
 	linger   time.Duration
 	onExpire func()
 	sessions int
-	timer    lingerTimer
+	// holds counts pending requests, such as a browse, that are not
+	// sessions: they defer a shutdown but never touch the timer.
+	holds int
+	timer lingerTimer
 	// generation identifies the armed timer, so a callback that fires after
 	// Stop lost the race to it is ignored.
 	generation uint64
@@ -63,6 +66,30 @@ func (l *sessionLinger) attach() bool {
 	return true
 }
 
+// hold defers the shutdown of an expired linger until release, without
+// resetting or extending a running linger. It reports false, like attach,
+// once the linger has shut the shared server down or stopped.
+func (l *sessionLinger) hold() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.shutDown || l.stopped {
+		return false
+	}
+	l.holds++
+	return true
+}
+
+// release ends a hold. The last release after an expiry reports the expiry
+// again, since the shutdown it deferred is still due.
+func (l *sessionLinger) release() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.holds--
+	if l.holds == 0 && l.expired && l.sessions == 0 && !l.stopped {
+		l.onExpire()
+	}
+}
+
 func (l *sessionLinger) detach() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -73,11 +100,12 @@ func (l *sessionLinger) detach() {
 }
 
 // shutdownIfExpired runs shutdown under the session-count lock when the
-// linger has expired with no session attached, and reports whether it ran.
+// linger has expired with no session attached and no hold pending, and
+// reports whether it ran.
 func (l *sessionLinger) shutdownIfExpired(shutdown func()) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if !l.expired || l.sessions != 0 {
+	if !l.expired || l.sessions != 0 || l.holds != 0 {
 		return false
 	}
 	shutdown()

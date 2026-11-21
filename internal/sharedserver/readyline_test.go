@@ -70,3 +70,64 @@ func TestNewSessionID_IsEightLowercaseHex(t *testing.T) {
 
 	assert.Greater(t, len(seen), 1, "session identifiers must be random")
 }
+
+func TestEncodeBrowseReadyLine_CarriesUIURLWithoutSession(t *testing.T) {
+	line, err := EncodeBrowseReadyLine("http://127.0.0.1:4321/ui/", "/tmp/x.log")
+	require.NoError(t, err)
+
+	assert.Equal(t, `{"ready":true,"log":"/tmp/x.log","ui_url":"http://127.0.0.1:4321/ui/"}`+"\n", string(line))
+}
+
+func TestEncodeBrowseErrorLine_CarriesErrorAndIsNotReady(t *testing.T) {
+	line, err := EncodeBrowseErrorLine("failed to start the web UI: boom", "/tmp/x.log")
+	require.NoError(t, err)
+
+	assert.Equal(t, `{"ready":false,"log":"/tmp/x.log","error":"failed to start the web UI: boom"}`+"\n", string(line))
+}
+
+func TestDecodeBrowseReadyLine_ReturnsUIURL(t *testing.T) {
+	line, err := EncodeBrowseReadyLine("http://127.0.0.1:4321/ui/", "/tmp/x.log")
+	require.NoError(t, err)
+
+	ready, err := DecodeBrowseReadyLine(line)
+	require.NoError(t, err)
+
+	assert.Equal(t, ReadyLine{Ready: true, Log: "/tmp/x.log", UIURL: "http://127.0.0.1:4321/ui/"}, ready)
+}
+
+func TestDecodeBrowseReadyLine_ReturnsTheReportedErrorWithTheLog(t *testing.T) {
+	line, err := EncodeBrowseErrorLine("failed to start the web UI: boom", "/tmp/x.log")
+	require.NoError(t, err)
+
+	ready, err := DecodeBrowseReadyLine(line)
+
+	require.Error(t, err)
+	assert.Equal(t, "failed to start the web UI: boom", err.Error())
+	assert.Equal(t, "/tmp/x.log", ready.Log)
+}
+
+func TestDecodeBrowseReadyLine_RejectsInvalidLines(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+	}{
+		{name: "not JSON", line: "hello\n"},
+		{name: "session ready line", line: `{"ready":true,"session":"0a1b2c3d","log":""}` + "\n"},
+		{name: "not ready without error", line: `{"ready":false,"log":""}` + "\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := DecodeBrowseReadyLine([]byte(tt.line))
+			assert.Error(t, err)
+		})
+	}
+}
+
+func TestDecodeReadyLine_RejectsBrowseReadyLine(t *testing.T) {
+	line, err := EncodeBrowseReadyLine("http://127.0.0.1:4321/ui/", "")
+	require.NoError(t, err)
+
+	_, err = DecodeReadyLine(line)
+	assert.Error(t, err)
+}

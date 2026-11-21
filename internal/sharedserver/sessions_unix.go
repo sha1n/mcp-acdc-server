@@ -69,6 +69,7 @@ type sessionAcceptor struct {
 	server      *mcp.Server
 	revalidate  func(context.Context)
 	logPath     string
+	ui          *webUI
 	// helloTimeout is read by every connection, so a test sets it before
 	// start.
 	helloTimeout time.Duration
@@ -94,6 +95,7 @@ func newSessionAcceptor(ctx context.Context, logger *slog.Logger, listener *net.
 		wake:     &acceptWake{listener: listener},
 		built:    make(chan struct{}),
 		stopped:  make(chan struct{}),
+		ui:       newWebUI(logger),
 
 		helloTimeout: HelloTimeout,
 	}
@@ -119,6 +121,7 @@ func (a *sessionAcceptor) run() {
 	a.linger.stop()
 	a.endSessions()
 	a.sessions.Wait()
+	a.ui.close()
 	close(a.stopped)
 }
 
@@ -127,6 +130,13 @@ func (a *sessionAcceptor) run() {
 // for the first instead; until then a dial can still reach the socket.
 func (a *sessionAcceptor) closeListener() {
 	a.closeOnce.Do(func() { _ = a.listener.Close() })
+}
+
+// setUI supplies the Web UI handler and, if not nil, how the Web UI binds;
+// it must be called before serve.
+func (a *sessionAcceptor) setUI(handler UIHandlerFunc, listen func() (net.Listener, error)) {
+	a.ui.setHandler(handler)
+	a.ui.setListen(listen)
 }
 
 func (a *sessionAcceptor) buildContext() context.Context {
@@ -201,10 +211,15 @@ func (a *sessionAcceptor) closeAndUnlink() {
 // handle reads the hello before anything else, against a deadline measured
 // from accept, so neither a slow build nor a pending hello can hold the
 // connection open past the hello timeout. Only a connection with a valid
-// hello attaches a session and so counts against the linger.
+// session hello attaches a session and so counts against the linger.
 func (a *sessionAcceptor) handle(conn *net.UnixConn, accepted time.Time) {
-	if !a.awaitHello(conn, accepted.Add(a.helloTimeout)) {
+	hello, ok := a.awaitHello(conn, accepted.Add(a.helloTimeout))
+	if !ok {
 		_ = conn.Close()
+		return
+	}
+	if hello.Kind == HelloBrowse {
+		a.browse(conn, hello.UIMaxResults)
 		return
 	}
 	if !a.linger.attach() {
@@ -230,20 +245,20 @@ func (a *sessionAcceptor) handle(conn *net.UnixConn, accepted time.Time) {
 // by deadline is refused; one cut short by shutdown is dropped silently. The
 // hello deadline is set before the shutdown interrupt is installed, so it can
 // never replace the immediate deadline the interrupt sets.
-func (a *sessionAcceptor) awaitHello(conn *net.UnixConn, deadline time.Time) bool {
+func (a *sessionAcceptor) awaitHello(conn *net.UnixConn, deadline time.Time) (HelloLine, bool) {
 	_ = conn.SetReadDeadline(deadline)
 	stopOnCancel := context.AfterFunc(a.sessionCtx, func() { _ = conn.SetReadDeadline(time.Now()) })
-	_, err := ReadHelloLine(conn)
+	hello, err := ReadHelloLine(conn)
 	interrupted := !stopOnCancel()
 	if interrupted || a.sessionCtx.Err() != nil {
-		return false
+		return HelloLine{}, false
 	}
 	if err != nil {
 		a.logger.Warn("Refused shared server connection without a valid hello line", "error", err)
-		return false
+		return HelloLine{}, false
 	}
 	_ = conn.SetReadDeadline(time.Time{})
-	return true
+	return hello, true
 }
 
 // admit is the one admission decision, made after revalidation and just
