@@ -28,7 +28,7 @@ The server reads Markdown from a content root, splits each document into heading
 
 **Prompts.** Markdown files under `.acdc/prompts/` are exposed as MCP prompt templates with typed arguments. See [Authoring Prompts](docs/authoring-resources.md#authoring-prompts).
 
-**Web UI (optional).** With `--ui-enabled`, the SSE server also serves a read-only browser interface at `/ui/` for searching the same index, filtering by label, and reading rendered documents. It is off by default. For stdio launches, `acdc-mcp browse` prints the URL of a UI served by their shared server and opens the browser on it. See [Web UI](docs/web-ui.md).
+**Web UI (optional).** With `--ui-enabled`, the SSE server also serves a read-only browser interface at `/ui/` for searching the same index, filtering by label, and reading rendered documents. It is off by default. For stdio launches, `acdc-mcp browse` prints the URL of a UI served by their shared server, or by `browse` itself in the foreground under the `session` server mode, and opens the browser on it. See [Web UI](docs/web-ui.md).
 
 ## Effect on agent work
 
@@ -81,7 +81,7 @@ docker run -p 8080:8080 \
 acdc-mcp --transport sse --ui-enabled --content-dir ./content
 ```
 
-**Web UI for stdio launches.** On macOS and Linux, `acdc-mcp browse` with the same settings as your MCP launch prints the URL of a UI served by that launch's [shared server](#server-mode), on `127.0.0.1` with no authentication, and opens the browser on it. Add `--no-open` to only print the URL, for scripts and SSH sessions. An open page keeps the shared server alive; once no page is open and no MCP session is attached, the shared server exits after its linger, taking the UI with it:
+**Web UI for stdio launches.** On macOS and Linux, `acdc-mcp browse` with the same settings as your MCP launch prints the URL of a UI served by that launch's [shared server](#server-mode), on `127.0.0.1` with no authentication, and opens the browser on it. Add `--no-open` to only print the URL, for scripts and SSH sessions. An open page keeps the shared server alive; once no page is open and no MCP session is attached, the shared server exits after its linger, taking the UI with it. Under `--server-mode session` and on Windows, `browse` builds the index and serves the UI itself on `127.0.0.1` until you press Ctrl+C. On Windows, `browse` prints the URL and does not open a browser:
 ```bash
 acdc-mcp browse --content-dir ./content
 acdc-mcp browse --content-dir ./content --no-open
@@ -176,7 +176,7 @@ On macOS and Linux, stdio launches that share a server identity (same settings, 
 | `--shared-server-connect-wait` | `ACDC_MCP_SHARED_SERVER_CONNECT_WAIT` | `5s` |
 | `--shared-server-linger` | `ACDC_MCP_SHARED_SERVER_LINGER` | `30s` |
 
-`acdc-mcp browse`, with the same settings as a stdio launch, finds or starts the shared server for their server identity, starts its [web UI](docs/web-ui.md#acdc-mcp-browse) on demand on `127.0.0.1`, prints the URL and opens the browser on it unless `--no-open` is set. The UI has no authentication, so other local users can read it.
+`acdc-mcp browse`, with the same settings as a stdio launch, finds or starts the shared server for their server identity, starts its [web UI](docs/web-ui.md#acdc-mcp-browse) on demand on `127.0.0.1`, prints the URL and opens the browser on it unless `--no-open` is set. Under the `session` server mode, and on Windows, it builds the index and serves the UI itself in the foreground until interrupted, with no shared server; on Windows it prints the URL and does not open a browser. The UI has no authentication, so other local users can read it.
 
 Opt out with `--server-mode session`. See [Server Mode](docs/configuration.md#server-mode) for the processes, files and logs it creates and its known limitations.
 

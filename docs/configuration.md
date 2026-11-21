@@ -174,7 +174,7 @@ change briefly holds two complete indexes at once.
 
 The `.env` keys are `ui.enabled` and `ui.max_results`. The UI shares the SSE server's host, port, and authentication. Under `--transport stdio`, `--ui-enabled` is ignored and the server logs a warning instead of failing. See [Web UI](web-ui.md) for routes, the API, and authentication behaviour.
 
-`acdc-mcp browse` takes the same settings as an MCP launch and prints the URL of a web UI served by the [shared server](#server-mode) for their [server identity](#server-identity), starting the shared server and its UI on demand, and opens the browser on that URL; `--no-open` only prints it. A browser that cannot be opened is a warning on stderr, not a failure. An open page is a viewer that keeps the shared server alive: with no session attached and no page open, the shared server exits once its [linger](#detached-shared-server-process) runs out. That UI listens on `127.0.0.1` on an ephemeral port with no authentication; `--ui-enabled`, `--host`, `--port` and `auth.*` are ignored, and the `ui.max_results` of the `browse` that started the UI applies for the life of its shared server. `browse` exits `1` under `--transport sse` or the `session` server mode. See [`acdc-mcp browse`](web-ui.md#acdc-mcp-browse).
+`acdc-mcp browse` takes the same settings as an MCP launch and prints the URL of a web UI served by the [shared server](#server-mode) for their [server identity](#server-identity), starting the shared server and its UI on demand, and opens the browser on that URL; `--no-open` only prints it. A browser that cannot be opened is a warning on stderr, not a failure. An open page is a viewer that keeps the shared server alive: with no session attached and no page open, the shared server exits once its [linger](#detached-shared-server-process) runs out. That UI listens on `127.0.0.1` on an ephemeral port with no authentication; `--ui-enabled`, `--host`, `--port` and `auth.*` are ignored, and the `ui.max_results` of the `browse` that started the UI applies for the life of its shared server. Under the `session` server mode, and on Windows, `browse` instead builds the index itself, serves the UI on `127.0.0.1` on an ephemeral port, prints the URL, opens the browser unless `--no-open` is set (on Windows it only prints the URL and logs a warning that the browser was not opened), and runs until `SIGINT` or `SIGTERM`, then exits `0`; it starts no shared server and writes no endpoint files, and exits `1` when the UI cannot bind or the index build fails. `browse` exits `1` under `--transport sse`. See [`acdc-mcp browse`](web-ui.md#acdc-mcp-browse).
 
 ## Server Mode
 
@@ -341,7 +341,7 @@ Every limitation below comes from sharing or proxying and is avoided by [opting 
 
 #### Web UI from `browse`
 
-- The UI that [`acdc-mcp browse`](web-ui.md#acdc-mcp-browse) starts has no authentication. Loopback is its only protection, so other local users can read the content through it while its shared server runs.
+- The UI that [`acdc-mcp browse`](web-ui.md#acdc-mcp-browse) starts has no authentication. Loopback is its only protection, so other local users can read the content through it while its shared server, or a foreground `browse`, runs.
 
 #### Also on a per-session server
 
