@@ -39,8 +39,13 @@ func RegisterFlags(flags *pflag.FlagSet) {
 const noOpenFlag = "no-open"
 
 // RegisterBrowseFlags registers the flags of the browse command: the
-// settings flags and --no-open.
+// settings flags and --no-open. The settings flags browse ignores are
+// hidden from its help.
 func RegisterBrowseFlags(flags *pflag.FlagSet) {
 	RegisterFlags(flags)
 	flags.Bool(noOpenFlag, false, "Print the Web UI URL without opening the browser (default: false)")
+	for _, name := range browseIgnoredFlags {
+		_ = flags.MarkHidden(name)
+	}
+	flags.Lookup("transport").Usage = "Transport type: browse supports only stdio, which overrides an sse transport set in the environment or config file (default: stdio)"
 }

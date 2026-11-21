@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime"
+	"slices"
 
 	"github.com/sha1n/mcp-acdc-server/internal/config"
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
@@ -13,18 +14,17 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// browseIgnoredFlags are accepted by browse and have no effect on it; a
-// shared server spawned by browse does not get them either.
-var browseIgnoredFlags = map[string]bool{
-	"host":                   true,
-	"port":                   true,
-	"ui-enabled":             true,
-	"auth-type":              true,
-	"auth-basic-username":    true,
-	"auth-basic-password":    true,
-	"auth-api-keys":          true,
-	sharedServerIdentityFlag: true,
-	noOpenFlag:               true,
+// browseIgnoredFlags are settings flags that browse accepts so that the
+// arguments of an MCP launch work for it too, but that have no effect on it.
+var browseIgnoredFlags = []string{
+	"host", "port", "ui-enabled",
+	"auth-type", "auth-basic-username", "auth-basic-password", "auth-api-keys",
+}
+
+// forwardedToSharedServer reports whether a shared server spawned by browse
+// gets the browse flag name.
+func forwardedToSharedServer(name string) bool {
+	return name != sharedServerIdentityFlag && name != noOpenFlag && !slices.Contains(browseIgnoredFlags, name)
 }
 
 // BrowseRunParams returns the production dependencies of browse: a shared
@@ -43,7 +43,7 @@ func BrowseRunParams(flags *pflag.FlagSet) RunParams {
 func BrowseSharedServerArgs(flags *pflag.FlagSet) []string {
 	var args []string
 	flags.Visit(func(f *pflag.Flag) {
-		if browseIgnoredFlags[f.Name] {
+		if !forwardedToSharedServer(f.Name) {
 			return
 		}
 		if slice, ok := f.Value.(pflag.SliceValue); ok {
