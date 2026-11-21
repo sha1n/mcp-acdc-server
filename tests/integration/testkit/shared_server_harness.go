@@ -52,6 +52,8 @@ type SharedServerHarness struct {
 	receiving []mcp.Middleware
 
 	candidates candidateSet
+	// uiBindFailures counts the Web UI binds still to fail.
+	uiBindFailures atomic.Int32
 
 	launchesMu sync.Mutex
 	launches   []*LaunchUnderTest
@@ -257,6 +259,7 @@ func (h *SharedServerHarness) sharedServerParams(built *atomic.Bool) app.RunPara
 	}
 	params.EndpointDir = h.endpointDir
 	params.LogDir = h.logDir
+	params.ListenWebUI = h.listenWebUI
 	// A re-exec'd shared server has the null device as its standard streams.
 	params.Stderr = io.Discard
 	params.Stdin = nil

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"runtime"
 
@@ -31,6 +32,9 @@ type RunParams struct {
 	SpawnSharedServer func(identity string) error
 	Stdin             io.Reader
 	Stdout            io.Writer
+	// ListenWebUI, if set, binds a shared server's Web UI instead of an
+	// ephemeral port on 127.0.0.1.
+	ListenWebUI func() (net.Listener, error)
 }
 
 // DefaultRunParams returns production dependencies
@@ -57,13 +61,16 @@ func RunWithDeps(ctx context.Context, params RunParams, flags *pflag.FlagSet, bi
 		return fmt.Errorf("failed to load settings: %w", err)
 	}
 
+	if serverIdentity, supplied := sharedServerIdentity(flags); supplied {
+		if err := params.ValidSettings(withoutAuth(settings)); err != nil {
+			return fmt.Errorf("invalid configuration: %w", err)
+		}
+		return runSharedServer(ctx, params, settings, serverIdentity, binary)
+	}
+
 	// Validate settings for conflicting configurations
 	if err := params.ValidSettings(settings); err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
-	}
-
-	if serverIdentity, supplied := sharedServerIdentity(flags); supplied {
-		return runSharedServer(ctx, params, settings, serverIdentity, binary)
 	}
 
 	if params.Stderr == nil {

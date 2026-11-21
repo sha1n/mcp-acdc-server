@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -42,6 +43,17 @@ func sharedServerIdentity(flags *pflag.FlagSet) (identity string, supplied bool)
 	return flag.Value.String(), true
 }
 
+// withoutAuth returns a copy of settings without authentication. A shared
+// server serves stdio sessions and a loopback Web UI only, so authentication
+// never applies to it, and settings it inherits from the environment or the
+// config file of its spawner, such as browse, which ignores them, must not
+// stop it.
+func withoutAuth(settings *config.Settings) *config.Settings {
+	checked := *settings
+	checked.Auth = config.AuthSettings{Type: config.AuthTypeNone}
+	return &checked
+}
+
 func runSharedServer(ctx context.Context, params RunParams, settings *config.Settings, serverIdentity string, binary identity.Binary) error {
 	if !endpoint.ValidIdentity(serverIdentity) {
 		return fmt.Errorf("invalid shared server identity %q", serverIdentity)
@@ -63,7 +75,7 @@ func runSharedServer(ctx context.Context, params RunParams, settings *config.Set
 	// disposition.
 	context.AfterFunc(ctx, stop)
 
-	var revalidate func(context.Context)
+	built := &sharedServerComponents{create: params.CreateServer, settings: settings, version: binary.Version}
 	err = sharedserver.Run(ctx, sharedserver.Config{
 		Identity:    serverIdentity,
 		EndpointDir: endpointDir,
@@ -73,12 +85,10 @@ func runSharedServer(ctx context.Context, params RunParams, settings *config.Set
 		},
 		CurrentIdentity: func() (string, error) { return identity.Compute(settings, binary) },
 		Linger:          settings.SharedServer.Linger,
-		Build: func(ctx context.Context, logger *slog.Logger) (*mcp.Server, func(), error) {
-			components, err := params.CreateServer(ctx, logger, settings, binary.Version)
-			revalidate = components.RevalidateNow
-			return components.MCP, components.Cleanup, err
-		},
-		Revalidate: func(ctx context.Context) { revalidate(ctx) },
+		Build:           built.build,
+		Revalidate:      built.revalidate,
+		UIHandler:       built.uiHandler,
+		UIListen:        params.ListenWebUI,
 	})
 	// Another process owns this identity: exit silently, since anything
 	// written here would reach the spawning session's terminal or log.
@@ -86,4 +96,30 @@ func runSharedServer(ctx context.Context, params RunParams, settings *config.Set
 		return nil
 	}
 	return err
+}
+
+// sharedServerComponents keeps what Build produced for the hooks the shared
+// server calls only after Build has returned.
+type sharedServerComponents struct {
+	create     func(context.Context, *slog.Logger, *config.Settings, string) (Components, error)
+	settings   *config.Settings
+	version    string
+	logger     *slog.Logger
+	components Components
+}
+
+func (c *sharedServerComponents) build(ctx context.Context, logger *slog.Logger) (*mcp.Server, func(), error) {
+	components, err := c.create(ctx, logger, c.settings, c.version)
+	c.logger = logger
+	c.components = components
+	return components.MCP, components.Cleanup, err
+}
+
+func (c *sharedServerComponents) revalidate(ctx context.Context) {
+	c.components.RevalidateNow(ctx)
+}
+
+// uiHandler serves the Web UI of a shared server from the built components.
+func (c *sharedServerComponents) uiHandler(maxResults int) (http.Handler, error) {
+	return newWebUIHandler(c.logger, c.components.SSEOptions, maxResults)
 }

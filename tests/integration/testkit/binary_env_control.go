@@ -46,6 +46,14 @@ func AwaitFile(path string, deadline time.Time) (string, error) {
 	}
 }
 
+// Setenv adds environment entries, as NAME=value, to every later launch of
+// this environment, including the shared servers those launches spawn.
+func (e *BinaryEnv) Setenv(entries ...string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.env = append(e.env, entries...)
+}
+
 // UseBinaryCopy makes every later launch of this environment run its own copy
 // of the binary, which the test may replace without affecting other tests.
 func (e *BinaryEnv) UseBinaryCopy(t testing.TB) {

@@ -11,11 +11,19 @@ import (
 
 // spawnSharedServer re-executes this launch as a detached shared server.
 func spawnSharedServer(identity string) error {
-	executable, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("failed to resolve the executable: %w", err)
+	return spawnSharedServerWith(os.Args[1:])(identity)
+}
+
+// spawnSharedServerWith starts this executable with args as a detached
+// shared server.
+func spawnSharedServerWith(args []string) func(identity string) error {
+	return func(identity string) error {
+		executable, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("failed to resolve the executable: %w", err)
+		}
+		return startDetached(sharedServerCommand(executable, args, identity))
 	}
-	return startDetached(sharedServerCommand(executable, os.Args[1:], identity))
 }
 
 // sharedServerCommand prepends the identity flag so that an argument
