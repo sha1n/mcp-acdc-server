@@ -238,6 +238,13 @@ func (h *SharedServerHarness) SharedServerExits() []SharedServerExit {
 	return slices.Clone(h.exits)
 }
 
+// BuiltExits returns the exits of the ended candidates that won the lock and
+// built. Every failed dial of a session proxy spawns a candidate, so a launch
+// may add any number of candidates that lose the lock and exit cleanly.
+func (h *SharedServerHarness) BuiltExits() []SharedServerExit {
+	return slices.DeleteFunc(h.SharedServerExits(), func(e SharedServerExit) bool { return !e.Built })
+}
+
 func (h *SharedServerHarness) recordExit(exit SharedServerExit) {
 	h.exitsMu.Lock()
 	defer h.exitsMu.Unlock()

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -67,7 +66,7 @@ func collectColdStartEvidence(h *testkit.SharedServerHarness, designedBuilds int
 	if len(e.fallbacks) == 0 && e.builds <= designedBuilds {
 		return e
 	}
-	e.exits = builtExits(h)
+	e.exits = h.BuiltExits()
 	e.logs = identityLogs(h.LogDir)
 	return e
 }
@@ -200,7 +199,7 @@ func awaitVerdict(deadline time.Time, classify func() coldStartVerdict) coldStar
 // lingeredOutOnce accepts a loss once a shared server of identity id has
 // lingered out and every shared server that stopped exited error-free.
 func lingeredOutOnce(h *testkit.SharedServerHarness, id string) coldStartVerdict {
-	e := coldStartEvidence{exits: builtExits(h), logs: identityLogs(h.LogDir)}
+	e := coldStartEvidence{exits: h.BuiltExits(), logs: identityLogs(h.LogDir)}
 	for _, check := range []func(coldStartEvidence) (coldStartVerdict, bool){checkLogs, checkServerEnds} {
 		if verdict, done := check(e); done {
 			return verdict
@@ -212,8 +211,4 @@ func lingeredOutOnce(h *testkit.SharedServerHarness, id string) coldStartVerdict
 		}
 	}
 	return awaiting("no shared server of identity %s lingered out", id)
-}
-
-func builtExits(h *testkit.SharedServerHarness) []testkit.SharedServerExit {
-	return slices.DeleteFunc(h.SharedServerExits(), func(e testkit.SharedServerExit) bool { return !e.Built })
 }

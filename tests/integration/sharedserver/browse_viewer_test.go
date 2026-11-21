@@ -132,7 +132,7 @@ func requireExitAfter(t *testing.T, h *testkit.SharedServerHarness, earliest tim
 	t.Helper()
 	var early atomic.Bool
 	h.Eventually(func() bool {
-		exits := h.SharedServerExits()
+		exits := h.BuiltExits()
 		if len(exits) > 0 && time.Now().Before(earliest) {
 			early.Store(true)
 		}
@@ -155,7 +155,7 @@ func TestBrowse_AViewerKeepsTheSharedServerAlivePastItsLinger(t *testing.T) {
 	require.NoError(t, l.Wait(testkit.SharedServerDeadline))
 	time.Sleep(3 * viewerTestLinger)
 
-	assert.Empty(t, h.SharedServerExits(), "a live viewer holds the shared server past its linger")
+	assert.Empty(t, h.BuiltExits(), "a live viewer holds the shared server past its linger")
 	requireServesUI(t, uiURL)
 
 	lastSent, err := heartbeats.stop()
@@ -203,7 +203,7 @@ func TestBrowse_ThePageOfAColdStartOutlastingTheLingerKeepsWorking(t *testing.T)
 	heartbeats := startViewerHeartbeats(t, uiURL, "viewer-1")
 	time.Sleep(3 * viewerTestLinger)
 
-	assert.Empty(t, h.SharedServerExits(), "the page browse opened holds the shared server")
+	assert.Empty(t, h.BuiltExits(), "the page browse opened holds the shared server")
 	requireServesUI(t, uiURL)
 	_, err := heartbeats.stop()
 	require.NoError(t, err)

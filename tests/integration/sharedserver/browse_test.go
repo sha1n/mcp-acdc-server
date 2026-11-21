@@ -148,7 +148,7 @@ func TestBrowse_IsNotAnAttachedSessionAndDoesNotKeepTheSharedServerAlive(t *test
 
 	requireBrowseURL(t, h.Browse(args...))
 
-	h.Eventually(func() bool { return len(h.SharedServerExits()) == 1 },
+	h.Eventually(func() bool { return len(h.BuiltExits()) == 1 },
 		"the shared server must stop after its linger with only a browse served")
 	runs, err := testkit.ReadServerRuns(filepath.Join(h.LogDir, h.Identity(args)+".log"))
 	require.NoError(t, err)
