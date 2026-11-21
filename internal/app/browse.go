@@ -24,6 +24,7 @@ var browseIgnoredFlags = map[string]bool{
 	"auth-basic-password":    true,
 	"auth-api-keys":          true,
 	sharedServerIdentityFlag: true,
+	noOpenFlag:               true,
 }
 
 // BrowseRunParams returns the production dependencies of browse: a shared
@@ -31,13 +32,15 @@ var browseIgnoredFlags = map[string]bool{
 // command, not with its command line.
 func BrowseRunParams(flags *pflag.FlagSet) RunParams {
 	params := DefaultRunParams()
-	params.SpawnSharedServer = spawnSharedServerWith(browseSharedServerArgs(flags))
+	params.SpawnSharedServer = spawnSharedServerWith(BrowseSharedServerArgs(flags))
+	params.OpenBrowser = browserOpener(runtime.GOOS, browserOpenerWait)
 	return params
 }
 
-// browseSharedServerArgs returns the flags set on a browse command as the
-// arguments of a shared server launch, without the ignored ones.
-func browseSharedServerArgs(flags *pflag.FlagSet) []string {
+// BrowseSharedServerArgs returns the flags set on a browse command as the
+// arguments of a shared server launch, without the ignored ones and
+// --no-open.
+func BrowseSharedServerArgs(flags *pflag.FlagSet) []string {
 	var args []string
 	flags.Visit(func(f *pflag.Flag) {
 		if browseIgnoredFlags[f.Name] {
@@ -56,7 +59,9 @@ func browseSharedServerArgs(flags *pflag.FlagSet) []string {
 
 // RunBrowse finds or starts the shared server for the identity of the
 // settings, as a session proxy does, gets the URL of its Web UI and prints
-// it on stdout. A requested UI is a required UI: when no URL can be had it
+// it on stdout, then opens the system browser on it unless --no-open is
+// set. A browser that cannot be opened is a warning, not a failure. A
+// requested UI is a required UI: when no URL can be had it
 // fails, and it never serves anything itself.
 func RunBrowse(ctx context.Context, params RunParams, flags *pflag.FlagSet, binary identity.Binary) error {
 	settings, err := params.LoadSettings(flags)
@@ -89,8 +94,39 @@ func RunBrowse(ctx context.Context, params RunParams, flags *pflag.FlagSet, bina
 		return fmt.Errorf("failed to get the Web UI URL: %w", err)
 	}
 	logger.Info("Web UI ready", "url", ready.UIURL, "log", ready.Log)
-	_, err = fmt.Fprintln(params.Stdout, ready.UIURL)
-	return err
+	if _, err := fmt.Fprintln(params.Stdout, ready.UIURL); err != nil {
+		return err
+	}
+	if !noOpen(flags) {
+		openBrowser(logger, params.OpenBrowser, ready.UIURL)
+	}
+	return nil
+}
+
+// noOpen reports whether --no-open is set on flags.
+func noOpen(flags *pflag.FlagSet) bool {
+	if flags == nil || flags.Lookup(noOpenFlag) == nil {
+		return false
+	}
+	set, err := flags.GetBool(noOpenFlag)
+	return err == nil && set
+}
+
+// openBrowser opens the browser on url with open, and only warns when it
+// cannot: the URL is already printed.
+func openBrowser(logger *slog.Logger, open func(string) error, url string) {
+	err := errors.New("no browser opener")
+	if open != nil {
+		err = open(url)
+	}
+	switch {
+	case errors.Is(err, errBrowserOpenUnconfirmed):
+		logger.Warn("Could not confirm the browser opened; open the Web UI URL manually if it did not", "url", url, "error", err)
+	case err != nil:
+		logger.Warn("Failed to open the browser; open the Web UI URL manually", "url", url, "error", err)
+	default:
+		logger.Info("Opened the browser", "url", url)
+	}
 }
 
 // validateBrowseSettings validates the settings browse uses: authentication,

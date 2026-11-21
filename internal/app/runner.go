@@ -35,6 +35,9 @@ type RunParams struct {
 	// ListenWebUI, if set, binds a shared server's Web UI instead of an
 	// ephemeral port on 127.0.0.1.
 	ListenWebUI func() (net.Listener, error)
+	// OpenBrowser opens the system browser on a URL; browse warns instead
+	// when it is nil or fails.
+	OpenBrowser func(url string) error
 }
 
 // DefaultRunParams returns production dependencies

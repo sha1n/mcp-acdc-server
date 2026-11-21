@@ -4,6 +4,7 @@ package sharedserver
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -56,6 +57,52 @@ func TestBrowse_ColdStartStartsASharedServerAndPrintsItsWebUIURL(t *testing.T) {
 	requireServesUI(t, uiURL)
 	assert.Equal(t, 1, h.Builds())
 	assert.Contains(t, sharedServerLog(t, h, args), "Web UI started")
+}
+
+func TestBrowse_OpensTheBrowserOnThePrintedURL(t *testing.T) {
+	h := testkit.NewSharedServerHarness(t)
+	args := testkit.SharedLaunchArgs(newSessionProxyContentDir(t))
+
+	r := h.Browse(args...)
+
+	uiURL := requireBrowseURL(t, r)
+	assert.Equal(t, []string{uiURL}, r.Opened)
+}
+
+func TestBrowse_NoOpenPrintsTheURLWithoutOpeningTheBrowser(t *testing.T) {
+	h := testkit.NewSharedServerHarness(t)
+	args := testkit.SharedLaunchArgs(newSessionProxyContentDir(t))
+	connectAndListTools(t, h.Launch(args...))
+	spawns := h.Spawns()
+
+	r := h.Browse(append(args, "--no-open")...)
+
+	requireServesUI(t, requireBrowseURL(t, r))
+	assert.Empty(t, r.Opened)
+	assert.Equal(t, spawns, h.Spawns(), "--no-open does not change the shared server browse looks for")
+}
+
+func TestBrowse_NoOpenFalseOpensTheBrowserOnAColdStartedSharedServer(t *testing.T) {
+	h := testkit.NewSharedServerHarness(t)
+	args := testkit.SharedLaunchArgs(newSessionProxyContentDir(t))
+
+	r := h.Browse(append(args, "--no-open=false")...)
+
+	uiURL := requireBrowseURL(t, r)
+	requireServesUI(t, uiURL)
+	assert.Equal(t, []string{uiURL}, r.Opened)
+}
+
+func TestBrowse_SucceedsWithAWarningWhenTheBrowserCannotBeOpened(t *testing.T) {
+	h := testkit.NewSharedServerHarness(t)
+	args := testkit.SharedLaunchArgs(newSessionProxyContentDir(t))
+
+	r := h.BrowseOpeningWith(errors.New("no display"), args...)
+
+	uiURL := requireBrowseURL(t, r)
+	assert.Equal(t, []string{uiURL}, r.Opened)
+	assert.Contains(t, r.Stderr, "Failed to open the browser")
+	assert.Contains(t, r.Stderr, "no display")
 }
 
 func TestBrowse_UsesTheRunningSharedServerOfAnAttachedSession(t *testing.T) {

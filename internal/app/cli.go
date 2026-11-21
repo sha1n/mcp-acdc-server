@@ -34,3 +34,13 @@ func RegisterFlags(flags *pflag.FlagSet) {
 	flags.String("shared-server-linger", "", "How long a shared server keeps running with no attached sessions, a Go duration >= 1s (default: 30s)")
 	registerSharedServerFlag(flags)
 }
+
+// noOpenFlag stops browse from opening the browser.
+const noOpenFlag = "no-open"
+
+// RegisterBrowseFlags registers the flags of the browse command: the
+// settings flags and --no-open.
+func RegisterBrowseFlags(flags *pflag.FlagSet) {
+	RegisterFlags(flags)
+	flags.Bool(noOpenFlag, false, "Print the Web UI URL without opening the browser (default: false)")
+}
