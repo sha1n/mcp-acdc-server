@@ -36,6 +36,7 @@ func TestSessionProxy_ReapsLosingCandidates(t *testing.T) {
 	}
 
 	launch := env.Start(t, args...)
+	reportReapDiagnosticsOnFailure(t, env, launch, spawnsFile)
 	env.ReplaceBinary(t, wrapper)
 
 	var spawns []recordedSpawn
@@ -80,6 +81,10 @@ func readRecordedSpawns(t *testing.T, spawnsFile string) []recordedSpawn {
 		return nil
 	}
 	require.NoError(t, err)
+	return parseSpawns(data)
+}
+
+func parseSpawns(data []byte) []recordedSpawn {
 	var spawns []recordedSpawn
 	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
 		var s recordedSpawn
