@@ -62,16 +62,18 @@ func Execute(version, build, programName string, args []string) error {
 func browseCommand(version, build string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "browse",
-		Short: "Print the Web UI URL of the shared server for these settings",
-		Long: "Find or start the shared server for these settings, start its Web UI if it is not running " +
-			"and print the Web UI URL. --ui-enabled, --host, --port and the auth flags are ignored.",
+		Short: "Open the Web UI of the shared server for these settings in the browser",
+		Long: "Find or start the shared server for these settings, start its Web UI if it is not running, " +
+			"and print the Web UI URL; browse then opens the browser on it unless --no-open is set. " +
+			"The shared server exits once there are no attached sessions and no viewers and its linger runs out. " +
+			"--ui-enabled, --host, --port and the auth flags are ignored.",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return app.RunBrowse(cmd.Context(), app.BrowseRunParams(cmd.Flags()), cmd.Flags(), binary(version, build))
 		},
 	}
-	app.RegisterFlags(cmd.Flags())
+	app.RegisterBrowseFlags(cmd.Flags())
 	return cmd
 }
 

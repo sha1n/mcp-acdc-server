@@ -36,3 +36,22 @@ func TestExecute_BrowseIsListedInHelp(t *testing.T) {
 	assert.Contains(t, out, "browse")
 	assert.NotContains(t, out, "completion")
 }
+
+func TestExecute_BrowseHelpListsNoOpen(t *testing.T) {
+	out := captureStdout(t, func() {
+		require.NoError(t, Execute("test", "test", "acdc-mcp", []string{"browse", "--help"}))
+	})
+
+	assert.Contains(t, out, "--no-open")
+	assert.Contains(t, out, "opens the browser")
+	assert.Contains(t, out, "no attached sessions and no viewers")
+}
+
+func TestExecute_RootCommandRejectsNoOpen(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	err := Execute("test", "test", "acdc-mcp", []string{"--no-open"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no-open")
+}

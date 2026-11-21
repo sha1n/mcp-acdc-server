@@ -6,6 +6,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -105,6 +107,88 @@ func TestRunBrowse_PrintsOnlyTheURLOnStdout(t *testing.T) {
 	assert.Equal(t, 13, hello.UIMaxResults)
 }
 
+func browseTestFlags(t *testing.T, args ...string) *pflag.FlagSet {
+	t.Helper()
+	flags := pflag.NewFlagSet("browse", pflag.ContinueOnError)
+	RegisterBrowseFlags(flags)
+	require.NoError(t, flags.Parse(args))
+	return flags
+}
+
+func TestRunBrowse_OpensTheBrowserOnTheURLAfterPrintingIt(t *testing.T) {
+	server := newBrowseTestServer(t, browseReadyReply(t))
+	var stdout, stderr bytes.Buffer
+	params := server.params(t, browseTestSettings(t), &stdout, &stderr)
+	var opened []string
+	var printedBeforeOpen string
+	params.OpenBrowser = func(url string) error {
+		opened = append(opened, url)
+		printedBeforeOpen = stdout.String()
+		return nil
+	}
+
+	err := RunBrowse(context.Background(), params, browseTestFlags(t), sessionProxyTestBinary)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{browseTestURL}, opened)
+	assert.Equal(t, browseTestURL+"\n", printedBeforeOpen, "the URL is printed before the browser opens")
+	assert.Equal(t, browseTestURL+"\n", stdout.String())
+}
+
+func TestRunBrowse_NoOpenPrintsTheURLWithoutOpeningTheBrowser(t *testing.T) {
+	server := newBrowseTestServer(t, browseReadyReply(t))
+	var stdout, stderr bytes.Buffer
+	params := server.params(t, browseTestSettings(t), &stdout, &stderr)
+	params.OpenBrowser = func(string) error {
+		t.Error("the browser must not be opened with --no-open")
+		return nil
+	}
+
+	err := RunBrowse(context.Background(), params, browseTestFlags(t, "--no-open"), sessionProxyTestBinary)
+
+	require.NoError(t, err)
+	assert.Equal(t, browseTestURL+"\n", stdout.String())
+}
+
+func TestRunBrowse_WarnsAndSucceedsWhenTheBrowserCannotBeOpened(t *testing.T) {
+	tests := []struct {
+		name string
+		open func(string) error
+	}{
+		{name: "opener error", open: func(string) error { return errors.New("no display") }},
+		{name: "no opener", open: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := newBrowseTestServer(t, browseReadyReply(t))
+			var stdout, stderr bytes.Buffer
+			params := server.params(t, browseTestSettings(t), &stdout, &stderr)
+			params.OpenBrowser = tt.open
+
+			err := RunBrowse(context.Background(), params, browseTestFlags(t), sessionProxyTestBinary)
+
+			require.NoError(t, err)
+			assert.Equal(t, browseTestURL+"\n", stdout.String())
+			assert.Contains(t, stderr.String(), "level=WARN")
+			assert.Contains(t, stderr.String(), "Failed to open the browser")
+		})
+	}
+}
+
+func TestRunBrowse_WarnsWhenTheBrowserLaunchCannotBeConfirmed(t *testing.T) {
+	server := newBrowseTestServer(t, browseReadyReply(t))
+	var stdout, stderr bytes.Buffer
+	params := server.params(t, browseTestSettings(t), &stdout, &stderr)
+	params.OpenBrowser = func(string) error { return fmt.Errorf("xdg-open: %w", errBrowserOpenUnconfirmed) }
+
+	err := RunBrowse(context.Background(), params, browseTestFlags(t), sessionProxyTestBinary)
+
+	require.NoError(t, err)
+	assert.Equal(t, browseTestURL+"\n", stdout.String())
+	assert.Contains(t, stderr.String(), "level=WARN")
+	assert.Contains(t, stderr.String(), "Could not confirm the browser opened")
+}
+
 func TestRunBrowse_IgnoresUIEnabledHostPortAndAuth(t *testing.T) {
 	server := newBrowseTestServer(t, browseReadyReply(t))
 	settings := browseTestSettings(t)
@@ -160,14 +244,14 @@ func TestRunBrowse_Fails(t *testing.T) {
 
 func TestBrowseSharedServerArgs_KeepsTheChangedSettingsAndDropsIgnoredFlags(t *testing.T) {
 	flags := pflag.NewFlagSet("browse", pflag.ContinueOnError)
-	RegisterFlags(flags)
+	RegisterBrowseFlags(flags)
 	require.NoError(t, flags.Parse([]string{
-		"-c", "/content", "--search-in-memory=false", "--shared-server-linger", "2s",
+		"--no-open", "-c", "/content", "--search-in-memory=false", "--shared-server-linger", "2s",
 		"--ui-enabled", "--ui-max-results", "5", "--host", "h", "-p", "1",
 		"--auth-type", "apikey", "-k", "a,b", "--auth-basic-username", "u", "--auth-basic-password", "pw",
 	}))
 
-	args := browseSharedServerArgs(flags)
+	args := BrowseSharedServerArgs(flags)
 
 	assert.ElementsMatch(t, []string{
 		"--content-dir=/content", "--search-in-memory=false", "--shared-server-linger=2s", "--ui-max-results=5",

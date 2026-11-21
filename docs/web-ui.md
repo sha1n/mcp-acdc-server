@@ -39,16 +39,18 @@ To get the UI for stdio launches, use [`acdc-mcp browse`](#acdc-mcp-browse).
 
 ## `acdc-mcp browse`
 
-`acdc-mcp browse` prints the URL of a web UI over the content that stdio launches with the same settings are served from. It takes the same settings as an MCP launch (flags, `.env`, `ACDC_MCP_*`) and computes the [server identity](configuration.md#server-identity) from them, so the same settings reach the same [shared server](configuration.md#server-mode). It finds that shared server, or starts one with the same discovery and connect wait as a session proxy, and waits for its index build with no time limit. The shared server starts its UI on the first `browse` request and keeps it for the rest of its life; every later `browse` gets the same URL. `browse` prints the URL on stdout, logs to stderr and exits `0`. It does not open a browser.
+`acdc-mcp browse` prints the URL of a web UI over the content that stdio launches with the same settings are served from. It takes the same settings as an MCP launch (flags, `.env`, `ACDC_MCP_*`) and computes the [server identity](configuration.md#server-identity) from them, so the same settings reach the same [shared server](configuration.md#server-mode). It finds that shared server, or starts one with the same discovery and connect wait as a session proxy, and waits for its index build with no time limit. The shared server starts its UI on the first `browse` request and keeps it for the rest of its life; every later `browse` gets the same URL. `browse` prints the URL on stdout, then opens the system browser on it (`open` on macOS, `xdg-open` on Linux and the BSDs), logs to stderr and exits `0`. `--no-open` only prints the URL, for scripts and SSH sessions. When the browser cannot be opened (no opener on the `PATH`, a headless machine, or an opener error), `browse` logs a warning on stderr and still exits `0`; open the printed URL yourself.
 
 ```bash
 acdc-mcp browse --content-dir ./content
+# http://127.0.0.1:54321/ui/, opened in the browser
+acdc-mcp browse --content-dir ./content --no-open
 # http://127.0.0.1:54321/ui/
 ```
 
 - **Listener.** The UI listens on `127.0.0.1` on an ephemeral port, separate from any MCP traffic, and serves only `/ui/` and `/api/v1/`: there is no `/sse` and no `/health`. It applies no authentication.
 - **`ui.max_results`.** The value sent by the `browse` that started the UI applies for the life of that shared server; values sent by later requests are ignored. It is validated on every `browse`, whether or not `ui.enabled` is set.
-- **Lifetime.** A `browse` connection is not an attached session: it neither counts toward nor restarts the [linger](configuration.md#detached-shared-server-process), only defers an exit that falls due while it waits for its reply, and is closed once the URL is returned. The UI ends with its shared server, so a shared server that `browse` started with no session attached exits after the linger, and the URL changes whenever the shared server is replaced. The shared server's log records `Web UI started` with the URL.
+- **Lifetime.** A `browse` connection is not an attached session: it neither counts toward nor restarts the [linger](configuration.md#detached-shared-server-process), only defers an exit that falls due while it waits for its reply, and is closed once the URL is returned. The UI ends with its shared server, so a shared server that `browse` started with no session attached exits once the linger runs out, and the URL changes whenever the shared server is replaced. The shared server's log records `Web UI started` with the URL. Viewer tracking is not implemented yet: today an open page is not a [viewer](../GLOSSARY.md) that holds off the linger, so the shared server exits even while the page is open in a browser.
 - **Ignored settings.** `--ui-enabled`, `--host`, `--port` and the authentication settings (`auth.*`) are accepted and ignored, and are not passed to a shared server that `browse` starts.
 
 A requested UI is a required UI. `browse` prints `Error: ...` and exits `1`, and never falls back to a per-session server, when:
