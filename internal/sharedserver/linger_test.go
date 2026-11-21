@@ -272,37 +272,73 @@ func (l *sessionLinger) attachedSessions() int {
 	return l.sessions
 }
 
-func TestSessionLinger_AHoldDoesNotRestartARunningLinger(t *testing.T) {
+func TestSessionLinger_AHoldPausesTheLingerAndItsReleaseRestartsIt(t *testing.T) {
 	p := newLingerProbe()
 	p.clock.advance(lingerUnderTest - time.Second)
 
 	require.True(t, p.linger.hold())
-	p.linger.release()
-	p.clock.advance(time.Second)
+	p.clock.advance(10 * lingerUnderTest)
+	assert.Equal(t, 0, p.expired(), "no linger runs while a hold is pending")
 
-	assert.Equal(t, 1, p.expired(), "a hold must not reset or extend a running linger")
+	p.linger.release()
+	p.clock.advance(lingerUnderTest - time.Millisecond)
+	assert.Equal(t, 0, p.expired(), "the release restarts the linger from the moment of release")
+	p.clock.advance(time.Millisecond)
+	assert.Equal(t, 1, p.expired())
 	assert.True(t, p.shutsDown())
 }
 
-func TestSessionLinger_AHoldDefersTheShutdownOfAnExpiryUntilItsRelease(t *testing.T) {
+// A cold start whose build outlasts the linger must not shut down the moment
+// browse's reply is written: the page it opened needs time to send its first
+// heartbeat.
+func TestSessionLinger_AReleaseAfterTheLingerWouldHaveRunOutDoesNotShutDown(t *testing.T) {
 	p := newLingerProbe()
 	require.True(t, p.linger.hold())
+	p.clock.advance(2 * lingerUnderTest)
 
-	p.clock.advance(lingerUnderTest)
-	require.False(t, p.shutsDown(), "no shutdown while a hold is pending")
-
-	p.linger.release()
-	assert.Equal(t, 2, p.expired(), "the release of the last hold reports the expiry again")
-	assert.True(t, p.shutsDown())
-}
-
-func TestSessionLinger_AReleaseBeforeExpiryReportsNothing(t *testing.T) {
-	p := newLingerProbe()
-	require.True(t, p.linger.hold())
 	p.linger.release()
 
 	assert.Equal(t, 0, p.expired())
-	assert.Equal(t, 1, p.clock.armed(), "the running linger timer is left as is")
+	assert.False(t, p.shutsDown(), "the release starts a fresh linger instead of shutting down")
+	p.clock.advance(lingerUnderTest)
+	assert.Equal(t, 1, p.expired())
+	assert.True(t, p.shutsDown())
+}
+
+func TestSessionLinger_AHoldCancelsAnExpiryNotYetConfirmed(t *testing.T) {
+	p := newLingerProbe()
+	p.clock.advance(lingerUnderTest)
+	require.Equal(t, 1, p.expired())
+
+	require.True(t, p.linger.hold())
+	assert.False(t, p.shutsDown(), "no shutdown while a hold is pending")
+	p.linger.release()
+	assert.False(t, p.shutsDown(), "the release restarts the linger")
+
+	p.clock.advance(lingerUnderTest)
+	assert.Equal(t, 2, p.expired())
+	assert.True(t, p.shutsDown())
+}
+
+func TestSessionLinger_AReleaseLeavesTheLingerStoppedWhileASessionIsAttached(t *testing.T) {
+	p := newLingerProbe()
+	p.linger.attach()
+	require.True(t, p.linger.hold())
+
+	p.linger.release()
+
+	assert.Equal(t, 0, p.clock.armed())
+}
+
+func TestSessionLinger_OnlyTheLastReleaseRestartsTheLinger(t *testing.T) {
+	p := newLingerProbe()
+	require.True(t, p.linger.hold())
+	require.True(t, p.linger.hold())
+
+	p.linger.release()
+	assert.Equal(t, 0, p.clock.armed(), "a hold is still pending")
+	p.linger.release()
+	assert.Equal(t, 1, p.clock.armed())
 }
 
 func TestSessionLinger_RefusesAHoldOnceTheShutdownRanOrStopped(t *testing.T) {

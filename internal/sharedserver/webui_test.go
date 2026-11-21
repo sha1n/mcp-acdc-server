@@ -25,11 +25,16 @@ type recordingUIHandler struct {
 	calls []int
 }
 
-func (r *recordingUIHandler) build(maxResults int) (http.Handler, error) {
+// A request to /beat reports a heartbeat of the viewer in its viewer query
+// parameter.
+func (r *recordingUIHandler) build(maxResults int, heartbeat func(viewerID string)) (http.Handler, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls = append(r.calls, maxResults)
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path == "/beat" {
+			heartbeat(req.URL.Query().Get("viewer"))
+		}
 		_, _ = io.WriteString(w, req.URL.Path+" "+strconv.Itoa(maxResults))
 	}), nil
 }
@@ -42,7 +47,7 @@ func (r *recordingUIHandler) builtWith() []int {
 
 func newTestWebUI(t *testing.T, logs io.Writer, handler UIHandlerFunc) *webUI {
 	t.Helper()
-	ui := newWebUI(slog.New(slog.NewTextHandler(logs, nil)))
+	ui := newWebUI(slog.New(slog.NewTextHandler(logs, nil)), func(string) {})
 	ui.setHandler(handler)
 	t.Cleanup(ui.close)
 	return ui
@@ -117,7 +122,7 @@ func TestWebUI_BindFailureIsReturnedAndTheNextRequestTriesAgain(t *testing.T) {
 }
 
 func TestWebUI_HandlerFailureIsReturned(t *testing.T) {
-	ui := newTestWebUI(t, io.Discard, func(int) (http.Handler, error) { return nil, errors.New("no components") })
+	ui := newTestWebUI(t, io.Discard, func(int, func(string)) (http.Handler, error) { return nil, errors.New("no components") })
 
 	_, err := ui.ensure(7)
 	assert.ErrorContains(t, err, "no components")

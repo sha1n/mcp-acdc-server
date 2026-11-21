@@ -38,6 +38,10 @@ type SharedServerHarness struct {
 	EndpointDir string
 	LogDir      string
 	Binary      identity.Binary
+	// ViewerWindow, if set, replaces how long a viewer of a spawned shared
+	// server's Web UI stays live after its last heartbeat. It is set only
+	// before the first spawn.
+	ViewerWindow time.Duration
 
 	ctx     context.Context
 	spawns  atomic.Int32
@@ -260,6 +264,7 @@ func (h *SharedServerHarness) sharedServerParams(built *atomic.Bool) app.RunPara
 	params.EndpointDir = h.endpointDir
 	params.LogDir = h.logDir
 	params.ListenWebUI = h.listenWebUI
+	params.ViewerWindow = h.ViewerWindow
 	// A re-exec'd shared server has the null device as its standard streams.
 	params.Stderr = io.Discard
 	params.Stdin = nil

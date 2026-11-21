@@ -95,7 +95,6 @@ func newSessionAcceptor(ctx context.Context, logger *slog.Logger, listener *net.
 		wake:     &acceptWake{listener: listener},
 		built:    make(chan struct{}),
 		stopped:  make(chan struct{}),
-		ui:       newWebUI(logger),
 
 		helloTimeout: HelloTimeout,
 	}
@@ -103,6 +102,7 @@ func newSessionAcceptor(ctx context.Context, logger *slog.Logger, listener *net.
 	a.ctx, a.cancel = context.WithCancel(ctx)
 	a.sessionCtx, a.endSessions = context.WithCancel(context.WithoutCancel(ctx))
 	a.linger = newSessionLinger(linger, realLingerClock{}, a.wake.wake)
+	a.ui = newWebUI(logger, a.linger.heartbeat)
 	return a
 }
 
@@ -137,6 +137,12 @@ func (a *sessionAcceptor) closeListener() {
 func (a *sessionAcceptor) setUI(handler UIHandlerFunc, listen func() (net.Listener, error)) {
 	a.ui.setHandler(handler)
 	a.ui.setListen(listen)
+}
+
+// setViewerWindow replaces how long a viewer stays live after a heartbeat;
+// zero keeps ViewerWindow.
+func (a *sessionAcceptor) setViewerWindow(window time.Duration) {
+	a.linger.setViewerWindow(window)
 }
 
 func (a *sessionAcceptor) buildContext() context.Context {

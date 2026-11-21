@@ -11,8 +11,9 @@ import (
 )
 
 // UIHandlerFunc builds the handler the Web UI serves, applying maxResults as
-// its ui.max_results. It is called after Build has returned.
-type UIHandlerFunc func(maxResults int) (http.Handler, error)
+// its ui.max_results; the handler reports every viewer heartbeat to
+// heartbeat. It is called after Build has returned.
+type UIHandlerFunc func(maxResults int, heartbeat func(viewerID string)) (http.Handler, error)
 
 // uiReadHeaderTimeout bounds how long a Web UI connection may take to send
 // its request headers.
@@ -27,16 +28,18 @@ type webUI struct {
 	listen  func() (net.Listener, error)
 	mu      sync.Mutex
 	handler UIHandlerFunc
-	server  *http.Server
-	url     string
+	// heartbeat receives the viewer heartbeats of the running UI.
+	heartbeat func(viewerID string)
+	server    *http.Server
+	url       string
 	// failure is why the running UI stopped serving. The next request gets
 	// it, and the one after starts the UI again.
 	failure error
 	closed  bool
 }
 
-func newWebUI(logger *slog.Logger) *webUI {
-	return &webUI{logger: logger, listen: listenLoopback}
+func newWebUI(logger *slog.Logger, heartbeat func(viewerID string)) *webUI {
+	return &webUI{logger: logger, listen: listenLoopback, heartbeat: heartbeat}
 }
 
 func listenLoopback() (net.Listener, error) {
@@ -83,7 +86,7 @@ func (u *webUI) ensure(maxResults int) (string, error) {
 }
 
 func (u *webUI) start(maxResults int) (string, error) {
-	handler, err := u.handler(maxResults)
+	handler, err := u.handler(maxResults, u.heartbeat)
 	if err != nil {
 		return "", fmt.Errorf("failed to start the web UI: %w", err)
 	}

@@ -38,6 +38,7 @@ type apiHandler struct {
 	backend   SearchBackend
 	documents DocumentReader
 	settings  config.UISettings
+	heartbeat ViewerHeartbeat
 }
 
 type endpoint func(*apiHandler, *http.Request) (any, error)
@@ -98,7 +99,12 @@ type documentResponse struct {
 }
 
 func (h *apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	handle, ok := endpoints[strings.TrimPrefix(r.URL.Path, apiPrefix)]
+	path := strings.TrimPrefix(r.URL.Path, apiPrefix)
+	if path == viewerHeartbeatPath {
+		h.viewerHeartbeat(w, r)
+		return
+	}
+	handle, ok := endpoints[path]
 	if !ok {
 		h.writeAPIError(w, errNotFound)
 		return

@@ -9,10 +9,11 @@ import (
 
 // browse answers a browse request once the build is done, with the Web UI
 // URL or the error that prevented the UI, and closes the connection. It is
-// not an attached session: it gets no session id and no attach entry, and it
-// neither resets nor extends the linger. It only defers a shutdown that falls
-// due before its reply, so a cold start whose build outlasts the linger still
-// answers it.
+// not an attached session: it gets no session id and no attach entry. Like
+// one, though, it stops the linger while it is pending, so a cold start whose
+// build outlasts the linger still answers it, and its end restarts the linger
+// as the last detach does, so the page it opened has a whole linger to send
+// its first heartbeat.
 func (a *sessionAcceptor) browse(conn *net.UnixConn, maxResults int) {
 	if !a.linger.hold() {
 		a.dropOnceAcceptingStopped(conn)

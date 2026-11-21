@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -21,7 +22,7 @@ func serveUI(t *testing.T, handler http.Handler, path string) *httptest.Response
 }
 
 func TestNewWebUIHandler_ServesTheUIAndAPIWithTheRequestedMaxResults(t *testing.T) {
-	handler, err := newWebUIHandler(slog.New(slog.DiscardHandler), []SSEOption{WithWebUI(stubUIBackend{}, stubUIDocuments{})}, 13)
+	handler, err := newWebUIHandler(slog.New(slog.DiscardHandler), []SSEOption{WithWebUI(stubUIBackend{}, stubUIDocuments{})}, 13, nil)
 	require.NoError(t, err)
 
 	page := serveUI(t, handler, "/ui/")
@@ -34,7 +35,7 @@ func TestNewWebUIHandler_ServesTheUIAndAPIWithTheRequestedMaxResults(t *testing.
 }
 
 func TestNewWebUIHandler_ServesNoSSEOrHealthEndpoint(t *testing.T) {
-	handler, err := newWebUIHandler(slog.New(slog.DiscardHandler), []SSEOption{WithWebUI(stubUIBackend{}, stubUIDocuments{})}, 13)
+	handler, err := newWebUIHandler(slog.New(slog.DiscardHandler), []SSEOption{WithWebUI(stubUIBackend{}, stubUIDocuments{})}, 13, nil)
 	require.NoError(t, err)
 
 	for _, path := range []string{"/sse", "/health"} {
@@ -43,7 +44,7 @@ func TestNewWebUIHandler_ServesNoSSEOrHealthEndpoint(t *testing.T) {
 }
 
 func TestNewWebUIHandler_RequiresUIComponents(t *testing.T) {
-	_, err := newWebUIHandler(slog.New(slog.DiscardHandler), nil, 13)
+	_, err := newWebUIHandler(slog.New(slog.DiscardHandler), nil, 13, nil)
 	assert.Error(t, err)
 }
 
@@ -62,7 +63,7 @@ func TestSharedServerComponents_UIHandlerServesTheBuiltComponents(t *testing.T) 
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
-	handler, err := built.uiHandler(21)
+	handler, err := built.uiHandler(21, func(string) {})
 	require.NoError(t, err)
 
 	cfg := serveUI(t, handler, "/api/v1/config")
@@ -87,4 +88,30 @@ func TestSharedServerComponents_RevalidateUsesTheBuiltComponents(t *testing.T) {
 	built.revalidate(context.Background())
 
 	assert.Equal(t, 1, revalidated)
+}
+
+func TestSharedServerComponents_UIHandlerReportsViewerHeartbeats(t *testing.T) {
+	built := &sharedServerComponents{
+		settings: &config.Settings{},
+		version:  "test",
+		create: func(context.Context, *slog.Logger, *config.Settings, string) (Components, error) {
+			return Components{
+				MCP:        mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil),
+				SSEOptions: []SSEOption{WithWebUI(stubUIBackend{}, stubUIDocuments{})},
+			}, nil
+		},
+	}
+	_, _, err := built.build(context.Background(), slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	var heard []string
+	handler, err := built.uiHandler(21, func(viewerID string) { heard = append(heard, viewerID) })
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/viewers/heartbeat", strings.NewReader(`{"viewer_id":"v1"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	assert.Equal(t, []string{"v1"}, heard)
 }

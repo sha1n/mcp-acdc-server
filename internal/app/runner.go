@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
@@ -38,6 +39,9 @@ type RunParams struct {
 	// OpenBrowser opens the system browser on a URL; browse warns instead
 	// when it is nil or fails.
 	OpenBrowser func(url string) error
+	// ViewerWindow, if set, replaces how long a viewer of a shared server's
+	// Web UI stays live after its last heartbeat.
+	ViewerWindow time.Duration
 }
 
 // DefaultRunParams returns production dependencies
