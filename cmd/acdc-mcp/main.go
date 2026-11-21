@@ -69,7 +69,8 @@ func browseCommand(version, build string) *cobra.Command {
 			"Under --server-mode session, and on Windows, browse instead builds the index itself, serves the Web UI " +
 			"on 127.0.0.1 on an ephemeral port, prints its URL, and runs until interrupted. " +
 			"On Windows browse prints the URL and does not open a browser. " +
-			"--ui-enabled, --host, --port and the auth flags are ignored.",
+			"The SSE and authentication flags of an MCP launch (--host, --port, --ui-enabled and the auth flags) " +
+			"are accepted and ignored.",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
