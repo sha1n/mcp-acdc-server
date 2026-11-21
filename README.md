@@ -81,7 +81,7 @@ docker run -p 8080:8080 \
 acdc-mcp --transport sse --ui-enabled --content-dir ./content
 ```
 
-**Web UI for stdio launches.** On macOS and Linux, `acdc-mcp browse` with the same settings as your MCP launch prints the URL of a UI served by that launch's [shared server](#server-mode), on `127.0.0.1` with no authentication, and opens the browser on it. Add `--no-open` to only print the URL, for scripts and SSH sessions. A shared server that `browse` started with no MCP session attached exits once its linger runs out, taking the UI with it; an open page does not yet keep it alive:
+**Web UI for stdio launches.** On macOS and Linux, `acdc-mcp browse` with the same settings as your MCP launch prints the URL of a UI served by that launch's [shared server](#server-mode), on `127.0.0.1` with no authentication, and opens the browser on it. Add `--no-open` to only print the URL, for scripts and SSH sessions. An open page keeps the shared server alive; once no page is open and no MCP session is attached, the shared server exits after its linger, taking the UI with it:
 ```bash
 acdc-mcp browse --content-dir ./content
 acdc-mcp browse --content-dir ./content --no-open
@@ -168,7 +168,7 @@ The credential flags (`--auth-basic-username`, `--auth-basic-password`, `--auth-
 
 ## Server mode
 
-On macOS and Linux, stdio launches that share a server identity (same settings, binary version and startup content) share one catalog and search index. Each launch is a session proxy that relays its session to a detached shared server, started on demand by the first launch and stopped after the linger (default `30s`) once no session is attached. After a shared server crash the session proxy attempts recovery without ending the session, and if no shared server can be used the launch continues as a per-session server. Windows launches and `--transport sse` are unchanged.
+On macOS and Linux, stdio launches that share a server identity (same settings, binary version and startup content) share one catalog and search index. Each launch is a session proxy that relays its session to a detached shared server, started on demand by the first launch and stopped after the linger (default `30s`) once no session is attached and no web UI page is open. After a shared server crash the session proxy attempts recovery without ending the session, and if no shared server can be used the launch continues as a per-session server. Windows launches and `--transport sse` are unchanged.
 
 | Flag | Environment Variable | Default |
 |------|---------------------|---------|

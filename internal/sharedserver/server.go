@@ -52,6 +52,9 @@ type Config struct {
 	// UIListen, if set, binds the Web UI instead of an ephemeral port on
 	// 127.0.0.1.
 	UIListen func() (net.Listener, error)
+	// ViewerWindow, if set, replaces ViewerWindow: how long a viewer of the
+	// Web UI stays live after its last heartbeat.
+	ViewerWindow time.Duration
 	// Linger below config.MinSharedServerLinger is rejected before anything
 	// is created, as settings validation rejects it.
 	Linger time.Duration

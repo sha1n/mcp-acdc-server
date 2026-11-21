@@ -38,20 +38,21 @@ func newSSEOptions(opts []SSEOption) sseOptions {
 
 // mountWebUI mounts the web UI pages and API on mux; it is the one wiring of
 // the web UI, for the SSE server and for a shared server's Web UI alike.
-func (o sseOptions) mountWebUI(logger *slog.Logger, mux *http.ServeMux, ui config.UISettings) error {
+func (o sseOptions) mountWebUI(logger *slog.Logger, mux *http.ServeMux, ui config.UISettings, opts ...webui.MountOption) error {
 	if o.uiBackend == nil || o.uiDocuments == nil {
 		return errors.New("web UI enabled but no UI components supplied")
 	}
-	webui.Mount(logger, mux, o.uiBackend, o.uiDocuments, ui)
+	webui.Mount(logger, mux, o.uiBackend, o.uiDocuments, ui, opts...)
 	return nil
 }
 
 // newWebUIHandler serves only the web UI pages and API, with no
-// authentication and maxResults as its ui.max_results.
-func newWebUIHandler(logger *slog.Logger, opts []SSEOption, maxResults int) (http.Handler, error) {
+// authentication and maxResults as its ui.max_results. Viewer heartbeats are
+// reported to heartbeat; a nil heartbeat accepts them without effect.
+func newWebUIHandler(logger *slog.Logger, opts []SSEOption, maxResults int, heartbeat webui.ViewerHeartbeat) (http.Handler, error) {
 	mux := http.NewServeMux()
 	ui := config.UISettings{Enabled: true, MaxResults: maxResults}
-	if err := newSSEOptions(opts).mountWebUI(logger, mux, ui); err != nil {
+	if err := newSSEOptions(opts).mountWebUI(logger, mux, ui, webui.WithViewerHeartbeat(heartbeat)); err != nil {
 		return nil, err
 	}
 	return mux, nil

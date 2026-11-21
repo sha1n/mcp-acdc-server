@@ -45,7 +45,7 @@ type DocumentReader interface {
 
 // Mount registers the web UI pages under /ui and the JSON API under /api/v1/ on mux.
 // It panics when backend or documents is nil, as both are wiring defects.
-func Mount(logger *slog.Logger, mux *http.ServeMux, backend SearchBackend, documents DocumentReader, settings config.UISettings) {
+func Mount(logger *slog.Logger, mux *http.ServeMux, backend SearchBackend, documents DocumentReader, settings config.UISettings, opts ...MountOption) {
 	if backend == nil {
 		panic("webui: nil search backend")
 	}
@@ -55,5 +55,9 @@ func Mount(logger *slog.Logger, mux *http.ServeMux, backend SearchBackend, docum
 	pages := &pageHandler{}
 	mux.HandleFunc("/ui", pages.redirectToRoot)
 	mux.Handle("/ui/", pages)
-	mux.Handle("/api/v1/", &apiHandler{logger: logger, backend: backend, documents: documents, settings: settings})
+	api := &apiHandler{logger: logger, backend: backend, documents: documents, settings: settings}
+	for _, opt := range opts {
+		opt(api)
+	}
+	mux.Handle("/api/v1/", api)
 }

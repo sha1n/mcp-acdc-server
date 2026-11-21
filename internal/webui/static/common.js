@@ -217,8 +217,44 @@
     }
   }
 
+  // Viewer heartbeat: an open page tells the server it is being viewed, so a
+  // shared server does not linger out from under it. Failures are silent; the
+  // next beat simply tries again.
+  const HEARTBEAT_PATH = "/api/v1/viewers/heartbeat";
+  const HEARTBEAT_INTERVAL_MS = 30000;
+  const viewerId = newViewerId();
+
+  function newViewerId() {
+    try {
+      if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
+      if (window.crypto && typeof window.crypto.getRandomValues === "function") {
+        const bytes = window.crypto.getRandomValues(new Uint8Array(16));
+        return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+      }
+    } catch (_) {
+      // Fall through to the non-cryptographic id; it only needs to be unique among open pages.
+    }
+    return `v${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`.slice(0, 64);
+  }
+
+  function sendHeartbeat() {
+    try {
+      fetch(HEARTBEAT_PATH, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ viewer_id: viewerId }),
+        credentials: "same-origin",
+        keepalive: true,
+      }).catch(() => {});
+    } catch (_) {
+      // A missing or throwing fetch must never disturb the page.
+    }
+  }
+
   applyTheme();
   document.addEventListener("DOMContentLoaded", initThemeToggle);
+  sendHeartbeat();
+  window.setInterval(sendHeartbeat, HEARTBEAT_INTERVAL_MS);
 
   window.ACDC = Object.freeze({
     ApiError,

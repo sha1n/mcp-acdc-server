@@ -50,7 +50,7 @@ acdc-mcp browse --content-dir ./content --no-open
 
 - **Listener.** The UI listens on `127.0.0.1` on an ephemeral port, separate from any MCP traffic, and serves only `/ui/` and `/api/v1/`: there is no `/sse` and no `/health`. It applies no authentication.
 - **`ui.max_results`.** The value sent by the `browse` that started the UI applies for the life of that shared server; values sent by later requests are ignored. It is validated on every `browse`, whether or not `ui.enabled` is set.
-- **Lifetime.** A `browse` connection is not an attached session: it neither counts toward nor restarts the [linger](configuration.md#detached-shared-server-process), only defers an exit that falls due while it waits for its reply, and is closed once the URL is returned. The UI ends with its shared server, so a shared server that `browse` started with no session attached exits once the linger runs out, and the URL changes whenever the shared server is replaced. The shared server's log records `Web UI started` with the URL. Viewer tracking is not implemented yet: today an open page is not a [viewer](../GLOSSARY.md) that holds off the linger, so the shared server exits even while the page is open in a browser.
+- **Lifetime.** A `browse` connection is not an attached session, but while it waits for its reply it holds off the [linger](configuration.md#detached-shared-server-process) like one, and once the URL is returned it is closed and, if the shared server is otherwise idle (no attached session and no live viewer), the linger restarts, as when the last session detaches. So even a cold start whose build outlasts the linger leaves the page it opened a whole linger to send its first heartbeat. Every open page is a [viewer](../GLOSSARY.md): it sends a [heartbeat](#post-apiv1viewersheartbeat) when it loads and about every 30 seconds after, and stays live for 2 minutes after its last one. The linger counts down only while the shared server has no attached session and no live viewer, and restarts from when the last of them goes away, so a page that `browse` opened keeps working for as long as it stays open, even with no session attached. The UI ends with its shared server, so once every page is closed (and has stopped being live) and no session is attached, the shared server exits when the linger runs out, and the URL changes whenever the shared server is replaced. The shared server's log records `Web UI started` with the URL.
 - **Ignored settings.** `--ui-enabled`, `--host`, `--port` and the authentication settings (`auth.*`) are accepted and ignored, and are not passed to a shared server that `browse` starts.
 
 A requested UI is a required UI. `browse` prints `Error: ...` and exits `1`, and never falls back to a per-session server, when:
@@ -124,7 +124,7 @@ Content is rendered on the server with GitHub-flavored Markdown (tables, task li
 
 ## Network and browser security
 
-- The page, its scripts, styles, and icon are embedded in the binary. The browser loads nothing from any other origin, and the page's only requests are to `/api/v1/` on the same server. External links are followed only when clicked.
+- The page, its scripts, styles, and icon are embedded in the binary. The browser loads nothing from any other origin, and the page's only requests are to `/api/v1/` on the same server, including the [viewer heartbeat](#post-apiv1viewersheartbeat) every 30 seconds. A heartbeat that fails is ignored silently. External links are followed only when clicked.
 - Every page response, including scripts, styles, and the icon, carries:
   - `Content-Security-Policy: default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`
   - `X-Content-Type-Options: nosniff`
@@ -147,6 +147,7 @@ Content is rendered on the server with GitHub-flavored Markdown (tables, task li
 | `/api/v1/labels` | `GET` | Label suggestions with counts |
 | `/api/v1/search` | `GET` | Search results |
 | `/api/v1/document` | `GET` | One source document |
+| `/api/v1/viewers/heartbeat` | `POST` | `204`; marks the page as a live viewer |
 
 Any other method on a `/ui` route returns `405` with `Allow: GET, HEAD`.
 
@@ -154,7 +155,7 @@ Any other method on a `/ui` route returns `405` with `Allow: GET, HEAD`.
 
 The page is built on a small JSON API under `/api/v1/`. It is the web UI's backend: it is served only when the UI is enabled, under the same authentication.
 
-Every response, success or error, has `Content-Type: application/json; charset=utf-8`, `Cache-Control: no-store`, and `X-Content-Type-Options: nosniff`. Array fields are always arrays, never `null`.
+Every response, success or error, has `Content-Type: application/json; charset=utf-8`, `Cache-Control: no-store`, and `X-Content-Type-Options: nosniff`, except the heartbeat's bodiless `204`, which carries only `Cache-Control: no-store`. Array fields are always arrays, never `null`.
 
 **Errors** have one shape:
 
@@ -166,9 +167,12 @@ Every response, success or error, has `Content-Type: application/json; charset=u
 |--------|---------|------|
 | `400` | `limit must be an integer between 1 and 100` | `limit` is not an integer, or is outside `1`–`100` |
 | `400` | `uri is required` | `/api/v1/document` without a non-blank `uri` |
+| `400` | `viewer_id must be 1 to 64 letters, digits, '-' or '_'` | Heartbeat body is not exactly one JSON object, or its `viewer_id` is invalid |
 | `404` | `not found` | Unknown path under `/api/v1/` (checked before the method) |
 | `404` | `document not found` | `uri` is not a source document in the catalog |
-| `405` | `method not allowed` | Any method other than `GET`; the response carries `Allow: GET` |
+| `405` | `method not allowed` | Any method other than `GET` (`POST` for the heartbeat); the response carries `Allow: GET` (`Allow: POST`) |
+| `413` | `request body too large` | Heartbeat body over 1 KiB |
+| `415` | `content type must be application/json` | Heartbeat without `Content-Type: application/json` |
 | `500` | `internal server error` | Any other failure. The cause is logged on the server and never returned. |
 
 ### `GET /api/v1/config`
@@ -278,3 +282,13 @@ With neither `q` nor a `label`, the response is `200` with an empty `results` ar
 ```
 
 `content` is what the MCP `read` tool returns for the URI. `content_html` renders it with an `id` on every heading; the `document_url` of each search result points at one of these ids.
+
+### `POST /api/v1/viewers/heartbeat`
+
+Sent by every page when it loads and about every 30 seconds while it stays open. The body must be JSON with `Content-Type: application/json`:
+
+```json
+{"viewer_id": "3f2b8c1e-7a4d-4f0e-9b6a-2c5d8e1f0a7b"}
+```
+
+`viewer_id` is 1 to 64 letters, digits, `-` or `_`, chosen once per page load. The body is at most 1 KiB and holds that one object, with nothing but whitespace after it. The response is `204 No Content` with `Cache-Control: no-store`. On a shared server the heartbeat makes that page a live viewer for 2 minutes, which holds off the [linger](#acdc-mcp-browse); on the SSE server it is accepted and has no effect. Requiring a JSON content type means a page on another origin cannot send it without a CORS preflight, which the API never grants.

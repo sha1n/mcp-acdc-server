@@ -8,6 +8,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -184,7 +186,9 @@ func TestSessionAcceptor_APendingBrowseOutlivesABuildLongerThanTheLinger(t *test
 	awaitServeResult(t, done, serveTestDeadline, "once answered, a browse must not keep the shared server alive")
 }
 
-func TestSessionAcceptor_RepeatedBrowsesDoNotPostponeTheLinger(t *testing.T) {
+// Every answered browse restarts the linger, as the last detach does, so
+// the page it opened has a whole linger to send its first heartbeat.
+func TestSessionAcceptor_EveryAnsweredBrowseRestartsTheLinger(t *testing.T) {
 	acceptor, socketPath, _, _ := newBrowseTestAcceptor(t, helloTestLinger)
 	done := serveHelloTestAcceptor(acceptor)
 	stop := make(chan struct{})
@@ -200,12 +204,20 @@ func TestSessionAcceptor_RepeatedBrowsesDoNotPostponeTheLinger(t *testing.T) {
 			}
 		}
 	}()
-	defer func() {
+	stopBrowsing := sync.OnceFunc(func() {
 		close(stop)
 		<-polled
-	}()
+	})
+	defer stopBrowsing()
 
-	awaitServeResult(t, done, 3*helloTestLinger, "browse requests must not reset or extend the linger")
+	select {
+	case err := <-done:
+		t.Fatalf("the shared server stopped while browses kept restarting its linger: %v", err)
+	case <-time.After(3 * helloTestLinger):
+	}
+	stopBrowsing()
+
+	awaitServeResult(t, done, 3*helloTestLinger, "the linger must run out once browses stop")
 	assert.True(t, acceptor.lingeredOut)
 }
 
@@ -226,4 +238,34 @@ func browseIgnoringErrors(socketPath string) {
 		return
 	}
 	_, _ = io.ReadAll(conn)
+}
+
+func (l *sessionLinger) viewerLive() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.viewers.armed()
+}
+
+func TestSessionAcceptor_AWebUIHeartbeatMakesTheViewerLive(t *testing.T) {
+	acceptor, socketPath, _, _ := newBrowseTestAcceptor(t, time.Hour)
+	serveHelloTestAcceptor(acceptor)
+	line, _ := browse(t, socketPath, 7)
+	ready, err := DecodeBrowseReadyLine(line)
+	require.NoError(t, err)
+
+	require.False(t, acceptor.linger.viewerLive())
+
+	getBody(t, strings.TrimSuffix(ready.UIURL, "/ui/")+"/beat?viewer=v1")
+
+	assert.True(t, acceptor.linger.viewerLive())
+}
+
+func TestSessionAcceptor_SetViewerWindowConfiguresTheLinger(t *testing.T) {
+	acceptor, _, _, _ := newBrowseTestAcceptor(t, time.Hour)
+
+	acceptor.setViewerWindow(time.Second)
+
+	acceptor.linger.mu.Lock()
+	defer acceptor.linger.mu.Unlock()
+	assert.Equal(t, time.Second, acceptor.linger.viewerWindow)
 }

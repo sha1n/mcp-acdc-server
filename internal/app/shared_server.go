@@ -89,6 +89,7 @@ func runSharedServer(ctx context.Context, params RunParams, settings *config.Set
 		Revalidate:      built.revalidate,
 		UIHandler:       built.uiHandler,
 		UIListen:        params.ListenWebUI,
+		ViewerWindow:    params.ViewerWindow,
 	})
 	// Another process owns this identity: exit silently, since anything
 	// written here would reach the spawning session's terminal or log.
@@ -119,7 +120,8 @@ func (c *sharedServerComponents) revalidate(ctx context.Context) {
 	c.components.RevalidateNow(ctx)
 }
 
-// uiHandler serves the Web UI of a shared server from the built components.
-func (c *sharedServerComponents) uiHandler(maxResults int) (http.Handler, error) {
-	return newWebUIHandler(c.logger, c.components.SSEOptions, maxResults)
+// uiHandler serves the Web UI of a shared server from the built components,
+// reporting its viewer heartbeats to heartbeat.
+func (c *sharedServerComponents) uiHandler(maxResults int, heartbeat func(viewerID string)) (http.Handler, error) {
+	return newWebUIHandler(c.logger, c.components.SSEOptions, maxResults, heartbeat)
 }

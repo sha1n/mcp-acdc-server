@@ -78,6 +78,7 @@ func Run(ctx context.Context, cfg Config) (err error) {
 		defer cleanup()
 	}
 
+	sessions.setViewerWindow(cfg.ViewerWindow)
 	sessions.setUI(cfg.UIHandler, cfg.UIListen)
 	return sessions.serve(server, cfg.Revalidate, logPath)
 }
