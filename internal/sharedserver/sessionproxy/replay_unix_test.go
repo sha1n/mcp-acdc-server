@@ -132,6 +132,7 @@ func (l *legacyOutage) nextReplacement() *fakeSharedConn {
 	case conn := <-l.replacement:
 		l.t.Cleanup(func() { _ = conn.Close() })
 		c := &fakeSharedConn{t: l.t, conn: conn, lines: bufio.NewReader(conn)}
+		c.expectHello()
 		c.sendReadyAs("next")
 		return c
 	case <-time.After(proxyTestDeadline):

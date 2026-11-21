@@ -41,6 +41,7 @@ func (h *SharedServerHarness) DialSharedServer(id string) *RawSession {
 		}
 	})
 
+	require.NoError(h.t, SendHello(conn))
 	ready, err := sharedserver.DecodeReadyLine(s.ReadLine())
 	require.NoError(h.t, err)
 	s.Ready = ready
@@ -147,7 +148,14 @@ func (h *SharedServerHarness) serve(listener net.Listener, handle func(net.Conn)
 				return
 			}
 			held.add(conn)
-			handlers.Go(func() { handle(conn) })
+			handlers.Go(func() {
+				if !consumeHello(h, conn) {
+					// A shared server refuses such a connection at once.
+					closeRefusedConn(h, conn)
+					return
+				}
+				handle(conn)
+			})
 		}
 	}()
 	h.t.Cleanup(func() {
@@ -156,6 +164,37 @@ func (h *SharedServerHarness) serve(listener net.Listener, handle func(net.Conn)
 		held.closeAll(h)
 		handlers.Wait()
 	})
+}
+
+// SendHello writes the session hello a session proxy sends first on every
+// shared server connection.
+func SendHello(conn net.Conn) error {
+	hello, err := sharedserver.EncodeHelloLine(sharedserver.HelloSession)
+	if err != nil {
+		return err
+	}
+	_, err = conn.Write(hello)
+	return err
+}
+
+// consumeHello reads the hello a session proxy sends first, as a shared
+// server does, so a handler sees only what follows it. It reports whether a
+// hello was read; a connection without one gets no handler, as a shared
+// server refuses it.
+func consumeHello(h *SharedServerHarness, conn net.Conn) bool {
+	if err := conn.SetReadDeadline(time.Now().Add(SharedServerDeadline)); err != nil {
+		reportUnlessConnectionEnded(h, "failed to set the hello deadline", err)
+		return false
+	}
+	if _, err := sharedserver.ReadHelloLine(conn); err != nil {
+		reportUnlessConnectionEnded(h, "failed to read the hello line", err)
+		return false
+	}
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		reportUnlessConnectionEnded(h, "failed to clear the hello deadline", err)
+		return false
+	}
+	return true
 }
 
 // reportUnlessConnectionEnded treats only the peer going away or the cleanup
@@ -171,6 +210,12 @@ func reportUnlessConnectionEnded(h *SharedServerHarness, what string, err error)
 type heldConns struct {
 	mu    sync.Mutex
 	conns []net.Conn
+}
+
+func closeRefusedConn(h *SharedServerHarness, conn net.Conn) {
+	if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		h.t.Errorf("failed to close a refused connection: %v", err)
+	}
 }
 
 func (c *heldConns) add(conn net.Conn) {

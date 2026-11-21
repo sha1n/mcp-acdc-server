@@ -34,6 +34,7 @@ type sessionLinger struct {
 	// Stop lost the race to it is ignored.
 	generation uint64
 	expired    bool
+	shutDown   bool
 	stopped    bool
 }
 
@@ -47,12 +48,19 @@ func newSessionLinger(linger time.Duration, clock lingerClock, onExpire func()) 
 	return l
 }
 
-func (l *sessionLinger) attach() {
+// attach counts a session and reports whether it may proceed. Once the
+// linger has shut the shared server down, or it has stopped, no session is
+// counted: the caller must drop the connection.
+func (l *sessionLinger) attach() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.shutDown || l.stopped {
+		return false
+	}
 	l.sessions++
 	l.expired = false
 	l.disarm()
+	return true
 }
 
 func (l *sessionLinger) detach() {
@@ -73,6 +81,7 @@ func (l *sessionLinger) shutdownIfExpired(shutdown func()) bool {
 		return false
 	}
 	shutdown()
+	l.shutDown = true
 	return true
 }
 

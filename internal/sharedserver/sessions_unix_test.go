@@ -25,6 +25,13 @@ import (
 
 func dialAcceptorTestSocket(t *testing.T, socketPath string) (net.Conn, *bufio.Reader) {
 	t.Helper()
+	conn, reader := dialRawAcceptorTestSocket(t, socketPath)
+	sendTestHello(t, conn)
+	return conn, reader
+}
+
+func dialRawAcceptorTestSocket(t *testing.T, socketPath string) (net.Conn, *bufio.Reader) {
+	t.Helper()
 	deadline := time.Now().Add(serveTestDeadline)
 	for {
 		conn, err := net.Dial("unix", socketPath)

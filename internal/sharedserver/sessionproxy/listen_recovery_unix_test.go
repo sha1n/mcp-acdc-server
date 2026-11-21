@@ -237,7 +237,9 @@ func (r *replacement) next() *fakeSharedConn {
 	select {
 	case conn := <-r.accepted:
 		r.t.Cleanup(func() { _ = conn.Close() })
-		return &fakeSharedConn{t: r.t, conn: conn, lines: bufio.NewReader(conn)}
+		c := &fakeSharedConn{t: r.t, conn: conn, lines: bufio.NewReader(conn)}
+		c.expectHello()
+		return c
 	case <-time.After(proxyTestDeadline):
 		r.t.Fatal("the session proxy never connected to the replacement")
 		return nil

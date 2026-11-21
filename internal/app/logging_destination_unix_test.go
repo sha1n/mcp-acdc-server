@@ -5,6 +5,7 @@ package app
 import (
 	"bufio"
 	"context"
+	"github.com/sha1n/mcp-acdc-server/internal/sharedserver"
 	"github.com/sha1n/mcp-acdc-server/internal/sharedserver/identity"
 	"net"
 	"os"
@@ -93,6 +94,10 @@ func (s *loggingSharedServer) awaitReady(t *testing.T) {
 	conn, err := net.Dial("unix", s.socketPath)
 	require.NoError(t, err)
 	defer func() { _ = conn.Close() }()
+	hello, err := sharedserver.EncodeHelloLine(sharedserver.HelloSession)
+	require.NoError(t, err)
+	_, err = conn.Write(hello)
+	require.NoError(t, err)
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(loggingDestinationTestDeadline)))
 	line, err := bufio.NewReader(conn).ReadString('\n')
 	require.NoError(t, err)

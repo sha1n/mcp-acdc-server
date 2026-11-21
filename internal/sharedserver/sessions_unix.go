@@ -69,12 +69,23 @@ type sessionAcceptor struct {
 	server      *mcp.Server
 	revalidate  func(context.Context)
 	logPath     string
-	sessions    sync.WaitGroup
-	stopped     chan struct{}
-	err         error
+	// helloTimeout is read by every connection, so a test sets it before
+	// start.
+	helloTimeout time.Duration
+	sessions     sync.WaitGroup
+	stopped      chan struct{}
+	err          error
 }
 
 func startAccepting(ctx context.Context, logger *slog.Logger, listener *net.UnixListener, ep endpoint.Endpoint, identity string, linger time.Duration) *sessionAcceptor {
+	a := newSessionAcceptor(ctx, logger, listener, ep, identity, linger)
+	a.start()
+	return a
+}
+
+// newSessionAcceptor returns an acceptor that does not accept until start,
+// so a test may change its fields first.
+func newSessionAcceptor(ctx context.Context, logger *slog.Logger, listener *net.UnixListener, ep endpoint.Endpoint, identity string, linger time.Duration) *sessionAcceptor {
 	a := &sessionAcceptor{
 		logger:   logger,
 		listener: listener,
@@ -83,13 +94,18 @@ func startAccepting(ctx context.Context, logger *slog.Logger, listener *net.Unix
 		wake:     &acceptWake{listener: listener},
 		built:    make(chan struct{}),
 		stopped:  make(chan struct{}),
+
+		helloTimeout: HelloTimeout,
 	}
 	a.runCtx = ctx
 	a.ctx, a.cancel = context.WithCancel(ctx)
 	a.sessionCtx, a.endSessions = context.WithCancel(context.WithoutCancel(ctx))
 	a.linger = newSessionLinger(linger, realLingerClock{}, a.wake.wake)
-	go a.run()
 	return a
+}
+
+func (a *sessionAcceptor) start() {
+	go a.run()
 }
 
 // run is the one stop sequence for every way the shared server ends. Sessions
@@ -152,8 +168,8 @@ func (a *sessionAcceptor) acceptLoop() error {
 	for {
 		conn, err := a.listener.AcceptUnix()
 		if err == nil {
-			a.linger.attach()
-			a.sessions.Go(func() { a.handle(conn) })
+			accepted := time.Now()
+			a.sessions.Go(func() { a.handle(conn, accepted) })
 			continue
 		}
 		if a.ctx.Err() != nil {
@@ -182,7 +198,19 @@ func (a *sessionAcceptor) closeAndUnlink() {
 	a.lingeredOut = true
 }
 
-func (a *sessionAcceptor) handle(conn *net.UnixConn) {
+// handle reads the hello before anything else, against a deadline measured
+// from accept, so neither a slow build nor a pending hello can hold the
+// connection open past the hello timeout. Only a connection with a valid
+// hello attaches a session and so counts against the linger.
+func (a *sessionAcceptor) handle(conn *net.UnixConn, accepted time.Time) {
+	if !a.awaitHello(conn, accepted.Add(a.helloTimeout)) {
+		_ = conn.Close()
+		return
+	}
+	if !a.linger.attach() {
+		a.dropOnceAcceptingStopped(conn)
+		return
+	}
 	defer a.linger.detach()
 	select {
 	case <-a.built:
@@ -195,6 +223,27 @@ func (a *sessionAcceptor) handle(conn *net.UnixConn) {
 		return
 	}
 	attach(a.sessionCtx, a.logger, conn, a.server, a.admit, a.logPath)
+}
+
+// awaitHello reads the hello line before the session is admitted or gets its
+// ready line. A connection whose hello is missing, malformed or not complete
+// by deadline is refused; one cut short by shutdown is dropped silently. The
+// hello deadline is set before the shutdown interrupt is installed, so it can
+// never replace the immediate deadline the interrupt sets.
+func (a *sessionAcceptor) awaitHello(conn *net.UnixConn, deadline time.Time) bool {
+	_ = conn.SetReadDeadline(deadline)
+	stopOnCancel := context.AfterFunc(a.sessionCtx, func() { _ = conn.SetReadDeadline(time.Now()) })
+	_, err := ReadHelloLine(conn)
+	interrupted := !stopOnCancel()
+	if interrupted || a.sessionCtx.Err() != nil {
+		return false
+	}
+	if err != nil {
+		a.logger.Warn("Refused shared server connection without a valid hello line", "error", err)
+		return false
+	}
+	_ = conn.SetReadDeadline(time.Time{})
+	return true
 }
 
 // admit is the one admission decision, made after revalidation and just

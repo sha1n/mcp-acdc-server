@@ -221,6 +221,10 @@ func (s *lingerTestServer) tryDial(t *testing.T, deadline time.Time) (*lingerTes
 	}
 	require.NoError(t, conn.SetDeadline(deadline))
 	t.Cleanup(func() { _ = conn.Close() })
+	if err := testkit.SendHello(conn); err != nil {
+		require.True(t, isLingerExpiryDrop(err) || errors.Is(err, syscall.EPIPE), "hello failed for a reason other than expiry: %v", err)
+		return nil, false
+	}
 	return &lingerTestConn{conn: conn, reader: bufio.NewReader(conn)}, true
 }
 
@@ -353,6 +357,7 @@ func (s *lingerTestServer) dial(t *testing.T) *lingerTestConn {
 	require.NoError(t, err)
 	require.NoError(t, conn.SetDeadline(time.Now().Add(lingerTestDeadline)))
 	t.Cleanup(func() { _ = conn.Close() })
+	require.NoError(t, testkit.SendHello(conn))
 	return &lingerTestConn{conn: conn, reader: bufio.NewReader(conn)}
 }
 

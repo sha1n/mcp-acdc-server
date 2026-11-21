@@ -116,6 +116,7 @@ func TestRun_ShutdownOfAnInitializedSessionLogsOneAttachAndOneDetach(t *testing.
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
 	require.NoError(t, conn.SetDeadline(time.Now().Add(serveTestDeadline)))
+	sendTestHello(t, conn)
 	session := initializeSession(t, conn)
 
 	run.stop(t)
