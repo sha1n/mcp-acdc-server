@@ -1,8 +1,8 @@
 # Web UI
 
-The SSE server can serve a read-only browser interface over the same index that MCP clients search. People can search the content, filter by label, preview matching sections, and read whole documents rendered from Markdown, without an MCP client.
+The SSE server, and a stdio [shared server](configuration.md#server-mode) through [`acdc-mcp browse`](#acdc-mcp-browse), can serve a read-only browser interface over the same index that MCP clients search. People can search the content, filter by label, preview matching sections, and read whole documents rendered from Markdown, without an MCP client.
 
-The web UI is **disabled by default**. A deployment that does not enable it behaves exactly as before: `/ui` and `/api/v1/` are not registered and return `404`.
+On the SSE server the web UI is **disabled by default**. A deployment that does not enable it behaves exactly as before: `/ui` and `/api/v1/` are not registered and return `404`.
 
 ## Enabling it
 
@@ -34,6 +34,33 @@ The UI is served by the SSE server, on the same host, port, and listener as `/ss
 ```
 level=WARN msg="Web UI requires the sse transport; ui.enabled is ignored"
 ```
+
+To get the UI for stdio launches, use [`acdc-mcp browse`](#acdc-mcp-browse).
+
+## `acdc-mcp browse`
+
+`acdc-mcp browse` prints the URL of a web UI over the content that stdio launches with the same settings are served from. It takes the same settings as an MCP launch (flags, `.env`, `ACDC_MCP_*`) and computes the [server identity](configuration.md#server-identity) from them, so the same settings reach the same [shared server](configuration.md#server-mode). It finds that shared server, or starts one with the same discovery and connect wait as a session proxy, and waits for its index build with no time limit. The shared server starts its UI on the first `browse` request and keeps it for the rest of its life; every later `browse` gets the same URL. `browse` prints the URL on stdout, logs to stderr and exits `0`. It does not open a browser.
+
+```bash
+acdc-mcp browse --content-dir ./content
+# http://127.0.0.1:54321/ui/
+```
+
+- **Listener.** The UI listens on `127.0.0.1` on an ephemeral port, separate from any MCP traffic, and serves only `/ui/` and `/api/v1/`: there is no `/sse` and no `/health`. It applies no authentication.
+- **`ui.max_results`.** The value sent by the `browse` that started the UI applies for the life of that shared server; values sent by later requests are ignored. It is validated on every `browse`, whether or not `ui.enabled` is set.
+- **Lifetime.** A `browse` connection is not an attached session: it neither counts toward nor restarts the [linger](configuration.md#detached-shared-server-process), only defers an exit that falls due while it waits for its reply, and is closed once the URL is returned. The UI ends with its shared server, so a shared server that `browse` started with no session attached exits after the linger, and the URL changes whenever the shared server is replaced. The shared server's log records `Web UI started` with the URL.
+- **Ignored settings.** `--ui-enabled`, `--host`, `--port` and the authentication settings (`auth.*`) are accepted and ignored, and are not passed to a shared server that `browse` starts.
+
+A requested UI is a required UI. `browse` prints `Error: ...` and exits `1`, and never falls back to a per-session server, when:
+
+- the UI cannot bind; other attached sessions are unaffected, and the next `browse` tries again;
+- no shared server can be reached or started within the connect wait;
+- the index build fails;
+- `--transport sse` is set;
+- the effective server mode is `session`: `--server-mode session`, or any launch on Windows.
+
+> [!CAUTION]
+> The UI started by `browse` has no authentication. Loopback is its only protection, so other users on the same machine can read the content through it while it runs.
 
 ## Authentication
 

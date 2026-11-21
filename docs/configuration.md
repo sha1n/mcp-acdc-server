@@ -174,6 +174,8 @@ change briefly holds two complete indexes at once.
 
 The `.env` keys are `ui.enabled` and `ui.max_results`. The UI shares the SSE server's host, port, and authentication. Under `--transport stdio`, `--ui-enabled` is ignored and the server logs a warning instead of failing. See [Web UI](web-ui.md) for routes, the API, and authentication behaviour.
 
+`acdc-mcp browse` takes the same settings as an MCP launch and prints the URL of a web UI served by the [shared server](#server-mode) for their [server identity](#server-identity), starting the shared server and its UI on demand. That UI listens on `127.0.0.1` on an ephemeral port with no authentication; `--ui-enabled`, `--host`, `--port` and `auth.*` are ignored, and the `ui.max_results` of the `browse` that started the UI applies for the life of its shared server. `browse` exits `1` under `--transport sse` or the `session` server mode. See [`acdc-mcp browse`](web-ui.md#acdc-mcp-browse).
+
 ## Server Mode
 
 The server mode decides whether a stdio launch joins a **shared server** or runs as a **per-session server**. On macOS and Linux a stdio launch is, by default, a **session proxy**: it relays its session to the one shared server that serves every launch with the same [server identity](#server-identity), so those sessions share one catalog and one search index. The first session proxy that finds no running shared server starts one; see [Detached shared server process](#detached-shared-server-process). `--transport sse` is not affected. On Windows there is no shared server: every stdio launch is a per-session server, nothing is discovered, no file or directory is created and no fallback warning is written.
@@ -336,6 +338,10 @@ Every limitation below comes from sharing or proxying and is avoided by [opting 
 - An existing log directory is used with whatever mode it has, a FIFO at `<id>.log` blocks the log open while the shared server holds its lock, and symbolic links among the log directory's ancestors are followed. Likewise for the endpoint directory, the replacement of an ancestor directory and setuid, setgid and sticky bits are not checked.
 - Under `search.in_memory=false`, a shared server that crashes or is ended by SIGTERM or SIGINT leaves its `acdc_search_*` directory in the system temp directory, one per occurrence; nothing cleans these up, and they are left to the operating system's temp cleaner.
 - Credentials passed through the environment (for example `ACDC_MCP_AUTH_*`) remain in the shared server's environment until it exits, including the linger.
+
+#### Web UI from `browse`
+
+- The UI that [`acdc-mcp browse`](web-ui.md#acdc-mcp-browse) starts has no authentication. Loopback is its only protection, so other local users can read the content through it while its shared server runs.
 
 #### Also on a per-session server
 
