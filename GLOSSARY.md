@@ -31,12 +31,22 @@ A session currently connected to a shared server.
 _Avoid_: Client, connection, active session
 
 **Linger**:
-The time a shared server stays up with no attached sessions before it shuts down.
+The time a shared server stays up with no attached sessions and no viewers before it shuts down.
 _Avoid_: Idle timeout, grace period, keep-alive
 
 **Recovery**:
 What a session proxy does after losing its shared server: find or start a replacement and resume the session on it.
 _Avoid_: Reconnect, failover, restart
+
+### Web UI
+
+**Web UI**:
+The read-only browser interface for searching and reading a server's content.
+_Avoid_: Dashboard, frontend, console
+
+**Viewer**:
+A browser page of the Web UI that is currently open on a server.
+_Avoid_: Client, tab, session
 
 ### Content
 
