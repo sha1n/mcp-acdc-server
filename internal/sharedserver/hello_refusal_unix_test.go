@@ -5,12 +5,14 @@ package sharedserver
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -55,11 +57,14 @@ func startHelloAcceptor(t *testing.T, helloTimeout time.Duration) *helloAcceptor
 }
 
 // awaitRefusal asserts that the connection ends without a ready line and
-// that the refusal is logged without a session ever being admitted.
+// that the refusal is logged without a session ever being admitted. The
+// connection may end with a reset instead of EOF: Linux resets a Unix socket
+// closed with unread bytes, as after an oversized hello.
 func (h *helloAcceptor) awaitRefusal(t *testing.T, reader *bufio.Reader) {
 	t.Helper()
 	line, err := reader.ReadBytes('\n')
-	assert.ErrorIs(t, err, io.EOF)
+	assert.True(t, errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET),
+		"a refused connection must close without a ready line, got %v", err)
 	assert.Empty(t, line, "a refused connection must not get a ready line")
 	assert.Eventually(t, func() bool { return strings.Contains(h.logs.String(), refusedHelloLog) }, serveTestDeadline, 10*time.Millisecond)
 	assert.NotContains(t, h.logs.String(), "Session attached")
