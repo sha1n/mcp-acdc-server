@@ -15,9 +15,9 @@ import (
 // heartbeat. It is called after Build has returned.
 type UIHandlerFunc func(maxResults int, heartbeat func(viewerID string)) (http.Handler, error)
 
-// uiReadHeaderTimeout bounds how long a Web UI connection may take to send
+// UIReadHeaderTimeout bounds how long a Web UI connection may take to send
 // its request headers.
-const uiReadHeaderTimeout = 10 * time.Second
+const UIReadHeaderTimeout = 10 * time.Second
 
 var errWebUIUnavailable = errors.New("web UI is not available")
 
@@ -94,7 +94,7 @@ func (u *webUI) start(maxResults int) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to start the web UI: %w", err)
 	}
-	u.server = &http.Server{Handler: handler, ReadHeaderTimeout: uiReadHeaderTimeout}
+	u.server = &http.Server{Handler: handler, ReadHeaderTimeout: UIReadHeaderTimeout}
 	u.url = fmt.Sprintf("http://%s/ui/", listener.Addr())
 	go u.serve(u.server, listener)
 	u.logger.Info("Web UI started", "url", u.url, "max_results", maxResults)

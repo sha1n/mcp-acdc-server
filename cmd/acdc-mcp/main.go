@@ -62,10 +62,13 @@ func Execute(version, build, programName string, args []string) error {
 func browseCommand(version, build string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "browse",
-		Short: "Open the Web UI of the shared server for these settings in the browser",
+		Short: "Open the Web UI for these settings in the browser",
 		Long: "Find or start the shared server for these settings, start its Web UI if it is not running, " +
 			"and print the Web UI URL; browse then opens the browser on it unless --no-open is set. " +
 			"The shared server exits once there are no attached sessions and no viewers and its linger runs out. " +
+			"Under --server-mode session, and on Windows, browse instead builds the index itself, serves the Web UI " +
+			"on 127.0.0.1 on an ephemeral port, prints its URL, and runs until interrupted. " +
+			"On Windows browse prints the URL and does not open a browser. " +
 			"--ui-enabled, --host, --port and the auth flags are ignored.",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,

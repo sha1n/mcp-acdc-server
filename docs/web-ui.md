@@ -39,7 +39,7 @@ To get the UI for stdio launches, use [`acdc-mcp browse`](#acdc-mcp-browse).
 
 ## `acdc-mcp browse`
 
-`acdc-mcp browse` prints the URL of a web UI over the content that stdio launches with the same settings are served from. It takes the same settings as an MCP launch (flags, `.env`, `ACDC_MCP_*`) and computes the [server identity](configuration.md#server-identity) from them, so the same settings reach the same [shared server](configuration.md#server-mode). It finds that shared server, or starts one with the same discovery and connect wait as a session proxy, and waits for its index build with no time limit. The shared server starts its UI on the first `browse` request and keeps it for the rest of its life; every later `browse` gets the same URL. `browse` prints the URL on stdout, then opens the system browser on it (`open` on macOS, `xdg-open` on Linux and the BSDs), logs to stderr and exits `0`. `--no-open` only prints the URL, for scripts and SSH sessions. When the browser cannot be opened (no opener on the `PATH`, a headless machine, or an opener error), `browse` logs a warning on stderr and still exits `0`; open the printed URL yourself.
+`acdc-mcp browse` prints the URL of a web UI over the content that stdio launches with the same settings are served from. It takes the same settings as an MCP launch (flags, `.env`, `ACDC_MCP_*`) and computes the [server identity](configuration.md#server-identity) from them, so the same settings reach the same [shared server](configuration.md#server-mode). It finds that shared server, or starts one with the same discovery and connect wait as a session proxy, and waits for its index build with no time limit. The shared server starts its UI on the first `browse` request and keeps it for the rest of its life; every later `browse` gets the same URL. `browse` prints the URL on stdout, then opens the system browser on it (`open` on macOS, `xdg-open` on Linux and the BSDs) and logs to stderr; with a shared server it then exits `0` right away (for the foreground path, see [Without a shared server](#without-a-shared-server)). `--no-open` only prints the URL, for scripts and SSH sessions. When the browser cannot be opened (no opener on the `PATH`, a headless machine, or an opener error), `browse` logs a warning on stderr and carries on as if it had opened; open the printed URL yourself. On Windows, `browse` has no opener: it prints the URL, logs a `Failed to open the browser` warning on stderr unless `--no-open` is set, and does not open a browser.
 
 ```bash
 acdc-mcp browse --content-dir ./content
@@ -53,13 +53,21 @@ acdc-mcp browse --content-dir ./content --no-open
 - **Lifetime.** A `browse` connection is not an attached session, but while it waits for its reply it holds off the [linger](configuration.md#detached-shared-server-process) like one, and once the URL is returned it is closed and, if the shared server is otherwise idle (no attached session and no live viewer), the linger restarts, as when the last session detaches. So even a cold start whose build outlasts the linger leaves the page it opened a whole linger to send its first heartbeat. Every open page is a [viewer](../GLOSSARY.md): it sends a [heartbeat](#post-apiv1viewersheartbeat) when it loads and about every 30 seconds after, and stays live for 2 minutes after its last one. The linger counts down only while the shared server has no attached session and no live viewer, and restarts from when the last of them goes away, so a page that `browse` opened keeps working for as long as it stays open, even with no session attached. The UI ends with its shared server, so once every page is closed (and has stopped being live) and no session is attached, the shared server exits when the linger runs out, and the URL changes whenever the shared server is replaced. The shared server's log records `Web UI started` with the URL.
 - **Ignored settings.** `--ui-enabled`, `--host`, `--port` and the authentication settings (`auth.*`) are accepted and ignored, and are not passed to a shared server that `browse` starts.
 
-A requested UI is a required UI. `browse` prints `Error: ...` and exits `1`, and never falls back to a per-session server, when:
+### Without a shared server
 
-- the UI cannot bind; other attached sessions are unaffected, and the next `browse` tries again;
-- no shared server can be reached or started within the connect wait;
+When the effective server mode is `session` (`--server-mode session`, or any launch on Windows), there is no shared server to serve the UI, so `browse` serves it itself in the foreground. It builds the index, serves the UI on `127.0.0.1` on an ephemeral port, prints the URL on stdout and opens the browser on it unless `--no-open` is set, as above (on Windows it only prints the URL). It then runs until it gets `SIGINT` (Ctrl+C) or `SIGTERM`, and exits `0`; the URL stops working when it exits. The listener, `ui.max_results` and ignored settings are as above. It starts no shared server and writes no endpoint files, and pages open on it are not tied to any MCP session.
+
+```bash
+acdc-mcp browse --content-dir ./content --server-mode session
+# http://127.0.0.1:54321/ui/, opened in the browser; Ctrl+C to stop
+```
+
+A requested UI is a required UI. `browse` prints `Error: ...` and exits `1`, and a `browse` that uses a shared server never falls back to serving the UI itself, when:
+
+- the UI cannot bind; on a shared server, other attached sessions are unaffected, and the next `browse` tries again;
+- no shared server can be reached or started within the connect wait (shared server mode only);
 - the index build fails;
-- `--transport sse` is set;
-- the effective server mode is `session`: `--server-mode session`, or any launch on Windows.
+- `--transport sse` is set.
 
 > [!CAUTION]
 > The UI started by `browse` has no authentication. Loopback is its only protection, so other users on the same machine can read the content through it while it runs.

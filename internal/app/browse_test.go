@@ -212,7 +212,6 @@ func TestRunBrowse_Fails(t *testing.T) {
 		want   []string
 	}{
 		{name: "sse transport", modify: func(s *config.Settings) { s.Transport = "sse" }, want: []string{"sse"}},
-		{name: "session server mode", modify: func(s *config.Settings) { s.ServerMode = config.ServerModeSession }, want: []string{"shared"}},
 		{name: "out of range ui max results", modify: func(s *config.Settings) { s.UI.MaxResults = 0 }, want: []string{"ui.max_results"}},
 		{name: "ui bind error", reply: errorReply, want: []string{"address in use", "/var/log/acdc.log"}},
 		{name: "connect wait expiry", modify: func(s *config.Settings) { s.SharedServer.ConnectWait = 100 * time.Millisecond }, want: []string{"connect wait"}},
