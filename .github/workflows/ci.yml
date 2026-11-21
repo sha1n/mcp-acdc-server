@@ -24,8 +24,14 @@ jobs:
       dockerhub_description: ${{ steps.filter.outputs.dockerhub_description }}
     steps:
       - uses: actions/checkout@v7
+      # A push that creates a ref has no 'before' commit, so the filter diffs
+      # against the default branch named in the event payload. A branch rename
+      # is such a push, and its payload still names the old branch, which no
+      # longer exists. Pushes run the tests regardless, and tag pushes run the
+      # docker job on their own condition.
       - uses: dorny/paths-filter@v4
         id: filter
+        if: github.event.created != true
         with:
           # Rules are OR-ed by default, so a '**' rule next to negations matches
           # every change. This makes a leading '!' exclude instead, and leaves
