@@ -7,10 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
-	"os/signal"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/sha1n/mcp-acdc-server/internal/config"
@@ -19,8 +16,6 @@ import (
 	"github.com/spf13/pflag"
 )
 
-const defaultUIShutdownGrace = 5 * time.Second
-
 // runForegroundBrowse builds the catalog and serves the Web UI itself on a
 // loopback listener until ctx is cancelled or the process is interrupted. It
 // is the browse path when no shared server is available.
@@ -28,12 +23,10 @@ func runForegroundBrowse(ctx context.Context, params RunParams, logger *slog.Log
 	if params.CreateServer == nil {
 		return errors.New("browse requires a server factory")
 	}
-	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, os.Interrupt)
+	// A second signal must be able to kill the process: shutdown waits for
+	// every handler without a time bound.
+	ctx, stop := notifyShutdownSignals(ctx)
 	defer stop()
-	// Restoring default signal handling once ctx ends lets a second signal
-	// kill the process when a build or request handler ignores cancellation;
-	// shutdown otherwise waits for every handler without a time bound.
-	context.AfterFunc(ctx, stop)
 
 	components, err := params.CreateServer(ctx, logger, withoutAuth(settings), binary.Version)
 	if components.Cleanup != nil {
@@ -139,7 +132,7 @@ func uiShutdownGrace(params RunParams) time.Duration {
 	if params.UIShutdownGrace > 0 {
 		return params.UIShutdownGrace
 	}
-	return defaultUIShutdownGrace
+	return DefaultShutdownGrace
 }
 
 // shutdown stops the server, ends every request context, force-closes

@@ -6,9 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sha1n/mcp-acdc-server/internal/config"
@@ -68,12 +65,8 @@ func runSharedServer(ctx context.Context, params RunParams, settings *config.Set
 
 	// Exit is immediate on a signal: attached connections simply drop and
 	// their session proxies recover as from a crash.
-	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, os.Interrupt)
+	ctx, stop := notifyShutdownSignals(ctx)
 	defer stop()
-	// Run may still wait on a handler or a build that ignores cancellation;
-	// a second signal must then terminate the process with the default
-	// disposition.
-	context.AfterFunc(ctx, stop)
 
 	built := &sharedServerComponents{create: params.CreateServer, settings: settings, version: binary.Version}
 	err = sharedserver.Run(ctx, sharedserver.Config{

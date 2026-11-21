@@ -77,7 +77,7 @@ func TestRunWithDeps_ErrorCases(t *testing.T) {
 				CreateServer: func(context.Context, *slog.Logger, *config.Settings, string) (Components, error) {
 					return Components{}, nil
 				},
-				StartSSEServer: func(*slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error {
+				StartSSEServer: func(context.Context, *slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error {
 					return errors.New("sse start error")
 				},
 			},
@@ -109,7 +109,7 @@ func TestRunWithDeps_Cleanup(t *testing.T) {
 		CreateServer: func(context.Context, *slog.Logger, *config.Settings, string) (Components, error) {
 			return Components{Cleanup: func() { cleanupCalled = true }}, nil
 		},
-		StartSSEServer: func(*slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error {
+		StartSSEServer: func(context.Context, *slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error {
 			return errors.New("intentional error to trigger cleanup")
 		},
 	}
@@ -220,7 +220,7 @@ func TestRunWithDeps_PassesExactCallerContextToCreateServer(t *testing.T) {
 			createServerCtx = gotCtx
 			return Components{}, nil
 		},
-		StartSSEServer: func(*slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error { return nil },
+		StartSSEServer: func(context.Context, *slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error { return nil },
 	}
 
 	err := RunWithDeps(ctx, params, nil, identity.Binary{Version: "test"})
@@ -245,7 +245,7 @@ func TestRunWithDeps_PassesVersionToCreateServer(t *testing.T) {
 			gotVersion = version
 			return Components{}, nil
 		},
-		StartSSEServer: func(*slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error { return nil },
+		StartSSEServer: func(context.Context, *slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error { return nil },
 	}
 
 	err := RunWithDeps(context.Background(), params, nil, identity.Binary{Version: "9.9.9"})
@@ -291,7 +291,7 @@ func TestRunWithDeps_PassesComponentsToStartSSEServer(t *testing.T) {
 				Cleanup:    func() { cleanupCalls++ },
 			}, nil
 		},
-		StartSSEServer: func(_ *slog.Logger, s *mcp.Server, st *config.Settings, opts ...SSEOption) error {
+		StartSSEServer: func(_ context.Context, _ *slog.Logger, s *mcp.Server, st *config.Settings, opts ...SSEOption) error {
 			gotServer, gotSettings, gotOpts = s, st, opts
 			require.Zero(t, cleanupCalls, "cleanup must not run before the server stops")
 			return nil
@@ -327,7 +327,7 @@ func TestRunWithDeps_StdioIgnoresSSEOptions(t *testing.T) {
 				Cleanup:    func() { cleanupCalls++ },
 			}, nil
 		},
-		StartSSEServer: func(*slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error {
+		StartSSEServer: func(context.Context, *slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error {
 			sseStarted = true
 			return nil
 		},
@@ -351,7 +351,7 @@ func TestRunWithDeps_CreateServerErrorSkipsStartAndCleanup(t *testing.T) {
 		CreateServer: func(context.Context, *slog.Logger, *config.Settings, string) (Components, error) {
 			return Components{}, errors.New("create failed")
 		},
-		StartSSEServer: func(*slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error {
+		StartSSEServer: func(context.Context, *slog.Logger, *mcp.Server, *config.Settings, ...SSEOption) error {
 			sseStarted = true
 			return nil
 		},

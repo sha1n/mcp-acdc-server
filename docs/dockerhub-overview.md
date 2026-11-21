@@ -187,6 +187,8 @@ services:
       retries: 3
 ```
 
+The SSE server shuts down gracefully on `SIGTERM`, so `docker stop` and `docker compose down` end the container promptly instead of waiting out the stop timeout. See [Lifecycle](https://github.com/sha1n/mcp-acdc-server/blob/master/docs/configuration.md#lifecycle).
+
 Ready-made deployment and content-configuration examples live in [`examples/`](https://github.com/sha1n/mcp-acdc-server/tree/master/examples):
 
 - **[Local Content](https://github.com/sha1n/mcp-acdc-server/tree/master/examples/docker-local-content)** — direct bind mount, for rapid iteration.
